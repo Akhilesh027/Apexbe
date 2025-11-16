@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import ratnadeepLogo from "../Web images/Web images/ratandeep.png";
 import wodden from "../Web images/Web images/wodden.png";
 import urben from '../Web images/Web images/urban.png';
-import home from '../Web images/Web images/home.png';
+
 import grocary from '../Web images/Web images/grocary.png';
 import logo from '../Web images/Web images/logo.jpg';
 const Home = () => {
@@ -118,7 +118,7 @@ const fashionBrands = [
       {/* Hero Banners */}
       <section className="container mx-auto px-4 py-8">
         <div className="grid md:grid-cols-2 gap-6">
-           <img src={home} alt="Home" />
+           <img src={grocary} alt="Home" />
 
          <img src={grocary} alt="grocary" />
         </div>
