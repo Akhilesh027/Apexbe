@@ -22,7 +22,7 @@ app.use(cors());
 // DB CONNECTION
 // ----------------------
 mongoose
-  .connect("  mongodb://127.0.0.1:27017")
+  .connect("mongodb://127.0.0.1:27017")
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.log("DB Error:", err));
 
