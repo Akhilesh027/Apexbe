@@ -22,7 +22,7 @@ const Vendors = () => {
   // ⭐ Fetch products from backend
   const loadProducts = async () => {
     try {
-      const res = await fetch("https://website-backend-57f9.onrender.com/api/product");
+      const res = await fetch("https://api.apexbee.in/api/product");
       const data = await res.json();
       setProducts(data.products || []);
     } catch (error) {

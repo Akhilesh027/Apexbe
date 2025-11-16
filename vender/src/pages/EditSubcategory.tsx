@@ -24,7 +24,7 @@ const EditSubcategory = () => {
   // Fetch categories
   const fetchCategories = async () => {
     try {
-      const res = await axios.get("https://website-backend-57f9.onrender.com/api/categories");
+      const res = await axios.get("https://api.apexbee.in/api/categories");
       if (res.data.success) setCategories(res.data.categories);
     } catch (err) {
       console.error(err);
@@ -36,7 +36,7 @@ const EditSubcategory = () => {
   const fetchSubcategory = async () => {
     if (!id) return;
     try {
-      const res = await axios.get(`https://website-backend-57f9.onrender.com/api/subcategories/${id}`);
+      const res = await axios.get(`https://api.apexbee.in/api/subcategories/${id}`);
       if (res.data.success) {
         const sub = res.data.subcategory;
         setFormData({
@@ -79,7 +79,7 @@ const EditSubcategory = () => {
       if (formData.image) data.append("image", formData.image);
 
       const res = await axios.put(
-        `https://website-backend-57f9.onrender.com/api/subcategories/${id}`,
+        `https://api.apexbee.in/api/subcategories/${id}`,
         data,
         { headers: { "Content-Type": "multipart/form-data" } }
       );

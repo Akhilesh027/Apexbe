@@ -24,7 +24,7 @@ const OrderDetails = () => {
       if (!id || !vendorId) return;
 
       try {
-        const res = await axios.get(`https://website-backend-57f9.onrender.com/api/orders/${id}`);
+        const res = await axios.get(`https://api.apexbee.in/api/orders/${id}`);
         if (res.data.success) {
           const orderData = res.data.order;
 
@@ -51,7 +51,7 @@ const OrderDetails = () => {
 
   const handleStatusUpdate = async () => {
     try {
-      const res = await axios.put(`https://website-backend-57f9.onrender.com/api/orders/${id}/status`, {
+      const res = await axios.put(`https://api.apexbee.in/api/orders/${id}/status`, {
         status: orderStatus,
       });
 

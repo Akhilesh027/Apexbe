@@ -13,7 +13,7 @@ const Categories = () => {
 
   const fetchCategories = async () => {
     try {
-      const res = await axios.get("https://website-backend-57f9.onrender.com/api/categories"); // your backend endpoint
+      const res = await axios.get("https://api.apexbee.in/api/categories"); // your backend endpoint
       if (res.data.success) {
         setCategories(res.data.categories);
       } else {
@@ -35,7 +35,7 @@ const Categories = () => {
     if (!window.confirm("Are you sure you want to delete this category?")) return;
 
     try {
-      const res = await axios.delete(`https://website-backend-57f9.onrender.com/api/categories/${id}`);
+      const res = await axios.delete(`https://api.apexbee.in/api/categories/${id}`);
       if (res.data.success) {
         toast.success("Category deleted successfully");
         setCategories(categories.filter((cat) => cat._id !== id));

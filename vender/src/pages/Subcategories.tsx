@@ -24,7 +24,7 @@ const Subcategories = () => {
   const fetchSubcategories = async () => {
     try {
       setLoading(true);
-      const res = await axios.get("https://website-backend-57f9.onrender.com/api/subcategories", {
+      const res = await axios.get("https://api.apexbee.in/api/subcategories", {
         params: categoryId ? { category: categoryId } : {},
       });
       if (res.data.success) {
@@ -44,7 +44,7 @@ const Subcategories = () => {
   const handleDelete = async (id: string) => {
     if (!window.confirm("Are you sure you want to delete this subcategory?")) return;
     try {
-      const res = await axios.delete(`https://website-backend-57f9.onrender.com/api/subcategories/${id}`);
+      const res = await axios.delete(`https://api.apexbee.in/api/subcategories/${id}`);
       if (res.data.success) {
         toast.success("Subcategory deleted successfully");
         setSubcategories((prev) => prev.filter((sub) => sub._id !== id));

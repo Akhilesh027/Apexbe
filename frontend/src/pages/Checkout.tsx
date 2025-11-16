@@ -72,7 +72,7 @@ const Checkout = () => {
         userId: userId
       };
 
-      const response = await fetch(`https://website-backend-57f9.onrender.com/api/user/address`, {
+      const response = await fetch(`https://api.apexbee.in/api/user/address`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -119,7 +119,7 @@ const Checkout = () => {
       const user = JSON.parse(localStorage.getItem("user"));
       const userId = user._id;
 
-      const response = await fetch(`https://website-backend-57f9.onrender.com/api/user/address/${userId}`);
+      const response = await fetch(`https://api.apexbee.in/api/user/address/${userId}`);
 
       if (response.ok) {
         const data = await response.json();
@@ -244,7 +244,7 @@ const Checkout = () => {
 
       console.log("Sending order data:", orderData);
 
-      const response = await fetch("https://website-backend-57f9.onrender.com/api/orders", {
+      const response = await fetch("https://api.apexbee.in/api/orders", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -284,7 +284,7 @@ const Checkout = () => {
   // Clear cart after successful order
   const clearCart = async (userId) => {
     try {
-      const response = await fetch(`https://website-backend-57f9.onrender.com/api/cart/${userId}/clear`, {
+      const response = await fetch(`https://api.apexbee.in/api/cart/${userId}/clear`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",

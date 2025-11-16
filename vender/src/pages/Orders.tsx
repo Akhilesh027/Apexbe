@@ -19,7 +19,7 @@ const Orders = () => {
       if (!vendorId) return;
 
       try {
-        const res = await axios.get(`https://website-backend-57f9.onrender.com/api/orders/vendor/${vendorId}`);
+        const res = await axios.get(`https://api.apexbee.in/api/orders/vendor/${vendorId}`);
         if (res.data.success) {
           setOrders(res.data.orders);
         } else {

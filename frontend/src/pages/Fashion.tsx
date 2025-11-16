@@ -51,8 +51,8 @@ const Fashion = () => {
             setLoading(true);
             try {
                 // Assuming your API endpoint accepts a category filter or has a specific endpoint for 'fashion'
-                // You may need to replace 'https://website-backend-57f9.onrender.com/api/products?category=fashion' with your actual endpoint
-                const res = await fetch(`https://website-backend-57f9.onrender.com/api/products?category=fashion`); 
+                // You may need to replace 'https://api.apexbee.in/api/products?category=fashion' with your actual endpoint
+                const res = await fetch(`https://api.apexbee.in/api/products?category=fashion`); 
                 const data = await res.json();
 
                 if (res.ok) {

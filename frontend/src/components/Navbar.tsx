@@ -21,7 +21,7 @@ const Navbar = () => {
 
   const fetchCartItemsCount = async (userId) => {
     try {
-      const response = await fetch(`https://website-backend-57f9.onrender.com/api/cart/${userId}`);
+      const response = await fetch(`https://api.apexbee.in/api/cart/${userId}`);
       if (response.ok) {
         const data = await response.json();
         if (data.cart && data.cart.items) {

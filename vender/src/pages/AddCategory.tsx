@@ -44,7 +44,7 @@ const AddCategory = () => {
       data.append("name", formData.name);
       data.append("image", formData.image);
 
-      const res = await axios.post("https://website-backend-57f9.onrender.com/api/categories", data, {
+      const res = await axios.post("https://api.apexbee.in/api/categories", data, {
         headers: {
           "Content-Type": "multipart/form-data",
         },

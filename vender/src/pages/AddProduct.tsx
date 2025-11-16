@@ -49,7 +49,7 @@ const handleSubmit = async (e) => {
   form.append("vendorId", vendor.id);
   if (formData.image) form.append("image", formData.image);
 
-  const res = await fetch("https://website-backend-57f9.onrender.com/api/products", {
+  const res = await fetch("https://api.apexbee.in/api/products", {
     method: "POST",
     body: form,
   });

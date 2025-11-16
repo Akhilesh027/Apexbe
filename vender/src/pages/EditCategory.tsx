@@ -22,7 +22,7 @@ const EditCategory = () => {
   useEffect(() => {
     const fetchCategory = async () => {
       try {
-        const res = await axios.get(`https://website-backend-57f9.onrender.com/api/categories/${id}`);
+        const res = await axios.get(`https://api.apexbee.in/api/categories/${id}`);
         if (res.data.success) {
           setFormData({ name: res.data.category.name, image: null });
           setPreview(res.data.category.image || "");
@@ -55,7 +55,7 @@ const EditCategory = () => {
       data.append("name", formData.name);
       if (formData.image) data.append("image", formData.image);
 
-      const res = await axios.put(`https://website-backend-57f9.onrender.com/api/categories/${id}`, data, {
+      const res = await axios.put(`https://api.apexbee.in/api/categories/${id}`, data, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 

@@ -39,7 +39,7 @@ const handleSubmit = async (e) => {
           return;
         }
 
-        url = "https://website-backend-57f9.onrender.com/api/login/email";
+        url = "https://api.apexbee.in/api/login/email";
         payload = {
           email: formData.email,
           password: formData.password,
@@ -50,7 +50,7 @@ const handleSubmit = async (e) => {
           return;
         }
 
-        url = "https://website-backend-57f9.onrender.com/api/login/phone";
+        url = "https://api.apexbee.in/api/login/phone";
         payload = {
           phone: formData.phone,
         };
@@ -66,7 +66,7 @@ const handleSubmit = async (e) => {
         return;
       }
 
-      url = "https://website-backend-57f9.onrender.com/api/auth/register";
+      url = "https://api.apexbee.in/api/auth/register";
       payload = formData;
     }
 
