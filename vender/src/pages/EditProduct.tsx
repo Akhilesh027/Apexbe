@@ -29,7 +29,7 @@ const EditProduct = () => {
   useEffect(() => {
     const fetchProduct = async () => {
       try {
-        const res = await axios.get(`https://api.apexbee.in/api/products/${id}`);
+        const res = await axios.get(`http://localhost:5000/api/products/${id}`);
         if (res.data.success) {
           const product = res.data.product;
           setFormData({
@@ -76,7 +76,7 @@ const EditProduct = () => {
       data.append("description", formData.description);
       if (formData.image) data.append("image", formData.image);
 
-      const res = await axios.put(`https://api.apexbee.in/api/products/${id}`, data, {
+      const res = await axios.put(`http://localhost:5000/api/products/${id}`, data, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 

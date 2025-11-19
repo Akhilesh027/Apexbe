@@ -15,10 +15,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import Navbar from "@/components/Navbar";
+import { useToast } from "@/hooks/use-toast";
 
 const Checkout = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { toast } = useToast();
   const [showAddressDialog, setShowAddressDialog] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState("upi");
   const [isLoading, setIsLoading] = useState(false);
@@ -50,10 +52,14 @@ const Checkout = () => {
   // Redirect if no cart data
   useEffect(() => {
     if (!cartData.cartItems || cartData.cartItems.length === 0) {
-      alert("Your cart is empty! Redirecting to cart...");
+      toast({
+        title: "Cart is empty",
+        description: "Redirecting to cart...",
+        variant: "destructive"
+      });
       navigate("/cart");
     }
-  }, [cartData, navigate]);
+  }, [cartData, navigate, toast]);
 
   // Load addresses on component mount
   useEffect(() => {
@@ -64,24 +70,36 @@ const Checkout = () => {
     setIsLoading(true);
     try {
       const user = JSON.parse(localStorage.getItem("user"));
-      const userId = user._id;
+      const token = localStorage.getItem("token");
       
+      if (!user || !token) {
+        toast({
+          title: "Authentication required",
+          description: "Please login to continue",
+          variant: "destructive"
+        });
+        navigate("/login");
+        return;
+      }
+
       const addressData = {
         ...addressForm,
         id: editingAddress?.id || undefined,
-        userId: userId
+        userId: user._id
       };
 
-      const response = await fetch(`https://api.apexbee.in/api/user/address`, {
+      const response = await fetch(`http://localhost:5000/api/user/address`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify(addressData),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to save address");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to save address");
       }
 
       const result = await response.json();
@@ -106,9 +124,18 @@ const Checkout = () => {
       });
       setEditingAddress(null);
       setShowAddressDialog(false);
+
+      toast({
+        title: "Success",
+        description: editingAddress ? "Address updated successfully" : "Address added successfully",
+      });
     } catch (error) {
       console.error("Error saving address:", error);
-      alert("Failed to save address. Please try again.");
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save address. Please try again.",
+        variant: "destructive"
+      });
     } finally {
       setIsLoading(false);
     }
@@ -117,16 +144,26 @@ const Checkout = () => {
   const loadAddresses = async () => {
     try {
       const user = JSON.parse(localStorage.getItem("user"));
-      const userId = user._id;
+      const token = localStorage.getItem("token");
+      
+      if (!user || !token) {
+        return;
+      }
 
-      const response = await fetch(`https://api.apexbee.in/api/user/address/${userId}`);
+      const response = await fetch(`http://localhost:5000/api/user/address/${user.id}`, {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
 
       if (response.ok) {
         const data = await response.json();
 
         if (data.address) {
           setAddresses([data.address]);
-          setSelectedAddress(data.address);
+          // Select default address or first address
+          const defaultAddress = data.address.isDefault ? data.address : data.address;
+          setSelectedAddress(defaultAddress);
         } else {
           setAddresses([]);
           setSelectedAddress(null);
@@ -167,13 +204,29 @@ const Checkout = () => {
 
   const handlePlaceOrder = async () => {
     if (!selectedAddress) {
-      alert("Please select a delivery address");
+      toast({
+        title: "Address required",
+        description: "Please select a delivery address",
+        variant: "destructive"
+      });
       return;
     }
 
     setIsLoading(true);
     try {
       const user = JSON.parse(localStorage.getItem("user"));
+      const token = localStorage.getItem("token");
+      
+      if (!user || !token) {
+        toast({
+          title: "Authentication required",
+          description: "Please login to continue",
+          variant: "destructive"
+        });
+        navigate("/login");
+        return;
+      }
+
       const userId = user._id;
 
       // Prepare complete order data
@@ -196,9 +249,9 @@ const Checkout = () => {
         },
         paymentDetails: {
           method: selectedPayment,
-          status: selectedPayment === "cod" ? "pending" : "pending", // For COD, payment is pending
+          status: selectedPayment === "cod" ? "pending" : "completed",
           amount: orderDetails.total,
-          transactionId: null // Will be generated for online payments
+          transactionId: selectedPayment !== "cod" ? `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` : null
         },
         orderItems: orderDetails.items.map(item => ({
           productId: item.productId || item._id,
@@ -207,9 +260,9 @@ const Checkout = () => {
           originalPrice: item.originalPrice || item.price,
           image: item.image,
           quantity: item.quantity,
-          color: item.selectedColor || "default",
+          color: item.selectedColor || item.color || "default",
           size: item.size || "One Size",
-          vendorId: item.vendorId,
+          vendorId: item.vendorId || "default-vendor",
           itemTotal: item.price * item.quantity
         })),
         orderSummary: {
@@ -218,10 +271,10 @@ const Checkout = () => {
           shipping: orderDetails.shipping,
           discount: orderDetails.discount,
           total: orderDetails.total,
-          tax: 0, // You can add tax calculation if needed
+          tax: Math.round(orderDetails.total * 0.18), // 18% GST
         },
         orderStatus: {
-          status: "confirmed",
+          currentStatus: "confirmed",
           timeline: [
             {
               status: "confirmed",
@@ -233,21 +286,22 @@ const Checkout = () => {
         deliveryDetails: {
           expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
           shippingMethod: "Standard Delivery",
-          trackingNumber: null // Will be generated when shipped
+          trackingNumber: null
         },
         metadata: {
           source: cartData.fromBuyNow ? "buy_now" : "cart",
-          ipAddress: null, // You can capture this if needed
-          userAgent: navigator.userAgent
+          userAgent: navigator.userAgent,
+          referralCompleted: false // Will be updated by backend if first order
         }
       };
 
       console.log("Sending order data:", orderData);
 
-      const response = await fetch("https://api.apexbee.in/api/orders", {
+      const response = await fetch("http://localhost:5000/api/orders", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify(orderData),
       });
@@ -260,34 +314,50 @@ const Checkout = () => {
 
       console.log("Order created successfully:", result);
       
+      // Show success message with referral info if applicable
+      if (result.referral?.completed) {
+        toast({
+          title: "🎉 Referral Completed!",
+          description: "You earned Rs. 100 for your first order with referral!",
+          duration: 5000,
+        });
+      }
+      
       // Clear cart after successful order (only if coming from cart, not Buy Now)
       if (!cartData.fromBuyNow) {
-        await clearCart(userId);
+        await clearCart(userId, token);
       }
       
       // Navigate to success page with order details
       navigate("/order-success", { 
         state: { 
-          orderId: result.order._id || result.orderId,
+          orderId: result.order._id,
+          orderNumber: result.order.orderNumber,
           orderDetails: result.order,
-          paymentMethod: selectedPayment
+          paymentMethod: selectedPayment,
+          referralCompleted: result.referral?.completed || false
         } 
       });
     } catch (error) {
       console.error("Error placing order:", error);
-      alert(error.message || "Failed to place order. Please try again.");
+      toast({
+        title: "Order Failed",
+        description: error.message || "Failed to place order. Please try again.",
+        variant: "destructive"
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
   // Clear cart after successful order
-  const clearCart = async (userId) => {
+  const clearCart = async (userId, token) => {
     try {
-      const response = await fetch(`https://api.apexbee.in/api/cart/${userId}/clear`, {
+      const response = await fetch(`http://localhost:5000/api/cart/${userId}/clear`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
       });
       
@@ -309,17 +379,31 @@ const Checkout = () => {
     return orderDetails.shipping === 0 ? 'Free' : `₹${orderDetails.shipping}`;
   };
 
+  // Validate address form
+  const isAddressFormValid = () => {
+    return (
+      addressForm.name.trim() &&
+      addressForm.phone.trim() &&
+      addressForm.pincode.trim() &&
+      addressForm.address.trim() &&
+      addressForm.city.trim() &&
+      addressForm.state.trim() &&
+      addressForm.phone.length >= 10 &&
+      addressForm.pincode.length === 6
+    );
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar/>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         <h1 className="text-3xl font-bold mb-8">Checkout</h1>
 
-        <div className="grid md:grid-cols-3 gap-8">
+        <div className="grid lg:grid-cols-3 gap-8">
           {/* Left Column */}
-          <div className="md:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-6">
             {/* Delivery Address */}
             <div className="bg-white rounded-lg border p-6">
               <div className="flex items-center justify-between mb-4">
@@ -351,9 +435,9 @@ const Checkout = () => {
                 ) : (
                   addresses.map((address) => (
                     <div
-                      key={address.id}
+                      key={address._id || address.id}
                       className={`border rounded-lg p-4 cursor-pointer transition-colors ${
-                        selectedAddress?.id === address.id
+                        selectedAddress?._id === address._id || selectedAddress?.id === address.id
                           ? "border-primary bg-primary/5"
                           : "border-gray-200 hover:border-gray-300"
                       }`}
@@ -368,7 +452,7 @@ const Checkout = () => {
                                 Default
                               </span>
                             )}
-                            {selectedAddress?.id === address.id && (
+                            {(selectedAddress?._id === address._id || selectedAddress?.id === address.id) && (
                               <Check className="h-4 w-4 text-green-600" />
                             )}
                           </div>
@@ -444,13 +528,6 @@ const Checkout = () => {
                 </div>
 
                 <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="scan" id="scan" />
-                  <Label htmlFor="scan" className="cursor-pointer font-medium">
-                    Scan and Pay with UPI
-                  </Label>
-                </div>
-
-                <div className="flex items-center space-x-2">
                   <RadioGroupItem value="cod" id="cod" />
                   <Label htmlFor="cod" className="cursor-pointer font-medium">
                     Cash on Delivery/Pay on Delivery
@@ -465,7 +542,7 @@ const Checkout = () => {
           </div>
 
           {/* Right Column - Order Summary */}
-          <div className="md:col-span-1">
+          <div className="lg:col-span-1">
             <div className="bg-muted/30 rounded-lg p-6 sticky top-4">
               {/* Product Details */}
               <div className="mb-6">
@@ -476,9 +553,10 @@ const Checkout = () => {
                       <div className="flex gap-4">
                         <div className="w-20 h-20 bg-muted rounded-md flex-shrink-0 overflow-hidden">
                           <img 
-                            src={`${item.image}`} 
+                            src={item.image} 
                             alt={item.name} 
                             className="w-full h-full object-cover"
+                        
                           />
                         </div>
                         <div className="flex-1 min-w-0">
@@ -503,27 +581,27 @@ const Checkout = () => {
               </div>
 
               {/* Price Summary */}
-              <div className="space-y-4 mb-6">
+              <div className="space-y-3 mb-6">
                 <div className="flex justify-between">
-                  <span className="font-semibold">Items:</span>
-                  <span className="font-semibold">{orderDetails.items.length}</span>
+                  <span>Subtotal:</span>
+                  <span>₹{orderDetails.subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="font-semibold">Subtotal:</span>
-                  <span className="font-semibold">₹{orderDetails.subtotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-semibold">Delivery:</span>
-                  <span className="font-semibold text-green-600">
+                  <span>Delivery:</span>
+                  <span className={orderDetails.shipping === 0 ? "text-green-600" : ""}>
                     {getDeliveryText()}
                   </span>
                 </div>
                 {orderDetails.discount > 0 && (
                   <div className="flex justify-between">
-                    <span className="font-semibold">Discount:</span>
-                    <span className="font-semibold text-green-600">-₹{orderDetails.discount.toFixed(2)}</span>
+                    <span>Discount:</span>
+                    <span className="text-green-600">-₹{orderDetails.discount.toFixed(2)}</span>
                   </div>
                 )}
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Tax (GST):</span>
+                  <span>₹{Math.round(orderDetails.total * 0.18).toFixed(2)}</span>
+                </div>
               </div>
 
               <div className="border-t pt-4 mb-6">
@@ -534,11 +612,18 @@ const Checkout = () => {
               </div>
 
               <Button 
-                className="w-full bg-yellow hover:bg-yellow/90 text-yellow-foreground font-semibold"
+                className="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-3"
                 onClick={handlePlaceOrder}
                 disabled={isLoading || !selectedAddress || orderDetails.items.length === 0}
               >
-                {isLoading ? "Processing..." : `Place Order • ₹${orderDetails.total.toFixed(2)}`}
+                {isLoading ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Processing...
+                  </div>
+                ) : (
+                  `Place Order • ₹${orderDetails.total.toFixed(2)}`
+                )}
               </Button>
 
               <div className="mt-6 text-xs text-muted-foreground space-y-2">
@@ -552,7 +637,7 @@ const Checkout = () => {
 
       {/* Address Dialog */}
       <Dialog open={showAddressDialog} onOpenChange={setShowAddressDialog}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingAddress ? "Edit Address" : "Add New Address"}
@@ -580,8 +665,10 @@ const Checkout = () => {
                 id="phone"
                 value={addressForm.phone} 
                 onChange={(e) => setAddressForm(prev => ({ ...prev, phone: e.target.value }))}
-                placeholder="Enter your phone number"
+                placeholder="Enter your 10-digit phone number"
                 type="tel"
+                pattern="[0-9]{10}"
+                maxLength={10}
                 required
               />
             </div>
@@ -591,8 +678,11 @@ const Checkout = () => {
               <Input 
                 id="pincode"
                 value={addressForm.pincode} 
-                onChange={(e) => setAddressForm(prev => ({ ...prev, pincode: e.target.value }))}
-                placeholder="Enter pincode"
+                onChange={(e) => setAddressForm(prev => ({ ...prev, pincode: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                placeholder="Enter 6-digit pincode"
+                type="text"
+                pattern="[0-9]{6}"
+                maxLength={6}
                 required
               />
             </div>
@@ -604,7 +694,7 @@ const Checkout = () => {
                 value={addressForm.address}
                 onChange={(e) => setAddressForm(prev => ({ ...prev, address: e.target.value }))}
                 rows={3}
-                placeholder="Enter your complete address"
+                placeholder="Enter your complete address (House no., Building, Street, Area)"
                 required
               />
             </div>
@@ -640,7 +730,7 @@ const Checkout = () => {
                 onChange={(e) => setAddressForm(prev => ({ ...prev, isDefault: e.target.checked }))}
                 className="rounded border-gray-300"
               />
-              <Label htmlFor="isDefault" className="cursor-pointer">
+              <Label htmlFor="isDefault" className="cursor-pointer text-sm">
                 Set as default address
               </Label>
             </div>
@@ -668,8 +758,8 @@ const Checkout = () => {
             </Button>
             <Button
               onClick={handleSaveAddress}
-              className="bg-yellow hover:bg-yellow/90 text-yellow-foreground"
-              disabled={isLoading || !addressForm.name || !addressForm.phone || !addressForm.pincode || !addressForm.address || !addressForm.city || !addressForm.state}
+              className="bg-yellow-500 hover:bg-yellow-600 text-white"
+              disabled={isLoading || !isAddressFormValid()}
             >
               {isLoading ? "Saving..." : editingAddress ? "Update Address" : "Save Address"}
             </Button>

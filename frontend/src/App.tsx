@@ -54,7 +54,8 @@ const App = () => (
           <Route path="/profile" element={<Profile />} />
           <Route path="/super-vendor" element={<SuperVendor />} />
           <Route path="/referrals" element={<Referrals />} />
-          <Route path="/category" element={<Fashion />} />
+<Route path="/categories" element={<Fashion />} />
+<Route path="/category/:categoryName" element={<Fashion />} />
           <Route path="/wishlist" element={<Wishlist />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

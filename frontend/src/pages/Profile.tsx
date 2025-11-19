@@ -62,7 +62,7 @@ const Profile = () => {
     setLoading(prev => ({ ...prev, orders: true }));
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`https://api.apexbee.in/api/orders/user/${userData._id}`, {
+      const response = await fetch(`http://localhost:5000/api/orders/user/${userData._id}`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -86,7 +86,7 @@ const Profile = () => {
     setLoading(prev => ({ ...prev, addresses: true }));
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`https://api.apexbee.in/api/user/address/${userData._id}`, {
+      const response = await fetch(`http://localhost:5000/api/user/address/${userData._id}`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -401,7 +401,7 @@ const Profile = () => {
                           {order.orderItems?.[0]?.image && (
                             <div className="w-24 h-24 bg-muted rounded-md flex-shrink-0 overflow-hidden">
                               <img
-                                src={`https://api.apexbee.in${order.orderItems[0].image}`}
+                                src={`http://localhost:5000${order.orderItems[0].image}`}
                                 alt={order.orderItems[0].name}
                                 className="w-full h-full object-cover"
                               />

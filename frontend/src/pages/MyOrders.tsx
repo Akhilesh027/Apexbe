@@ -29,7 +29,7 @@ const MyOrders = () => {
         return;
       }
 
-      const response = await fetch(`https://api.apexbee.in/api/orders/user/${user._id}`, {
+      const response = await fetch(`http://localhost:5000/api/orders/user/${user._id}`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -246,7 +246,7 @@ const MyOrders = () => {
                       <div key={item._id || idx} className="flex gap-4">
                         <div className="w-20 h-20 bg-muted rounded-md flex-shrink-0 overflow-hidden">
                           <img 
-                            src={item.image.startsWith('http') ? item.image : `https://api.apexbee.in${item.image}`} 
+                            src={item.image.startsWith('http') ? item.image : `http://localhost:5000${item.image}`} 
                             alt={item.name} 
                             className="w-full h-full object-cover"
                           />

@@ -173,7 +173,7 @@ const OrderSuccess = () => {
                 <div key={item.productId || index} className="flex gap-4 pb-4 border-b last:border-b-0 last:pb-0">
                   <div className="w-24 h-24 bg-muted rounded-md flex-shrink-0 overflow-hidden">
                     <img 
-                      src={item.image.startsWith('http') ? item.image : `https://api.apexbee.in${item.image}`}
+                      src={item.image.startsWith('http') ? item.image : `http://localhost:5000${item.image}`}
                       alt={item.name} 
                       className="w-full h-full object-cover"
                     />

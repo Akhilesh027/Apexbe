@@ -9,10 +9,10 @@ import fasion from '../Web images/Web images/fasion.png';
 // Placeholder for the product data structure (Adjust this based on your actual API response)
 
 const Fashion = () => {
+    const categoryName = "fasion"; // You can make this dynamic based on route params if needed
     const [fashionProducts, setFashionProducts] = useState([]);
     const [loading, setLoading] = useState(true);
 
-    // --- Static Data Definitions (Unchanged) ---
     const categories = [
         { icon: "👕", label: "Tops & Tees" },
         { icon: "👗", label: "Dresses & Jumpsuits" },
@@ -52,7 +52,7 @@ const Fashion = () => {
             try {
                 // Assuming your API endpoint accepts a category filter or has a specific endpoint for 'fashion'
                 // You may need to replace 'https://api.apexbee.in/api/products?category=fashion' with your actual endpoint
-                const res = await fetch(`https://api.apexbee.in/api/products?category=fashion`); 
+                const res = await fetch(`http://localhost:5000/api/products?category=${categoryName}`); 
                 const data = await res.json();
 
                 if (res.ok) {

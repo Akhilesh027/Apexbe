@@ -18,17 +18,15 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ----------------------
-// DB CONNECTION
-// ----------------------
-mongoose
-  .connect("mongodb://127.0.0.1:27017")
-  .then(() => console.log("MongoDB Connected"))
-  .catch((err) => console.log("DB Error:", err));
+import dotenv from "dotenv";
+import Referral from "./models/Referral.js";
+dotenv.config();
 
-// ----------------------
-// REGISTER VENDOR
-// ----------------------
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("DB Connected"))
+  .catch((err) => console.error("DB Error:", err));
+
+
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password, confirmPassword } = req.body;
@@ -98,6 +96,28 @@ const userSchema = new mongoose.Schema(
     email: { type: String, unique: true, sparse: true },
     phone: { type: String, unique: true, sparse: true },
     password: String,
+      referralCode: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+   referralCode: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+  referredBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  walletBalance: {
+    type: Number,
+    default: 0
+  },
+  totalEarnings: {
+    type: Number,
+    default: 0
+  }
   },
   { timestamps: true }
 );
@@ -107,20 +127,141 @@ const User = mongoose.model("User", userSchema);
 // ---------------------------------------------
 // 🔐 TOKEN CREATOR
 // ---------------------------------------------
+
+// Utility Functions
+const generateReferralCode = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
 const createToken = (user) => {
   return jwt.sign(
-    { id: user._id },
-    "BANNU9", // You can change to process.env.JWT_SECRET
-    { expiresIn: "7d" }
+    { id: user._id, email: user.email }, 
+    process.env.JWT_SECRET || 'BANNU9', 
+    { expiresIn: '30d' }
   );
 };
+// Auth Middleware
+const auth = async (req, res, next) => {
+  try {
+    // Get token from header
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      console.log('No token provided');
+      return res.status(401).json({ error: 'No token, authorization denied' });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'BANNU9');
+    
+    // Find user by ID
+    const user = await User.findById(decoded.id).select('-password');
+    
+    if (!user) {
+      console.log('User not found for token');
+      return res.status(401).json({ error: 'Token is not valid' });
+    }
+
+    // Add user to request
+    req.user = user;
+    console.log('Authenticated user:', user._id);
+    next();
+  } catch (error) {
+    console.error('Auth middleware error:', error.message);
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired' });
+    }
+    
+    res.status(401).json({ error: 'Token is not valid' });
+  }
+};
+
+// Process Referral Function
+const processReferral = async (referredUserId, referralCode) => {
+  try {
+    const referrer = await User.findOne({ referralCode });
+    if (!referrer) {
+      console.log('Referrer not found for code:', referralCode);
+      return;
+    }
+
+    // Create referral record
+    const referral = await Referral.create({
+      referrer: referrer._id,
+      referredUser: referredUserId,
+      referralCode,
+      status: 'pending',
+      rewardAmount: 100
+    });
+
+    // Update referred user's record
+    await User.findByIdAndUpdate(referredUserId, {
+      referredBy: referrer._id
+    });
+
+    console.log(`Referral created: ${referrer._id} -> ${referredUserId}`);
+    return referral;
+  } catch (error) {
+    console.error('Error processing referral:', error);
+  }
+};
+
+// Complete Referral Function (call this when user makes purchase)
+const completeReferral = async (userId, orderAmount) => {
+  try {
+    const referral = await Referral.findOne({ 
+      referredUser: userId, 
+      status: 'pending' 
+    });
+
+    if (!referral) {
+      console.log('No pending referral found for user:', userId);
+      return;
+    }
+
+    // Update referral status to completed
+    referral.status = 'completed';
+    referral.completedAt = new Date();
+    await referral.save();
+
+    // Credit reward to referrer
+    await User.findByIdAndUpdate(referral.referrer, {
+      $inc: { 
+        walletBalance: referral.rewardAmount,
+        totalEarnings: referral.rewardAmount
+      }
+    });
+
+    // Update referral status to credited
+    referral.status = 'credited';
+    await referral.save();
+
+    console.log(`Referral completed and credited: ${referral._id}`);
+    return referral;
+  } catch (error) {
+    console.error('Error completing referral:', error);
+  }
+};
+
+// =============================================
+// 🚀 AUTH ENDPOINTS
+// =============================================
 
 // ---------------------------------------------
 // 📌 REGISTER API
 // ---------------------------------------------
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { name, email, phone, password, referralCode } = req.body;
 
     if (!name || !email || !phone || !password) {
       return res.status(400).json({ error: "All fields are required" });
@@ -135,21 +276,334 @@ app.post("/api/auth/register", async (req, res) => {
     }
 
     const hashedPass = await bcrypt.hash(password, 10);
+    const userReferralCode = generateReferralCode();
 
     const newUser = await User.create({
       name,
       email,
       phone,
       password: hashedPass,
+      referralCode: userReferralCode,
     });
+
+    // Process referral if referral code provided
+    if (referralCode) {
+      await processReferral(newUser._id, referralCode);
+    }
 
     res.json({
       message: "Registration successful",
-      user: newUser,
+      user: {
+        id: newUser._id,
+        name: newUser.name,
+        email: newUser.email,
+        phone: newUser.phone,
+        referralCode: newUser.referralCode
+      },
       token: createToken(newUser),
     });
   } catch (err) {
+    console.error('Registration error:', err);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ---------------------------------------------
+// 📌 LOGIN API
+// ---------------------------------------------
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Invalid credentials" });
+    }
+
+    res.json({
+      message: "Login successful",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        referralCode: user.referralCode,
+        walletBalance: user.walletBalance
+      },
+      token: createToken(user),
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+// ---------------------------------------------
+// 📌 GET REFERRAL CODE
+// ---------------------------------------------
+app.get("/api/referrals/code", auth, async (req, res) => {
+  try {
+    console.log('Getting referral code for user:', req.user?._id);
+    
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.referralCode) {
+      user.referralCode = generateReferralCode();
+      await user.save();
+    }
+
+    res.json({
+      referralCode: user.referralCode,
+      referralLink: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/signup?ref=${user.referralCode}`
+    });
+  } catch (error) {
+    console.error('Get referral code error:', error);
+    res.status(500).json({ error: 'Failed to get referral code' });
+  }
+});
+
+// ---------------------------------------------
+// 📌 GET REFERRAL STATS
+// ---------------------------------------------
+app.get("/api/referrals/stats", auth, async (req, res) => {
+  try {
+    console.log('Getting referral stats for user:', req.user?._id);
+    
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const userId = req.user._id;
+
+    const totalReferrals = await Referral.countDocuments({ referrer: userId });
+    const completedReferrals = await Referral.countDocuments({ 
+      referrer: userId, 
+      status: 'credited' 
+    });
+    const pendingReferrals = await Referral.countDocuments({ 
+      referrer: userId, 
+      status: 'pending' 
+    });
+    
+    const totalEarningsResult = await Referral.aggregate([
+      { $match: { referrer: new mongoose.Types.ObjectId(userId), status: 'credited' } },
+      { $group: { _id: null, total: { $sum: '$rewardAmount' } } }
+    ]);
+
+    const user = await User.findById(userId);
+
+    res.json({
+      totalReferrals,
+      completedReferrals,
+      pendingReferrals,
+      totalEarnings: totalEarningsResult[0]?.total || 0,
+      walletBalance: user?.walletBalance || 0
+    });
+  } catch (error) {
+    console.error('Get referral stats error:', error);
+    res.status(500).json({ error: 'Failed to get referral stats' });
+  }
+});
+
+// ---------------------------------------------
+// 📌 GET REFERRAL HISTORY
+// ---------------------------------------------
+app.get("/api/referrals/history", auth, async (req, res) => {
+  try {
+    console.log('Getting referral history for user:', req.user?._id);
+    
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const referrals = await Referral.find({ referrer: userId })
+      .populate('referredUser', 'name email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Referral.countDocuments({ referrer: userId });
+
+    res.json({
+      referrals: referrals.map(ref => ({
+        _id: ref._id,
+        referredUser: ref.referredUser,
+        status: ref.status,
+        rewardAmount: ref.rewardAmount,
+        createdAt: ref.createdAt
+      })),
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      total
+    });
+  } catch (error) {
+    console.error('Get referral history error:', error);
+    res.status(500).json({ error: 'Failed to get referral history' });
+  }
+});
+// ---------------------------------------------
+// 📌 GET REFERRAL STATS
+// ---------------------------------------------
+app.get("/api/referrals/stats", async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const totalReferrals = await Referral.countDocuments({ referrer: userId });
+    const completedReferrals = await Referral.countDocuments({ 
+      referrer: userId, 
+      status: 'credited' 
+    });
+    const pendingReferrals = await Referral.countDocuments({ 
+      referrer: userId, 
+      status: 'pending' 
+    });
+    
+    const totalEarningsResult = await Referral.aggregate([
+      { $match: { referrer: new mongoose.Types.ObjectId(userId), status: 'credited' } },
+      { $group: { _id: null, total: { $sum: '$rewardAmount' } } }
+    ]);
+
+    const user = await User.findById(userId);
+
+    res.json({
+      totalReferrals,
+      completedReferrals,
+      pendingReferrals,
+      totalEarnings: totalEarningsResult[0]?.total || 0,
+      walletBalance: user.walletBalance || 0
+    });
+  } catch (error) {
+    console.error('Get referral stats error:', error);
+    res.status(500).json({ error: 'Failed to get referral stats' });
+  }
+});
+
+// ---------------------------------------------
+// 📌 GET REFERRAL HISTORY
+// ---------------------------------------------
+app.get("/api/referrals/history", async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const referrals = await Referral.find({ referrer: userId })
+      .populate('referredUser', 'name email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Referral.countDocuments({ referrer: userId });
+
+    res.json({
+      referrals: referrals.map(ref => ({
+        _id: ref._id,
+        referredUser: ref.referredUser,
+        status: ref.status,
+        rewardAmount: ref.rewardAmount,
+        createdAt: ref.createdAt
+      })),
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      total
+    });
+  } catch (error) {
+    console.error('Get referral history error:', error);
+    res.status(500).json({ error: 'Failed to get referral history' });
+  }
+});
+
+// =============================================
+// 🛒 ORDER ENDPOINTS (For Referral Completion)
+// =============================================
+
+// ---------------------------------------------
+// 📌 CREATE ORDER (Complete referral)
+// ---------------------------------------------
+
+
+// ---------------------------------------------
+// 📌 COMPLETE REFERRAL MANUALLY (Admin/Test)
+// ---------------------------------------------
+app.post("/api/referrals/complete", auth, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    
+    const result = await completeReferral(userId, 0);
+    
+    if (!result) {
+      return res.status(404).json({ error: 'No pending referral found' });
+    }
+
+    res.json({
+      message: "Referral completed successfully",
+      referral: result
+    });
+  } catch (error) {
+    console.error('Complete referral error:', error);
+    res.status(500).json({ error: 'Failed to complete referral' });
+  }
+});
+
+// =============================================
+// 👤 USER PROFILE ENDPOINTS
+// =============================================
+
+// ---------------------------------------------
+// 📌 GET USER PROFILE
+// ---------------------------------------------
+app.get("/api/user/profile", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    res.json({ user });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
+
+// ---------------------------------------------
+// 📌 UPDATE USER PROFILE
+// ---------------------------------------------
+app.put("/api/user/profile", auth, async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { name, phone },
+      { new: true }
+    ).select('-password');
+
+    res.json({
+      message: "Profile updated successfully",
+      user
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 
@@ -220,11 +674,37 @@ const storage = new CloudinaryStorage({
 const upload = multer({ storage });
 
 
-
 // -------------------- ADD PRODUCT --------------------
 app.post("/api/products", upload.single("image"), async (req, res) => {
   try {
-    const { name, price, category, subcategory, stock, description, vendorId } = req.body;
+    const {
+      name,
+      price,
+      category,
+      subcategory,
+      stock,
+      description,
+      vendorId,
+      sku, // NEW FIELD
+    } = req.body;
+
+    if (!name || !price || !category || !vendorId) {
+      return res.status(400).json({
+        success: false,
+        message: "Required fields missing (name, price, category, vendorId)",
+      });
+    }
+
+    // Check for duplicate SKU if vendor provided one
+    if (sku) {
+      const existing = await Product.findOne({ sku });
+      if (existing) {
+        return res.status(400).json({
+          success: false,
+          message: "SKU already exists. Please use a unique SKU.",
+        });
+      }
+    }
 
     const productData = {
       vendorId,
@@ -234,15 +714,22 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
       subcategory,
       stock,
       description,
-      image: req.file?.path || "", // Cloudinary URL
+      sku: sku || undefined, // if undefined → Mongoose auto-generates
+      image: req.file?.path || "",
     };
 
     const product = await Product.create(productData);
 
-    res.json({ success: true, message: "Product added", product });
+    res.json({
+      success: true,
+      message: "Product submitted for approval",
+      product,
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: err.message });
+    console.error("Error adding product:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Server error: " + err.message });
   }
 });
 
@@ -520,34 +1007,62 @@ app.get("/api/wishlist/:userId", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
-app.get("/api/user/address/:userId", async (req, res) => {
+app.get("/api/user/address/:userId", auth, async (req, res) => {
   try {
-    const userId = req.params.userId;
-
-    // If you have auth middleware that sets req.userId, then verify:
-    if (req.userId && req.userId !== userId) {
-      return res.status(403).json({ error: "Forbidden" });
+    const { userId } = req.params;
+    
+    // Verify the requested userId matches the authenticated user
+    if (req.user._id.toString() !== userId) {
+      return res.status(403).json({ 
+        error: "Not authorized to access these addresses" 
+      });
     }
 
-    const address = await Address.findOne({ userId });
+    const addresses = await Address.find({ userId: userId }).sort({ isDefault: -1, createdAt: -1 });
+    
+    res.json({ 
+      addresses: addresses,
+      defaultAddress: addresses.find(addr => addr.isDefault) || addresses[0] || null
+    });
 
-    if (!address) {
-      return res.json({ address: null }); // No address found yet
-    }
-
-    res.json({ address });
   } catch (err) {
-    console.error("Error fetching address:", err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Get addresses error:", err);
+    res.status(500).json({ 
+      error: "Server error while fetching addresses" 
+    });
   }
 });
-
-app.post("/api/user/address", async (req, res) => {
+app.post("/api/user/address", auth, async (req, res) => {
   try {
-    const { name, phone, pincode, city, state, address, isDefault, id,userId } = req.body;
+    const { name, phone, pincode, city, state, address, isDefault, id } = req.body;
+    
+    // Validate required fields
+    if (!name || !phone || !pincode || !city || !state || !address) {
+      return res.status(400).json({ 
+        error: "All address fields are required" 
+      });
+    }
 
-    // If setting as default, unset other defaults
+    // Validate phone number (10 digits)
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(phone)) {
+      return res.status(400).json({ 
+        error: "Please enter a valid 10-digit phone number" 
+      });
+    }
+
+    // Validate pincode (6 digits)
+    const pincodeRegex = /^\d{6}$/;
+    if (!pincodeRegex.test(pincode)) {
+      return res.status(400).json({ 
+        error: "Please enter a valid 6-digit pincode" 
+      });
+    }
+
+    // Get user ID from authenticated request
+    const userId = req.user._id;
+
+    // If setting as default, unset other defaults for this user
     if (isDefault) {
       await Address.updateMany(
         { userId: userId },
@@ -555,17 +1070,32 @@ app.post("/api/user/address", async (req, res) => {
       );
     }
 
-    let doc;
+    let addressDoc;
+    
     if (id) {
-      // Update existing address
-      doc = await Address.findOneAndUpdate(
+      // Update existing address - ensure it belongs to the user
+      addressDoc = await Address.findOneAndUpdate(
         { _id: id, userId: userId },
-        { name, phone, pincode, city, state, address, isDefault },
-        { new: true }
+        { 
+          name, 
+          phone, 
+          pincode, 
+          city, 
+          state, 
+          address, 
+          isDefault 
+        },
+        { new: true, runValidators: true }
       );
+
+      if (!addressDoc) {
+        return res.status(404).json({ 
+          error: "Address not found or you don't have permission to edit it" 
+        });
+      }
     } else {
       // Create new address
-      doc = await Address.create({
+      addressDoc = await Address.create({
         userId: userId,
         name,
         phone,
@@ -577,13 +1107,34 @@ app.post("/api/user/address", async (req, res) => {
       });
     }
 
-    res.json({ message: "Address saved", address: doc });
+    res.json({ 
+      message: id ? "Address updated successfully" : "Address added successfully", 
+      address: addressDoc 
+    });
+
   } catch (err) {
-    res.status(500).json({ error: "Server error" });
+    console.error("Address save error:", err);
+    
+    if (err.name === 'ValidationError') {
+      const errors = Object.values(err.errors).map(error => error.message);
+      return res.status(400).json({ 
+        error: "Validation failed", 
+        details: errors 
+      });
+    }
+    
+    if (err.code === 11000) {
+      return res.status(400).json({ 
+        error: "Address already exists" 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: "Server error while saving address" 
+    });
   }
 });
-
-app.post('/api/orders', async (req, res) => {
+app.post('/api/orders', auth, async (req, res) => {
   try {
     const {
       userId,
@@ -603,13 +1154,17 @@ app.post('/api/orders', async (req, res) => {
       });
     }
 
-    // Verify user authorization
-    if (req.body.userId.toString() !== userId) {
+    // Verify user authorization - use authenticated user from middleware
+    if (req.user._id.toString() !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to create order for this user'
       });
     }
+
+    // Check if this is user's first order (for referral completion)
+    const orderCount = await Order.countDocuments({ userId });
+    const isFirstOrder = orderCount === 0;
 
     // Check product availability and validate prices
     for (const item of orderItems) {
@@ -648,7 +1203,7 @@ app.post('/api/orders', async (req, res) => {
       shippingAddress,
       paymentDetails: {
         ...paymentDetails,
-        status: paymentDetails.method === 'cod' ? 'pending' : 'completed'
+        status: paymentDetails?.method === 'cod' ? 'pending' : 'completed'
       },
       orderItems,
       orderSummary,
@@ -666,7 +1221,10 @@ app.post('/api/orders', async (req, res) => {
         expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
         shippingMethod: 'Standard Delivery'
       },
-      metadata: metadata || {}
+      metadata: {
+        ...metadata,
+        isFirstOrder: isFirstOrder
+      }
     };
 
     const order = new Order(orderData);
@@ -678,6 +1236,30 @@ app.post('/api/orders', async (req, res) => {
         item.productId,
         { $inc: { stock: -item.quantity } }
       );
+    }
+
+    // ✅ COMPLETE REFERRAL IF THIS IS FIRST ORDER
+    if (isFirstOrder) {
+      try {
+        console.log(`First order detected for user ${userId}, completing referral...`);
+        const referralResult = await completeReferral(userId, orderSummary.totalAmount);
+        
+        if (referralResult) {
+          console.log(`Referral completed successfully: ${referralResult._id}`);
+          
+          // Update order metadata with referral info
+          order.metadata.referralCompleted = true;
+          order.metadata.referralId = referralResult._id;
+          order.metadata.rewardAmount = referralResult.rewardAmount;
+          await order.save();
+        } else {
+          console.log('No pending referral found for user:', userId);
+        }
+      } catch (referralError) {
+        console.error('Error completing referral:', referralError);
+        // Don't fail the order if referral completion fails
+        // Just log the error and continue
+      }
     }
 
     // Populate the order with product details
@@ -696,8 +1278,13 @@ app.post('/api/orders', async (req, res) => {
         orderSummary: order.orderSummary,
         orderStatus: order.orderStatus,
         deliveryDetails: order.deliveryDetails,
+        metadata: order.metadata,
         createdAt: order.createdAt
-      }
+      },
+      referral: isFirstOrder ? {
+        completed: !!referralResult,
+        message: referralResult ? 'Referral reward credited!' : 'No referral found'
+      } : null
     });
 
   } catch (error) {

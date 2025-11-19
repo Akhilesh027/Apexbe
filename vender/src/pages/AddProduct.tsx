@@ -1,18 +1,31 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 
 const AddProduct = () => {
   const navigate = useNavigate();
+
+  // ----------------------------------------
+  // STATES
+  // ----------------------------------------
+  const [categories, setCategories] = useState([]);
+
   const [formData, setFormData] = useState({
     name: "",
+    sku: "",
     price: "",
     category: "",
     subcategory: "",
@@ -20,9 +33,46 @@ const AddProduct = () => {
     description: "",
     image: null as File | null,
   });
+
   const [preview, setPreview] = useState<string>("");
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ----------------------------------------
+  // SKU GENERATOR FUNCTION
+  // ----------------------------------------
+  const generateSKU = () => {
+    if (!formData.name) {
+      return toast.error("Enter product name first");
+    }
+
+    const cleaned = formData.name.replace(/\s+/g, "").toUpperCase();
+    const random = Math.floor(10000 + Math.random() * 90000);
+    const sku = `${cleaned}-${random}`;
+
+    setFormData({ ...formData, sku });
+    toast.success("SKU generated!");
+  };
+
+  // ----------------------------------------
+  // LOAD CATEGORIES
+  // ----------------------------------------
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const res = await fetch("http://localhost:5000/api/categories");
+        const data = await res.json();
+        setCategories(data.categories || []);
+      } catch (err) {
+        toast.error("Failed to load categories");
+      }
+    };
+
+    loadCategories();
+  }, []);
+
+  // ----------------------------------------
+  // IMAGE PREVIEW
+  // ----------------------------------------
+  const handleImageChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
       setFormData({ ...formData, image: file });
@@ -30,39 +80,41 @@ const AddProduct = () => {
     }
   };
 
-const handleSubmit = async (e) => {
-  e.preventDefault();
+  // ----------------------------------------
+  // SUBMIT
+  // ----------------------------------------
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
-  const vendor = JSON.parse(localStorage.getItem("vendor"));
-  if (!vendor) {
-    toast.error("Login first");
-    return;
-  }
+    const vendor = JSON.parse(localStorage.getItem("vendor"));
+    if (!vendor) return toast.error("Login first");
 
-  const form = new FormData();
-  form.append("name", formData.name);
-  form.append("price", formData.price);
-  form.append("category", formData.category);
-  form.append("subcategory", formData.subcategory);
-  form.append("stock", formData.stock);
-  form.append("description", formData.description);
-  form.append("vendorId", vendor.id);
-  if (formData.image) form.append("image", formData.image);
+    const form = new FormData();
+    form.append("name", formData.name);
+    form.append("sku", formData.sku);
+    form.append("price", formData.price);
+    form.append("category", formData.category);
+    form.append("subcategory", formData.subcategory);
+    form.append("stock", formData.stock);
+    form.append("description", formData.description);
+    form.append("vendorId", vendor.id);
 
-  const res = await fetch("https://api.apexbee.in/api/products", {
-    method: "POST",
-    body: form,
-  });
+    if (formData.image) form.append("image", formData.image);
 
-  const data = await res.json();
+    const res = await fetch("http://localhost:5000/api/products", {
+      method: "POST",
+      body: form,
+    });
 
-  if (data.product) {
-    toast.success("Product added!");
-    navigate("/products");
-  } else {
-    toast.error("Failed to add product");
-  }
-};
+    const data = await res.json();
+
+    if (data.product) {
+      toast.success("Product added!");
+      navigate("/products");
+    } else {
+      toast.error("Failed to add product");
+    }
+  };
 
   return (
     <AppLayout>
@@ -71,108 +123,160 @@ const handleSubmit = async (e) => {
           <CardHeader>
             <CardTitle>Add New Product</CardTitle>
           </CardHeader>
+
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                {/* Product Name */}
                 <div className="space-y-2">
-                  <Label htmlFor="name">Product Name *</Label>
+                  <Label>Product Name *</Label>
                   <Input
-                    id="name"
-                    type="text"
                     placeholder="Enter product name"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, name: e.target.value })
+                    }
                     required
                   />
                 </div>
 
+                {/* SKU + BTN */}
                 <div className="space-y-2">
-                  <Label htmlFor="price">Price *</Label>
+                  <Label>SKU *</Label>
+
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Click generate button"
+                      value={formData.sku}
+                      onChange={(e) =>
+                        setFormData({ ...formData, sku: e.target.value })
+                      }
+                      required
+                    />
+
+                    <Button type="button" onClick={generateSKU}>
+                      Generate
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Price */}
+                <div className="space-y-2">
+                  <Label>Price *</Label>
                   <Input
-                    id="price"
                     type="number"
                     placeholder="Enter price"
                     value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, price: e.target.value })
+                    }
                     required
                   />
                 </div>
 
+                {/* Dynamic Categories */}
                 <div className="space-y-2">
-                  <Label htmlFor="category">Category *</Label>
-                  <Select value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}>
+                  <Label>Category *</Label>
+                  <Select
+                    value={formData.category}
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, category: value })
+                    }
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
+
                     <SelectContent>
-                      <SelectItem value="fashion">Fashion</SelectItem>
-                      <SelectItem value="electronics">Electronics</SelectItem>
-                      <SelectItem value="grocery">Grocery</SelectItem>
+                      {categories.map((cat) => (
+                        <SelectItem key={cat._id} value={cat.name}>
+                          {cat.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
 
+                {/* Subcategory */}
                 <div className="space-y-2">
-                  <Label htmlFor="subcategory">Subcategory</Label>
-                  <Select value={formData.subcategory} onValueChange={(value) => setFormData({ ...formData, subcategory: value })}>
+                  <Label>Subcategory</Label>
+                  <Select
+                    value={formData.subcategory}
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, subcategory: value })
+                    }
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select subcategory" />
                     </SelectTrigger>
+
                     <SelectContent>
-                      <SelectItem value="clothing">Clothing</SelectItem>
-                      <SelectItem value="accessories">Accessories</SelectItem>
+                      <SelectItem value="new">New</SelectItem>
+                      <SelectItem value="popular">Popular</SelectItem>
+                      <SelectItem value="trending">Trending</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
+                {/* Stock */}
                 <div className="space-y-2">
-                  <Label htmlFor="stock">Stock Quantity</Label>
+                  <Label>Stock</Label>
                   <Input
-                    id="stock"
                     type="number"
-                    placeholder="Enter stock quantity"
+                    placeholder="Stock quantity"
                     value={formData.stock}
-                    onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, stock: e.target.value })
+                    }
                   />
                 </div>
               </div>
 
+              {/* Description */}
               <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
+                <Label>Description</Label>
                 <Textarea
-                  id="description"
-                  placeholder="Enter product description"
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   rows={4}
+                  placeholder="Product description"
+                  value={formData.description}
+                  onChange={(e) =>
+                    setFormData({ ...formData, description: e.target.value })
+                  }
                 />
               </div>
 
+              {/* Image */}
               <div className="space-y-2">
-                <Label htmlFor="image">Product Image</Label>
-                <Input
-                  id="image"
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageChange}
-                />
+                <Label>Product Image</Label>
+                <Input type="file" accept="image/*" onChange={handleImageChange} />
+
                 {preview && (
-                  <div className="mt-4">
-                    <img src={preview} alt="Preview" className="w-32 h-32 object-cover rounded" />
-                  </div>
+                  <img
+                    src={preview}
+                    className="w-32 h-32 rounded object-cover mt-4"
+                  />
                 )}
               </div>
 
               <div className="flex gap-4">
-                <Button type="submit" className="flex-1">Add Product</Button>
-                <Button type="button" variant="outline" onClick={() => navigate("/products")} className="flex-1">
+                <Button type="submit" className="flex-1">
+                  Add Product
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate("/products")}
+                  className="flex-1"
+                >
                   Cancel
                 </Button>
               </div>
             </form>
           </CardContent>
-          </Card>
-        </div>
+        </Card>
+      </div>
     </AppLayout>
   );
 };
