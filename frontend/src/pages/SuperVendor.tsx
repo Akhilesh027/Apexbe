@@ -20,7 +20,7 @@ const SuperVendor = () => {
   // ⭐ Fetch featured products from backend
   const loadFeatured = async () => {
     try {
-      const res = await fetch("http://localhost:5000/api/product");
+      const res = await fetch("https://api.apexbee.in/api/product");
       const data = await res.json();
       setFeaturedProducts(data.products || []);
     } catch (error) {

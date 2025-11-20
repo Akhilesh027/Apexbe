@@ -58,7 +58,7 @@ const AddProduct = () => {
   useEffect(() => {
     const loadCategories = async () => {
       try {
-        const res = await fetch("http://localhost:5000/api/categories");
+        const res = await fetch("https://api.apexbee.in/api/categories");
         const data = await res.json();
         setCategories(data.categories || []);
       } catch (err) {
@@ -101,7 +101,7 @@ const AddProduct = () => {
 
     if (formData.image) form.append("image", formData.image);
 
-    const res = await fetch("http://localhost:5000/api/products", {
+    const res = await fetch("https://api.apexbee.in/api/products", {
       method: "POST",
       body: form,
     });

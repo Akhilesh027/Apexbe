@@ -22,7 +22,7 @@ const Wishlist = () => {
       if (!user?._id) return;
 
       try {
-        const res = await axios.get(`http://localhost:5000/api/wishlist/${user._id}`);
+        const res = await axios.get(`https://api.apexbee.in/api/wishlist/${user._id}`);
         if (res.data.success) {
           setWishlistItems(res.data.wishlist);
         } else {
@@ -41,7 +41,7 @@ const Wishlist = () => {
 
   const removeFromWishlist = async (productId: string) => {
     try {
-      const res = await axios.post("http://localhost:5000/api/wishlist/toggle", {
+      const res = await axios.post("https://api.apexbee.in/api/wishlist/toggle", {
         userId: user._id,
         productId,
       });
@@ -72,7 +72,7 @@ const Wishlist = () => {
         vendorId: item.vendorId || null,
       };
 
-      const res = await axios.post("http://localhost:5000/api/cart/add", payload);
+      const res = await axios.post("https://api.apexbee.in/api/cart/add", payload);
 
       if (res.data.success) {
         toast({

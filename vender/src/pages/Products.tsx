@@ -35,7 +35,7 @@ const Products = () => {
           return;
         }
 
-        const res = await fetch(`http://localhost:5000/api/products/${vendor.id}`);
+        const res = await fetch(`https://api.apexbee.in/api/products/${vendor.id}`);
         const data = await res.json();
 
         if (res.ok) {
@@ -68,7 +68,7 @@ const Products = () => {
     // 2. **TODO:** Implement API call to update product active status
     /*
     try {
-      await fetch(`http://localhost:5000/api/products/${productId}/status`, {
+      await fetch(`https://api.apexbee.in/api/products/${productId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: !currentActive }),

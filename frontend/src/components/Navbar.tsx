@@ -25,7 +25,7 @@ const Navbar = () => {
   const fetchCartItemsCount = async (userId) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`http://localhost:5000/api/cart/${userId}`, {
+      const response = await fetch(`https://api.apexbee.in/api/cart/${userId}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -53,7 +53,7 @@ const Navbar = () => {
       }
 
       // Fetch referral stats which includes wallet balance
-      const response = await fetch(`http://localhost:5000/api/referrals/stats`, {
+      const response = await fetch(`https://api.apexbee.in/api/referrals/stats`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'

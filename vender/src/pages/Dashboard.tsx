@@ -21,7 +21,7 @@ const Dashboard = () => {
     const fetchStats = async () => {
       setLoading(true);
       try {
-        const res = await fetch("http://localhost:5000/api/dashboard"); // Replace with your API endpoint
+        const res = await fetch("https://api.apexbee.in/api/dashboard"); // Replace with your API endpoint
         const data = await res.json();
 
         if (res.ok && data.success) {

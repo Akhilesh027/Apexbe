@@ -88,7 +88,7 @@ const Checkout = () => {
         userId: user._id
       };
 
-      const response = await fetch(`http://localhost:5000/api/user/address`, {
+      const response = await fetch(`https://api.apexbee.in/api/user/address`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -150,7 +150,7 @@ const Checkout = () => {
         return;
       }
 
-      const response = await fetch(`http://localhost:5000/api/user/address/${user.id}`, {
+      const response = await fetch(`https://api.apexbee.in/api/user/address/${user.id}`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -297,7 +297,7 @@ const Checkout = () => {
 
       console.log("Sending order data:", orderData);
 
-      const response = await fetch("http://localhost:5000/api/orders", {
+      const response = await fetch("https://api.apexbee.in/api/orders", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -353,7 +353,7 @@ const Checkout = () => {
   // Clear cart after successful order
   const clearCart = async (userId, token) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/cart/${userId}/clear`, {
+      const response = await fetch(`https://api.apexbee.in/api/cart/${userId}/clear`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
