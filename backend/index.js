@@ -7,7 +7,7 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import Vendor from "./models/vendor.js";
-import Product from "./models/Product.js";
+import Product from "./models/product.js";
 import Cart from "./models/Cart.js";
 import Address from "./models/Address.js";
 import Order from "./models/Order.js";
