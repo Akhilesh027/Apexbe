@@ -76,7 +76,7 @@ const Checkout = () => {
       if (!user || !token) return;
 
       const res = await fetch(
-        `http://localhost:5000/api/user/address/${user.id}`,
+        `https://api.apexbee.in/api/user/address/${user.id}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -100,7 +100,7 @@ const Checkout = () => {
       if (!user || !token) return;
 
       const res = await fetch(
-        `http://localhost:5000/api/user/wallet/${user.id}`,
+        `https://api.apexbee.in/api/user/wallet/${user.id}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -144,7 +144,7 @@ const Checkout = () => {
         id: editingAddress?.id,
         userId: user.id,
       };
-      const res = await fetch("http://localhost:5000/api/user/address", {
+      const res = await fetch("https://api.apexbee.in/api/user/address", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -239,7 +239,7 @@ const Checkout = () => {
         orderSummary: orderDetails,
       };
 
-      const res = await fetch("http://localhost:5000/api/orders", {
+      const res = await fetch("https://api.apexbee.in/api/orders", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -252,7 +252,7 @@ const Checkout = () => {
 
       // Deduct wallet
       if (selectedPayment === "wallet") {
-        await fetch(`http://localhost:5000/api/user/wallet/deduct/${user.id}`, {
+        await fetch(`https://api.apexbee.in/api/user/wallet/deduct/${user.id}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

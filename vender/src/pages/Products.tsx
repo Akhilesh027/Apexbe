@@ -32,7 +32,7 @@ const Products = () => {
           return;
         }
 
-        const res = await fetch(`http://localhost:5000/api/products/vendor/${vendor.id}`);
+        const res = await fetch(`https://api.apexbee.in/api/products/vendor/${vendor.id}`);
         const data = await res.json();
 
         if (res.ok) {
@@ -64,7 +64,7 @@ const Products = () => {
 
     try {
       const vendor = JSON.parse(localStorage.getItem("vendor"));
-      const res = await fetch(`http://localhost:5000/api/products/${productId}`, {
+      const res = await fetch(`https://api.apexbee.in/api/products/${productId}`, {
   method: "DELETE",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ vendorId: vendor.id }),

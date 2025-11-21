@@ -41,7 +41,7 @@ const handleOpenForm = (title, endpoint) => {
     try {
       const token = localStorage.getItem("token");
       if (!token) return;
-      const response = await fetch(`http://localhost:5000/api/cart/${userId}`, {
+      const response = await fetch(`https://api.apexbee.in/api/cart/${userId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -60,7 +60,7 @@ const handleOpenForm = (title, endpoint) => {
     try {
       const token = localStorage.getItem("token");
       if (!token) return;
-      const response = await fetch(`http://localhost:5000/api/orders/${userId}/count`, {
+      const response = await fetch(`https://api.apexbee.in/api/orders/${userId}/count`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -79,7 +79,7 @@ const handleOpenForm = (title, endpoint) => {
       const user = JSON.parse(localStorage.getItem("user"));
       if (!token || !user) return;
 
-      const response = await fetch(`http://localhost:5000/api/referrals/stats`, {
+      const response = await fetch(`https://api.apexbee.in/api/referrals/stats`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'

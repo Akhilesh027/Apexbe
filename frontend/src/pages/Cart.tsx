@@ -23,7 +23,7 @@ const Cart = () => {
   const fetchCart = async () => {
     if (!userId) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/cart/${userId}`);
+      const res = await fetch(`https://api.apexbee.in/api/cart/${userId}`);
       const data = await res.json();
       setCartItems(data.cart || []);
     } catch (err) {
@@ -45,7 +45,7 @@ const Cart = () => {
 
     try {
       setLoading(true);
-      const res = await fetch(`http://localhost:5000/api/cart/${userId}`, {
+      const res = await fetch(`https://api.apexbee.in/api/cart/${userId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId: item.productId || item._id, quantity: newQuantity }),
@@ -73,7 +73,7 @@ const Cart = () => {
 
     try {
       setLoading(true);
-      const res = await fetch(`http://localhost:5000/api/cart/${userId}`, {
+      const res = await fetch(`https://api.apexbee.in/api/cart/${userId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId: item.productId || item._id }),

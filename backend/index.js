@@ -1422,7 +1422,7 @@ app.post("/api/orders", auth, async (req, res) => {
     // Deduct wallet if used
     if (paymentDetails?.method === "wallet") {
       const walletAmount = orderSummary.total;
-      await fetch(`http://localhost:5000/api/user/wallet/deduct/${userId}`, {
+      await fetch(`https://api.apexbee.in/api/user/wallet/deduct/${userId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${req.headers.authorization?.split(" ")[1]}` },
         body: JSON.stringify({ amount: walletAmount })

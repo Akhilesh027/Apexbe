@@ -36,7 +36,7 @@ const Category = () => {
 
       try {
         // Fetch all categories to find the current one
-        const categoriesRes = await fetch("http://localhost:5000/api/categories");
+        const categoriesRes = await fetch("https://api.apexbee.in/api/categories");
         const categoriesData = await categoriesRes.json();
 
         if (!categoriesRes.ok) throw new Error(categoriesData.error || "Failed to fetch categories");
@@ -55,14 +55,14 @@ const Category = () => {
 
         // Fetch subcategories
         const subcatsRes = await fetch(
-          `http://localhost:5000/api/subcategories?category=${foundCategory._id}`
+          `https://api.apexbee.in/api/subcategories?category=${foundCategory._id}`
         );
         const subcatsData = await subcatsRes.json();
         if (subcatsRes.ok) setSubcategories(subcatsData.subcategories || []);
 
         // Fetch products for this category
         const productsRes = await fetch(
-          `http://localhost:5000/api/products/${encodeURIComponent(foundCategory.name)}`
+          `https://api.apexbee.in/api/products/${encodeURIComponent(foundCategory.name)}`
         );
         const productsData = await productsRes.json();
 

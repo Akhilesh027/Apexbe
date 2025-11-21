@@ -54,7 +54,7 @@ const ProductDetail = () => {
         const fetchProductDetails = async () => {
             setLoading(true);
             try {
-                const res = await fetch(`http://localhost:5000/api/product/${id}`);
+                const res = await fetch(`https://api.apexbee.in/api/product/${id}`);
                 const data = await res.json();
                 if (res.ok || data) {
                     setProduct(data);
@@ -73,7 +73,7 @@ const ProductDetail = () => {
         const fetchSimilarProducts = async (categoryName, currentId) => {
             try {
                 const res = await fetch(
-                    `http://localhost:5000/api/products?category=${categoryName}&excludeId=${currentId}&limit=4`
+                    `https://api.apexbee.in/api/products?category=${categoryName}&excludeId=${currentId}&limit=4`
                 );
                 const data = await res.json();
                 setSimilarProducts(data.products || data || []);
@@ -103,7 +103,7 @@ const ProductDetail = () => {
         };
 
         try {
-            const res = await fetch("http://localhost:5000/api/cart/add", {
+            const res = await fetch("https://api.apexbee.in/api/cart/add", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(item),
