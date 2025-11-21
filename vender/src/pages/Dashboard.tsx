@@ -3,6 +3,7 @@ import { Package, XCircle, CheckCircle, TrendingUp, TrendingDown, RotateCcw } fr
 import AppLayout from "@/components/AppLayout";
 import StatCard from "@/components/StatCard";
 import { toast } from "sonner";
+import VendorAccount from "./Vendor";
 
 interface Stats {
   totalOrders: number;
@@ -21,7 +22,7 @@ const Dashboard = () => {
     const fetchStats = async () => {
       setLoading(true);
       try {
-        const res = await fetch("https://api.apexbee.in/api/dashboard"); // Replace with your API endpoint
+        const res = await fetch("http://localhost:5000/api/dashboard"); // Replace with your API endpoint
         const data = await res.json();
 
         if (res.ok && data.success) {
@@ -80,6 +81,7 @@ const Dashboard = () => {
             />
           ))}
         </div>
+     
       </div>
     </AppLayout>
   );

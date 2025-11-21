@@ -5,19 +5,25 @@ import { Trash2, Plus, Minus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+// Helper function to format currency
+const formatCurrency = (amount) => {
+  const value = typeof amount === "number" && !isNaN(amount) ? amount : 0;
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 0 }).format(value);
+};
+
 const Cart = () => {
   const [cartItems, setCartItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const user = JSON.parse(localStorage.getItem("user"));
-  const userId = user?._id;
+  const userId = user?.id;
 
   // Fetch cart items from backend
   const fetchCart = async () => {
     if (!userId) return;
     try {
-      const res = await fetch(`https://api.apexbee.in/api/cart/${userId}`);
+      const res = await fetch(`http://localhost:5000/api/cart/${userId}`);
       const data = await res.json();
       setCartItems(data.cart || []);
     } catch (err) {
@@ -29,7 +35,7 @@ const Cart = () => {
     fetchCart();
   }, [userId]);
 
-  // Update quantity for a cart item
+  // Update quantity
   const updateQuantity = async (itemId, delta) => {
     if (!userId) return;
     const item = cartItems.find(i => i._id === itemId || i.productId === itemId);
@@ -39,7 +45,7 @@ const Cart = () => {
 
     try {
       setLoading(true);
-      const res = await fetch(`https://api.apexbee.in/api/cart/${userId}`, {
+      const res = await fetch(`http://localhost:5000/api/cart/${userId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId: item.productId || item._id, quantity: newQuantity }),
@@ -47,9 +53,7 @@ const Cart = () => {
 
       if (res.ok) {
         setCartItems(prev =>
-          prev.map(i =>
-            i._id === itemId || i.productId === itemId ? { ...i, quantity: newQuantity } : i
-          )
+          prev.map(i => i._id === itemId || i.productId === itemId ? { ...i, quantity: newQuantity } : i)
         );
       } else {
         console.error("Failed to update quantity");
@@ -61,7 +65,7 @@ const Cart = () => {
     }
   };
 
-  // Remove item from cart
+  // Remove item
   const removeItem = async (itemId) => {
     if (!userId) return;
     const item = cartItems.find(i => i._id === itemId || i.productId === itemId);
@@ -69,7 +73,7 @@ const Cart = () => {
 
     try {
       setLoading(true);
-      const res = await fetch(`https://api.apexbee.in/api/cart/${userId}`, {
+      const res = await fetch(`http://localhost:5000/api/cart/${userId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId: item.productId || item._id }),
@@ -87,20 +91,15 @@ const Cart = () => {
     }
   };
 
-  const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const originalTotal = cartItems.reduce(
-    (sum, item) => sum + (item.originalPrice || item.price) * item.quantity,
-    0
-  );
+  const subtotal = cartItems.reduce((sum, item) => sum + (item.afterDiscount || item.price) * item.quantity, 0);
+  const originalTotal = cartItems.reduce((sum, item) => sum + (item.salesPrice || item.afterDiscount || item.price) * item.quantity, 0);
   const discount = originalTotal - subtotal;
   const shipping = cartItems.length > 0 ? 50 : 0;
   const total = subtotal + shipping;
 
   const handleCheckout = () => {
     if (cartItems.length === 0) return alert("Your cart is empty!");
-    navigate("/checkout", {
-      state: { cartItems, subtotal, discount, shipping, total },
-    });
+    navigate("/checkout", { state: { cartItems, subtotal, discount, shipping, total } });
   };
 
   return (
@@ -115,39 +114,27 @@ const Cart = () => {
           <div className="lg:col-span-2 space-y-4">
             {cartItems.length === 0 ? (
               <div className="text-center py-12">
-                <p className="text-muted-foreground text-lg mb-4">
-                  Your cart is empty
-                </p>
-                <Button
-                  onClick={() => navigate("/products")}
-                  className="bg-navy hover:bg-navy/90 text-white"
-                >
+                <p className="text-muted-foreground text-lg mb-4">Your cart is empty</p>
+                <Button onClick={() => navigate("/products")} className="bg-navy hover:bg-navy/90 text-white">
                   Continue Shopping
                 </Button>
               </div>
             ) : (
               cartItems.map(item => (
-                <div
-                  key={item._id || item.productId}
-                  className="bg-white rounded-lg p-4 shadow-sm flex gap-4"
-                >
+                <div key={item._id || item.productId} className="bg-white rounded-lg p-4 shadow-sm flex gap-4">
                   <img
-                    src={item.image}
-                    alt={item.name}
+                    src={item.images?.[0] || item.image || "/placeholder.svg"}
+                    alt={item.itemName || item.name}
                     className="w-24 h-24 object-cover rounded"
                   />
 
                   <div className="flex-1">
-                    <h3 className="font-semibold text-navy mb-2">{item.name}</h3>
+                    <h3 className="font-semibold text-navy mb-2">{item.itemName || item.name}</h3>
 
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="text-lg font-bold text-navy">
-                        Rs. {item.price}
-                      </span>
-                      {item.originalPrice && item.originalPrice > item.price && (
-                        <span className="text-sm text-muted-foreground line-through">
-                          Rs. {item.originalPrice}
-                        </span>
+                      <span className="text-lg font-bold text-navy">{formatCurrency(item.afterDiscount || item.price)}</span>
+                      {item.salesPrice && item.salesPrice > (item.afterDiscount || item.price) && (
+                        <span className="text-sm text-muted-foreground line-through">{formatCurrency(item.salesPrice)}</span>
                       )}
                     </div>
 
@@ -161,9 +148,7 @@ const Cart = () => {
                         >
                           <Minus className="h-4 w-4" />
                         </Button>
-
                         <span className="w-8 text-center font-medium">{item.quantity}</span>
-
                         <Button
                           size="icon"
                           variant="ghost"
@@ -196,41 +181,33 @@ const Cart = () => {
             <div className="space-y-3 mb-4">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
-                <span className="font-semibold">Rs. {subtotal.toFixed(2)}</span>
+                <span className="font-semibold">{formatCurrency(subtotal)}</span>
               </div>
 
               {discount > 0 && (
                 <div className="flex justify-between text-green-600">
                   <span>Discount</span>
-                  <span>-Rs. {discount.toFixed(2)}</span>
+                  <span>-{formatCurrency(discount)}</span>
                 </div>
               )}
 
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Shipping</span>
-                <span className="font-semibold">Rs. {shipping.toFixed(2)}</span>
+                <span className="font-semibold">{formatCurrency(shipping)}</span>
               </div>
 
               <div className="border-t pt-3 flex justify-between text-lg font-bold">
                 <span>Total</span>
-                <span className="text-navy">Rs. {total.toFixed(2)}</span>
+                <span className="text-navy">{formatCurrency(total)}</span>
               </div>
             </div>
 
-            <Button
-              className="w-full bg-navy hover:bg-navy/90 text-white"
-              onClick={handleCheckout}
-              disabled={cartItems.length === 0 || loading}
-            >
+            <Button className="w-full bg-navy hover:bg-navy/90 text-white" onClick={handleCheckout} disabled={cartItems.length === 0 || loading}>
               {loading ? "Processing..." : "Proceed to Checkout"}
             </Button>
 
             {cartItems.length > 0 && (
-              <Button
-                variant="outline"
-                className="w-full mt-3"
-                onClick={() => navigate("/products")}
-              >
+              <Button variant="outline" className="w-full mt-3" onClick={() => navigate("/products")}>
                 Continue Shopping
               </Button>
             )}

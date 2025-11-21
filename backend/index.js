@@ -7,19 +7,24 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import Vendor from "./models/vendor.js";
-import Product from "./models/product.js";
+import Product from "./models/Product.js";
 import Cart from "./models/Cart.js";
 import Address from "./models/Address.js";
 import Order from "./models/Order.js";
 import Wishlist from "./models/Wishlist.js";
 import Category from "./models/Category.js";
 import Subcategory from "./models/Subcategory.js";
+import path from "path";
+import fs from "fs";
+
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 import dotenv from "dotenv";
 import Referral from "./models/Referral.js";
+import Bussiness from "./models/Bussiness.js";
+import Form from "./models/Form.js";
 dotenv.config();
 
 mongoose.connect(process.env.MONGO_URI)
@@ -654,84 +659,224 @@ app.post("/api/login/phone", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+// GET /api/user/wallet/:userId
+app.get("/api/user/wallet/:userId", auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
 
-cloudinary.config({
-  cloud_name: "dguxtvyut",
-  api_key: "952138336163551",
-  api_secret: "ppFNE2zTSuTPotEZcemJ_on7iHg",
+    if (req.user._id.toString() !== userId) {
+      return res.status(403).json({ success: false, message: "Unauthorized access" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.json({ success: true, walletBalance: user.walletBalance });
+  } catch (error) {
+    console.error("Error fetching wallet:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+// POST /api/user/wallet/deduct/:userId
+app.post("/api/user/wallet/deduct/:userId", auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { amount } = req.body;
+
+    if (req.user._id.toString() !== userId) {
+      return res.status(403).json({ success: false, message: "Unauthorized access" });
+    }
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid amount" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    if (user.walletBalance < amount) {
+      return res.status(400).json({ success: false, message: "Insufficient wallet balance" });
+    }
+
+    user.walletBalance -= amount;
+    await user.save();
+
+    res.json({ success: true, walletBalance: user.walletBalance, message: "Wallet deducted successfully" });
+  } catch (error) {
+    console.error("Error deducting wallet:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
-// --- Multer + Cloudinary Storage ---
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "images",
-    allowed_formats: ["jpg", "png", "jpeg"],
-    transformation: [{ width: 800, height: 800, crop: "limit" }],
+const uploadPath = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadPath)) {
+  fs.mkdirSync(uploadPath);
+}
+
+// Multer local storage
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadPath);
   },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + "-" + file.originalname);
+  }
 });
 
 const upload = multer({ storage });
+app.post(
+  "/api/business/add-business",
+  upload.single("logo"),
+  async (req, res) => {
+    try {
+      const {
+        vendorId,
+        businessName,
+        phone,
+        email,
+        businessTypes,
+        industryType,
+        registrationType,
+
+        // STEP 2 fields
+        address,
+        state,
+        city,
+        pinCode,
+        gstApplicable,
+        gstNumber,
+      } = req.body;
+
+      if (!vendorId) {
+        return res.status(400).json({ message: "Vendor ID required" });
+      }
+
+      const newBusiness = new Bussiness({
+        vendorId,
+        businessName,
+        phone,
+        email,
+        industryType,
+        registrationType,
+        businessTypes: JSON.parse(businessTypes),
+
+        // LOCAL FILE PATH
+        logo: req.file ? `/uploads/${req.file.filename}` : "",
+
+        // Step 2 fields
+        address,
+        state,
+        city,
+        pinCode,
+        gstApplicable: gstApplicable === "true",
+        gstNumber,
+      });
+
+      await newBusiness.save();
+
+      return res.status(201).json({
+        message: "Business details saved successfully",
+        business: newBusiness,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ message: "Server error", error });
+    }
+  }
+);
+app.get("/api/business/get-business/:vendorId", async (req, res) => {
+  try {
+    const business = await Bussiness.findOne({ vendorId: req.params.vendorId });
+    res.json({ business });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 
-// -------------------- ADD PRODUCT --------------------
-app.post("/api/products", upload.single("image"), async (req, res) => {
+
+const generateSKU = () => {
+  return "APX-" + Date.now();
+};
+
+// ------------------ ADD PRODUCT API ------------------
+app.post("/api/products/add-product", upload.array("images", 10), async (req, res) => {
   try {
     const {
-      name,
-      price,
-      category,
-      subcategory,
-      stock,
-      description,
       vendorId,
-      sku, // NEW FIELD
+      itemType,
+      category,
+      itemName,
+      salesPrice,
+      taxOption,
+      gstRate,
+      description,
+
+      measuringUnit,
+      hsnCode,
+      godown,
+      openStock,
+      asOnDate,
+
+      discount,
     } = req.body;
 
-    if (!name || !price || !category || !vendorId) {
-      return res.status(400).json({
-        success: false,
-        message: "Required fields missing (name, price, category, vendorId)",
-      });
-    }
+    // SKU auto generate
+    const skuCode = generateSKU();
 
-    // Check for duplicate SKU if vendor provided one
-    if (sku) {
-      const existing = await Product.findOne({ sku });
-      if (existing) {
-        return res.status(400).json({
-          success: false,
-          message: "SKU already exists. Please use a unique SKU.",
-        });
-      }
-    }
+    // price calculations
+    const userPrice = Number(salesPrice);
+    const disc = Number(discount);
+    const afterDiscount = userPrice - disc;
+    const commission = afterDiscount * 0.10;       // 10% commission
+    const finalAmount = afterDiscount - commission;
 
-    const productData = {
+    const images = req.files ? req.files.map((f) => f.path) : [];
+
+  
+    const product = new Product({
       vendorId,
-      name,
-      price,
+      itemType,
       category,
-      subcategory,
-      stock,
+      itemName,
+      salesPrice: userPrice,
+      taxOption,
+      gstRate,
       description,
-      sku: sku || undefined, // if undefined → Mongoose auto-generates
-      image: req.file?.path || "",
-    };
+      images,
 
-    const product = await Product.create(productData);
+      // stock
+      skuCode,
+      measuringUnit,
+      hsnCode,
+      godown,
+      openStock,
+      asOnDate,
+
+      // price auto
+      userPrice,
+      discount: disc,
+      afterDiscount,
+      commission,
+      finalAmount,
+    });
+
+    await product.save();
 
     res.json({
       success: true,
-      message: "Product submitted for approval",
+      message: "Product added successfully",
       product,
     });
-  } catch (err) {
-    console.error("Error adding product:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error: " + err.message });
+  } catch (error) {
+    console.log("Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 });
+
+
 
 app.get("/api/product", async (req, res) => {
   try {
@@ -742,29 +887,29 @@ app.get("/api/product", async (req, res) => {
   }
 });
 
-// -------------------- GET ALL PRODUCTS --------------------
-// Updated GET /api/products route to support filtering by category
-app.get("/api/products", async (req, res) => {
+app.get("/api/products/:category", async (req, res) => {
   try {
-    // Extract the category filter from query parameters (e.g., /api/products?category=fashion)
-    const { category } = req.query;
+    const categoryName = req.params.category;
 
-    // Build the MongoDB filter object
-    let filter = {};
-
-    if (category) {
-      // If a category is provided, add it to the filter
-      filter.category = category;
+    // Find the category document by name
+    const foundCategory = await Category.findOne({ name: categoryName });
+    if (!foundCategory) {
+      return res.json([]); // No products if category doesn't exist
     }
 
-    // Find products based on the filter and populate vendor details
-    const products = await Product.find(filter).populate("vendorId", "name email");
+    // Find products with this category ID
+    const products = await Product.find({ category: foundCategory._id })
+      .populate("category", "name"); // populate category name
 
-    // Successfully return the products (either filtered or all)
-    res.json(products);
+    // Add categoryName field for convenience
+    const productsWithCategoryName = products.map((p) => ({
+      ...p._doc,
+      categoryName: p.category?.name || "Unknown"
+    }));
+
+    res.json(productsWithCategoryName);
   } catch (err) {
-    // Log the error and send a 500 Internal Server Error status
-    console.error("Error fetching products:", err);
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -836,27 +981,47 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to update product" });
   }
 });
-
-// DELETE PRODUCT
-app.delete("/api/product/:id", async (req, res) => {
+// DELETE /api/products/:id
+app.delete("/api/products/:id", async (req, res) => {
   try {
-    const product = await Product.findByIdAndDelete(req.params.id);
-    if (!product) return res.status(404).json({ success: false, message: "Product not found" });
-    res.json({ success: true, message: "Product deleted successfully" });
+    const productId = req.params.id;
+    const vendorId = req.body.vendorId; // send vendorId from frontend
+
+    if (!vendorId) return res.status(401).json({ error: "Unauthorized" });
+
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ error: "Product not found" });
+
+    if (product.vendorId.toString() !== vendorId) {
+      return res.status(403).json({ error: "You cannot delete this product" });
+    }
+
+    await Product.findByIdAndDelete(productId);
+    res.json({ message: "Product deleted successfully" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to delete product" });
+    res.status(500).json({ error: "Server error" });
   }
 });
-// -------------------- GET PRODUCTS OF LOGGED VENDOR --------------------
-app.get("/api/products/:vendorId", async (req, res) => {
+
+
+app.get("/api/products/vendor/:vendorId", async (req, res) => {
   try {
-    const products = await Product.find({ vendorId: req.params.vendorId });
-    res.json(products);
+    const products = await Product.find({ vendorId: req.params.vendorId })
+      .populate("category", "name"); // populate only the 'name' field
+
+    // Transform products to include category name directly
+    const productsWithCategory = products.map((p) => ({
+      ...p._doc,
+      categoryName: p.category?.name || "Unknown"
+    }));
+
+    res.json(productsWithCategory);
   } catch (err) {
-    res.json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
+
 
 app.post("/api/cart/add", async (req, res) => {
   try {
@@ -1007,12 +1172,12 @@ app.get("/api/wishlist/:userId", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-app.get("/api/user/address/:userId", auth, async (req, res) => {
+app.get("/api/user/address/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     
     // Verify the requested userId matches the authenticated user
-    if (req.user._id.toString() !== userId) {
+    if (userId.toString() !== userId) {
       return res.status(403).json({ 
         error: "Not authorized to access these addresses" 
       });
@@ -1134,167 +1299,167 @@ app.post("/api/user/address", auth, async (req, res) => {
     });
   }
 });
-app.post('/api/orders', auth, async (req, res) => {
+app.post("/api/orders", auth, async (req, res) => {
   try {
     const {
       userId,
       userDetails,
       shippingAddress,
       paymentDetails,
-      orderItems,
-      orderSummary,
-      metadata
+      orderItems: rawItems,
+      metadata,
+      frontendSummary
     } = req.body;
 
     // Validate required fields
-    if (!userId || !shippingAddress || !orderItems || !orderSummary) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required order fields'
-      });
+    if (!userId || !shippingAddress || !rawItems || rawItems.length === 0) {
+      return res.status(400).json({ success: false, message: "Missing required order fields" });
     }
 
-    // Verify user authorization - use authenticated user from middleware
+    // Verify user authorization
     if (req.user._id.toString() !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to create order for this user'
-      });
+      return res.status(403).json({ success: false, message: "Not authorized to create order for this user" });
     }
 
-    // Check if this is user's first order (for referral completion)
+    // Check if this is user's first order
     const orderCount = await Order.countDocuments({ userId });
     const isFirstOrder = orderCount === 0;
 
-    // Check product availability and validate prices
-    for (const item of orderItems) {
-      const product = await Product.findById(item.productId);
+    // Map frontend products to backend orderItems & calculate totals
+    const orderItems = [];
+    let subtotal = 0;
+    let totalDiscount = 0;
+
+    for (const item of rawItems) {
+      const productId = item._id || item.productId;
+      const product = await Product.findById(productId);
       if (!product) {
-        return res.status(400).json({
-          success: false,
-          message: `Product ${item.name} not found`
-        });
+        return res.status(400).json({ success: false, message: `Product "${item.itemName || item.name}" not found` });
       }
 
-      if (product.stock < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for ${item.name}`
-        });
+      const quantity = item.quantity ?? 1;
+      const price = item.userPrice ?? product.salesPrice ?? 0;
+      const discount = item.discount ?? 0;
+      const afterDiscount = item.afterDiscount ?? price - discount;
+      const commission = item.commission ?? 0;
+      const finalAmount = item.finalAmount ?? afterDiscount - commission;
+      const itemTotal = afterDiscount * quantity;
+
+      if (product.openStock < quantity) {
+        return res.status(400).json({ success: false, message: `Insufficient stock for "${item.itemName || item.name}"` });
       }
 
-      // Validate price
-      if (product.price !== item.price) {
-        return res.status(400).json({
-          success: false,
-          message: `Price mismatch for ${item.name}`
-        });
-      }
+      subtotal += price * quantity;
+      totalDiscount += discount * quantity;
+
+      orderItems.push({
+        productId: product._id,
+        name: item.itemName ?? item.name ?? product.name,
+        price,
+        quantity,
+        discount,
+        afterDiscount,
+        commission,
+        finalAmount,
+        itemTotal,
+        originalPrice: product.salesPrice ?? price,
+        image: item.images?.[0] || product.images?.[0] || "https://via.placeholder.com/150",
+        vendorId: product.vendorId
+      });
     }
 
-    // Create order with initial status
+    // Construct order summary
+    const orderSummary = {
+      itemsCount: orderItems.length,
+      subtotal,
+      discount: totalDiscount,
+      shipping: frontendSummary?.shipping ?? 0,
+      total: orderItems.reduce((acc, i) => acc + i.itemTotal, 0) + (frontendSummary?.shipping ?? 0)
+    };
+
+    // Create order
     const orderData = {
       userId,
       userDetails: userDetails || {
         userId: req.user._id,
         name: req.user.name || req.user.username,
-        email: req.user.email
+        email: req.user.email,
+        phone: shippingAddress.phone
       },
       shippingAddress,
       paymentDetails: {
         ...paymentDetails,
-        status: paymentDetails?.method === 'cod' ? 'pending' : 'completed'
+        status: paymentDetails?.method === "cod" ? "pending" : "completed"
       },
       orderItems,
       orderSummary,
       orderStatus: {
-        currentStatus: 'confirmed',
-        timeline: [
-          {
-            status: 'confirmed',
-            timestamp: new Date(),
-            description: 'Order confirmed and payment processing'
-          }
-        ]
+        currentStatus: "confirmed",
+        timeline: [{
+          status: "confirmed",
+          timestamp: new Date(),
+          description: "Order confirmed and payment processing"
+        }]
       },
       deliveryDetails: {
-        expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-        shippingMethod: 'Standard Delivery'
+        expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        shippingMethod: "Standard Delivery"
       },
       metadata: {
         ...metadata,
-        isFirstOrder: isFirstOrder
+        isFirstOrder
       }
     };
 
     const order = new Order(orderData);
     await order.save();
 
-    // Update product stock
+    // Decrement product stock
     for (const item of orderItems) {
-      await Product.findByIdAndUpdate(
-        item.productId,
-        { $inc: { stock: -item.quantity } }
-      );
+      await Product.findByIdAndUpdate(item.productId, { $inc: { openStock: -item.quantity } });
     }
 
-    // ✅ COMPLETE REFERRAL IF THIS IS FIRST ORDER
+    // Deduct wallet if used
+    if (paymentDetails?.method === "wallet") {
+      const walletAmount = orderSummary.total;
+      await fetch(`http://localhost:5000/api/user/wallet/deduct/${userId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${req.headers.authorization?.split(" ")[1]}` },
+        body: JSON.stringify({ amount: walletAmount })
+      });
+    }
+
+    // Referral reward
+    let referralResult = null;
     if (isFirstOrder) {
       try {
-        console.log(`First order detected for user ${userId}, completing referral...`);
-        const referralResult = await completeReferral(userId, orderSummary.totalAmount);
-        
+        referralResult = await completeReferral(userId, orderSummary.total);
         if (referralResult) {
-          console.log(`Referral completed successfully: ${referralResult._id}`);
-          
-          // Update order metadata with referral info
           order.metadata.referralCompleted = true;
           order.metadata.referralId = referralResult._id;
           order.metadata.rewardAmount = referralResult.rewardAmount;
           await order.save();
-        } else {
-          console.log('No pending referral found for user:', userId);
         }
-      } catch (referralError) {
-        console.error('Error completing referral:', referralError);
-        // Don't fail the order if referral completion fails
-        // Just log the error and continue
+      } catch (err) {
+        console.error("Error completing referral:", err);
       }
     }
 
-    // Populate the order with product details
-    await order.populate('orderItems.productId', 'name images category');
-
     res.status(201).json({
       success: true,
-      message: 'Order created successfully',
-      order: {
-        _id: order._id,
-        orderNumber: order.orderNumber,
-        userDetails: order.userDetails,
-        shippingAddress: order.shippingAddress,
-        paymentDetails: order.paymentDetails,
-        orderItems: order.orderItems,
-        orderSummary: order.orderSummary,
-        orderStatus: order.orderStatus,
-        deliveryDetails: order.deliveryDetails,
-        metadata: order.metadata,
-        createdAt: order.createdAt
-      },
-      referral: isFirstOrder ? {
-        completed: !!referralResult,
-        message: referralResult ? 'Referral reward credited!' : 'No referral found'
-      } : null
+      message: "Order created successfully",
+      order,
+      referral: isFirstOrder
+        ? { completed: !!referralResult, message: referralResult ? "Referral reward credited!" : "No referral found" }
+        : null
     });
 
   } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while creating order'
-    });
+    console.error("Error creating order:", error);
+    res.status(500).json({ success: false, message: "Server error while creating order" });
   }
 });
+
 app.get("/api/orders/vendor/:vendorId", async (req, res) => {
   const { vendorId } = req.params;
 
@@ -1559,13 +1724,16 @@ app.put("/api/categories/:id", upload.single("image"), async (req, res) => {
 
 // Add Subcategory
 app.post("/api/subcategories", upload.single("image"), async (req, res) => {
-  try {
+try {
     const { name, category } = req.body;
     if (!name || !category) {
       return res.status(400).json({ success: false, message: "Name and category are required" });
     }
 
-    const image = req.file ? req.file.path : ""; // Cloudinary URL
+    // Image path from multer
+    const image = req.file ? req.file.path : "";
+
+    // Create and save subcategory
     const subcategory = new Subcategory({ name, category, image });
     await subcategory.save();
 
@@ -1574,6 +1742,7 @@ app.post("/api/subcategories", upload.single("image"), async (req, res) => {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
+
 });
 
 // Update Subcategory
@@ -1703,6 +1872,38 @@ app.get("/api/dashboard", async (req, res) => {
   }
 });
 
+// POST form data
+app.post("/api/:endpoint", async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+    const formType = req.params.endpoint; // use endpoint name as form type
+
+    const newForm = new Form({
+      name,
+      email,
+      phone,
+      message,
+      formType,
+    });
+
+    await newForm.save();
+    res.status(201).json({ success: true, message: "Form submitted successfully!" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Server error!" });
+  }
+});
+
+// GET all form submissions (optional)
+app.get("/api/:endpoint", async (req, res) => {
+  try {
+    const forms = await Form.find({ formType: req.params.endpoint }).sort({ createdAt: -1 });
+    res.status(200).json(forms);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Server error!" });
+  }
+});
 
 app.use("/uploads", express.static("uploads"));
 

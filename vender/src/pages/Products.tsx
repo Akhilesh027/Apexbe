@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,6 @@ import { useEffect, useState } from "react";
 
 // Helper function for currency formatting
 const formatCurrency = (amount) => {
-  // Use 0 if amount is missing or invalid to prevent crash
   const value = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -25,22 +24,19 @@ const Products = () => {
   useEffect(() => {
     const fetchProducts = async () => {
       setLoading(true);
-
       try {
         const vendor = JSON.parse(localStorage.getItem("vendor"));
-        
-        if (!vendor || !vendor.id) {
+        if (!vendor?.id) {
           console.error("Vendor ID not found in localStorage.");
           setLoading(false);
           return;
         }
 
-        const res = await fetch(`https://api.apexbee.in/api/products/${vendor.id}`);
+        const res = await fetch(`http://localhost:5000/api/products/vendor/${vendor.id}`);
         const data = await res.json();
 
         if (res.ok) {
-          // Ensure data.products is an array, defaulting to empty array if not
-          setProducts(data.products || data || []); 
+          setProducts(data || []); 
         } else {
           console.error(data.error || "Failed to fetch products.");
           setProducts([]);
@@ -56,31 +52,39 @@ const Products = () => {
     fetchProducts();
   }, []);
 
-  // Handler for the status switch (uses optimistic UI update)
   const handleToggleActive = (productId, currentActive) => {
-    // 1. Optimistic UI update: Change state immediately
-    setProducts(prevProducts =>
-      prevProducts.map(p =>
-        p._id === productId ? { ...p, active: !currentActive } : p
-      )
+    setProducts(prev =>
+      prev.map(p => p._id === productId ? { ...p, active: !currentActive } : p)
     );
-
-    // 2. **TODO:** Implement API call to update product active status
-    /*
-    try {
-      await fetch(`https://api.apexbee.in/api/products/${productId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: !currentActive }),
-      });
-    } catch (error) {
-      console.error("Failed to update status:", error);
-      // Optional: Revert UI change if API fails
-    }
-    */
+    // TODO: Update backend API for active status
   };
 
-  // --- Rendering Logic ---
+  const handleDeleteProduct = async (productId) => {
+    if (!window.confirm("Are you sure you want to delete this product?")) return;
+
+    try {
+      const vendor = JSON.parse(localStorage.getItem("vendor"));
+      const res = await fetch(`http://localhost:5000/api/products/${productId}`, {
+  method: "DELETE",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ vendorId: vendor.id }),
+});
+
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setProducts(prev => prev.filter(p => p._id !== productId));
+        alert("Product deleted successfully.");
+      } else {
+        alert(data.error || "Failed to delete product.");
+      }
+    } catch (error) {
+      console.error("Delete failed:", error);
+      alert("Failed to delete product. Please try again.");
+    }
+  };
+
   let content;
 
   if (loading) {
@@ -109,67 +113,67 @@ const Products = () => {
                 <th className="px-6 py-3 text-left text-sm font-semibold">Price</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Stock</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Status</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Features</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {products.map((product) => {
-                // Safely define properties, using defaults for missing ones
-                const productId = product.id || product._id;
+                const productId = product._id;
                 const activeStatus = product.active === undefined ? true : product.active;
-                const originalPrice = product.originalPrice || product.price;
-                const discount = product.discount || "0% Off";
-                const statusTags = product.status || [];
+                const mainImage = product.images?.[0] || "";
+                const stock = product.openStock ?? 0;
+                const discountText = product.discount ? `${product.discount}% Off` : "";
 
                 return (
                   <tr key={productId} className="hover:bg-muted/50">
                     <td className="px-6 py-4">
-                      <img
-                        src={`${product.image}`}
-                        alt={product.name}
-                        className="w-16 h-16 object-cover rounded"
-                      />
+                      {mainImage ? (
+                        <img
+                          src={mainImage}
+                          alt={product.itemName}
+                          className="w-16 h-16 object-cover rounded"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center text-gray-500">No Image</div>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <Link to={`/products/${productId}`} className="hover:underline text-primary font-medium">
-                        {product.name}
+                        {product.itemName}
                       </Link>
                     </td>
-                    <td className="px-6 py-4">{product.category}</td>
+                    <td className="px-6 py-4">{product.categoryName}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
-                        <span className="font-semibold">{formatCurrency(product.price)}</span>
-                        <span className="text-xs text-muted-foreground line-through">
-                          {formatCurrency(originalPrice)}
-                        </span>
-                        <span className="text-xs text-green-600">{discount}</span>
+                        <span className="font-semibold">{formatCurrency(product.afterDiscount)}</span>
+                        {product.userPrice && (
+                          <span className="text-xs text-muted-foreground line-through">
+                            {formatCurrency(product.userPrice)}
+                          </span>
+                        )}
+                        <span className="text-xs text-green-600">{discountText}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <Badge variant={product.stock <= 5 ? "destructive" : "default"} className="rounded-full">
-                        {product.stock}
+                      <Badge variant={stock <= 5 ? "destructive" : "default"} className="rounded-full">
+                        {stock}
                       </Badge>
                     </td>
                     <td className="px-6 py-4">
-                      {/* Using the safely defined activeStatus */}
                       <Switch
                         checked={activeStatus}
                         onCheckedChange={() => handleToggleActive(productId, activeStatus)}
                       />
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-2">
-                        {/* Using the safely defined statusTags */}
-                        {statusTags.map((status, i) => (
-                          <Badge
-                            key={i}
-                            variant={status === "Top" ? "default" : "outline"}
-                            className={status === "Deal" ? "bg-green-500 text-white hover:bg-green-600" : ""}
-                          >
-                            {status}
-                          </Badge>
-                        ))}
-                      </div>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDeleteProduct(productId)}
+                        className="flex items-center gap-2"
+                      >
+                        <Trash2 className="h-4 w-4" /> Delete
+                      </Button>
                     </td>
                   </tr>
                 );

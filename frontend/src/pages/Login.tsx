@@ -60,7 +60,7 @@ const Login = () => {
             return;
           }
 
-          url = "https://api.apexbee.in/api/auth/login";
+          url = "http://localhost:5000/api/auth/login";
           payload = {
             email: formData.email,
             password: formData.password,
@@ -77,7 +77,7 @@ const Login = () => {
           }
 
           // For phone login, we'll simulate OTP send
-          url = "https://api.apexbee.in/api/auth/phone-login";
+          url = "http://localhost:5000/api/auth/phone-login";
           payload = {
             phone: formData.phone,
           };
@@ -119,7 +119,7 @@ const Login = () => {
           return;
         }
 
-        url = "https://api.apexbee.in/api/auth/register";
+        url = "http://localhost:5000/api/auth/register";
         payload = {
           name: formData.name,
           email: formData.email,

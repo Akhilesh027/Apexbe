@@ -1,5 +1,5 @@
-import { Package, Lock, Gift, MapPin, Briefcase, CreditCard } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Package, Lock, Gift, MapPin, Briefcase, CreditCard, LogOut } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,15 +8,20 @@ import { useEffect, useState } from "react";
 
 const Profile = () => {
   const [user, setUser] = useState(null);
+  const navigate = useNavigate();
 
   // Load user details from localStorage
   useEffect(() => {
     const userData = localStorage.getItem("vendor");
-
     if (userData) {
       setUser(JSON.parse(userData));
     }
   }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem("vendor");
+    navigate("/login");
+  };
 
   const accountOptions = [
     { icon: Package, title: "Your Orders", description: "Track, return, or buy things again", link: "/orders" },
@@ -25,14 +30,6 @@ const Profile = () => {
     { icon: MapPin, title: "Your Addresses", description: "Edit addresses for orders and gifts", link: "#" },
     { icon: Briefcase, title: "Your Business Account", description: "GST invoice & bulk discounts", link: "#" },
     { icon: CreditCard, title: "Payment options", description: "Manage your payment methods", link: "#" },
-  ];
-
-  const vendorOptions = [
-    "BECOME A VENDOR",
-    "BECOME A FRANCHISER",
-    "BECOME A ENTREPRENEUR",
-    "BECOME A WHOLESALER",
-    "BECOME A AFFILIATE (SUPER VENDOR)",
   ];
 
   return (
@@ -56,9 +53,19 @@ const Profile = () => {
               </div>
             </div>
 
-            <Button className="bg-accent text-accent-foreground">
-              Refer your friends & earn Rs. 50 per referral
-            </Button>
+            <div className="flex flex-col gap-2">
+              <Button className="bg-accent text-accent-foreground">
+                Refer your friends & earn Rs. 50 per referral
+              </Button>
+              <Button
+                variant="outline"
+                className="flex items-center gap-2 justify-center"
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4" />
+                Logout
+              </Button>
+            </div>
           </div>
 
           <div className="text-sm text-muted-foreground mb-6">
@@ -104,14 +111,6 @@ const Profile = () => {
                 </div>
               </Card>
             </Link>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-4 justify-center">
-          {vendorOptions.map((option, index) => (
-            <Button key={index} variant="outline" className="border-2">
-              {option}
-            </Button>
           ))}
         </div>
       </div>

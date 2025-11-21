@@ -3,43 +3,42 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { Star } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import ProductCard from "@/components/ProductCard";
 import { Button } from "@/components/ui/button";
 
-// Helper function to format currency
+// Helper function for currency formatting
 const formatCurrency = (amount) => {
-    const value = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
-    return new Intl.NumberFormat('en-IN', {
-        style: 'currency',
-        currency: 'INR',
+    const value = typeof amount === "number" && !isNaN(amount) ? amount : 0;
+    return new Intl.NumberFormat("en-IN", {
+        style: "currency",
+        currency: "INR",
         minimumFractionDigits: 0,
-        maximumFractionDigits: 0
+        maximumFractionDigits: 0,
     }).format(value);
 };
 
-// Placeholder product structure for initial state and fallbacks
+// Placeholder product
 const initialProduct = {
     _id: null,
-    name: "Loading Product...",
-    category: "Loading",
-    price: 0,
-    originalPrice: 0,
+    itemName: "Loading Product...",
+    categoryName: "Loading",
+    salesPrice: 0,
+    afterDiscount: 0,
     discount: 0,
-    image: "/placeholder.svg",
+    images: ["/placeholder.svg"],
     rating: 4,
-    vendorName: "Store",
+    vendorId: null,
     description: "Product details loading...",
-    details: { composition: "N/A" }
+    skuCode: "N/A",
 };
 
 const ProductDetail = () => {
-    const { id } = useParams(); 
+    const { id } = useParams();
     const navigate = useNavigate();
     const [product, setProduct] = useState(initialProduct);
     const [similarProducts, setSimilarProducts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedColor, setSelectedColor] = useState("orange");
-    const [quantity, setQuantity] = useState(1); 
+    const [quantity, setQuantity] = useState(1);
 
     const colors = [
         { name: "orange", hex: "#ff8c42" },
@@ -48,141 +47,104 @@ const ProductDetail = () => {
         { name: "cyan", hex: "#06b6d4" },
     ];
 
-    // --- Data Fetching Logic (Unchanged) ---
+    // Fetch product and similar products
     useEffect(() => {
         if (!id) return;
 
         const fetchProductDetails = async () => {
             setLoading(true);
             try {
-                const res = await fetch(`https://api.apexbee.in/api/product/${id}`); 
+                const res = await fetch(`http://localhost:5000/api/product/${id}`);
                 const data = await res.json();
-
-                if (res.ok) {
+                if (res.ok || data) {
                     setProduct(data);
-                    fetchSimilarProducts(data.category, data._id); 
+                    fetchSimilarProducts(data.categoryName, data._id);
                 } else {
-                    console.error("Failed to fetch main product:", data.error);
                     setProduct(initialProduct);
-                    setLoading(false);
                 }
             } catch (error) {
-                console.error("Network error while fetching main product:", error);
+                console.error("Network error:", error);
                 setProduct(initialProduct);
-                setLoading(false);
-            }
-        };
-
-        const fetchSimilarProducts = async (category, currentProductId) => {
-            try {
-                const res = await fetch(`https://api.apexbee.in/api/products?category=${category}&excludeId=${currentProductId}&limit=4`);
-                const data = await res.json();
-                
-                if (res.ok) {
-                    setSimilarProducts(data.products || data);
-                } else {
-                    setSimilarProducts([]);
-                }
-            } catch (error) {
-                console.error("Error fetching similar products:", error);
-                setSimilarProducts([]);
             } finally {
                 setLoading(false);
             }
         };
 
-        fetchProductDetails();
-    }, [id]); 
-    // ----------------------------------------
+        const fetchSimilarProducts = async (categoryName, currentId) => {
+            try {
+                const res = await fetch(
+                    `http://localhost:5000/api/products?category=${categoryName}&excludeId=${currentId}&limit=4`
+                );
+                const data = await res.json();
+                setSimilarProducts(data.products || data || []);
+            } catch (error) {
+                console.error("Error fetching similar products:", error);
+                setSimilarProducts([]);
+            }
+        };
 
-    // --- ADD TO CART FUNCTIONALITY ---
+        fetchProductDetails();
+    }, [id]);
+
+    // Add to Cart
     const handleAddToCart = async () => {
         const user = JSON.parse(localStorage.getItem("user"));
-        const userId = user._id;
-
-        if (!userId) {
-            alert("Please login first.");
-            return;
-        }
+        if (!user?.id) return alert("Please login first.");
 
         const item = {
-            userId,
+            userId: user.id,
             productId: product._id,
-            name: product.name,
-            price: product.price,
-            image: product.image,
+            name: product.itemName,
+            price: product.afterDiscount,
+            image: product.images?.[0],
             quantity,
             selectedColor,
             vendorId: product.vendorId,
         };
 
         try {
-            const res = await fetch("https://api.apexbee.in/api/cart/add", {
+            const res = await fetch("http://localhost:5000/api/cart/add", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(item),
             });
-
             const data = await res.json();
-
-            if (!res.ok) {
-                alert(data.error || "Failed to add to cart.");
-                return;
-            }
-
+            if (!res.ok) return alert(data.error || "Failed to add to cart.");
             alert("Added to cart successfully!");
-            console.log("Cart Response:", data);
-
         } catch (error) {
-            console.error("Add to cart backend error:", error);
+            console.error("Add to cart error:", error);
             alert("Server error");
         }
     };
 
-    // --- BUY NOW FUNCTIONALITY ---
+    // Buy Now
     const handleBuyNow = () => {
         const user = JSON.parse(localStorage.getItem("user"));
-        
         if (!user) {
-            alert("Please login first to proceed with checkout.");
+            alert("Please login first.");
             navigate("/login");
             return;
         }
 
-        // Calculate order details
-        const subtotal = product.price * quantity;
-        const discountAmount = product.originalPrice > product.price 
-            ? (product.originalPrice - product.price) * quantity 
-            : 0;
-        const shipping = subtotal > 0 ? 50 : 0; // Fixed shipping cost
+        const subtotal = product.afterDiscount * quantity;
+        const discountAmount =
+            product.salesPrice > product.afterDiscount
+                ? (product.salesPrice - product.afterDiscount) * quantity
+                : 0;
+        const shipping = subtotal > 0 ? 50 : 0;
         const total = subtotal + shipping;
 
-        // Prepare cart items for checkout
-        const cartItems = [{
-            _id: product._id,
-            productId: product._id,
-            name: product.name,
-            price: product.price,
-            originalPrice: product.originalPrice,
-            image: product.image,
-            quantity: quantity,
-            selectedColor: selectedColor,
-            vendorId: product.vendorId
-        }];
-
-        // Navigate to checkout with product details
         navigate("/checkout", {
             state: {
-                cartItems: cartItems,
-                subtotal: subtotal,
+                cartItems: [{ ...product, quantity, selectedColor }],
+                subtotal,
                 discount: discountAmount,
-                shipping: shipping,
-                total: total,
-                fromBuyNow: true // Flag to indicate this came from Buy Now
-            }
+                shipping,
+                total,
+                fromBuyNow: true,
+            },
         });
     };
-    // -----------------------------------
 
     if (loading) {
         return (
@@ -191,25 +153,22 @@ const ProductDetail = () => {
             </div>
         );
     }
-    
-    // Destructure product for cleaner JSX
-    const { name, price, originalPrice, discount, category, vendorId, rating } = product;
-    const currentRating = Math.round(rating || 4);
+
+    const currentRating = Math.round(product.rating || 4);
 
     return (
         <div className="min-h-screen bg-background">
             <Navbar />
 
-           
-
-            {/* Breadcrumb (Using dynamic category) */}
+            {/* Breadcrumb */}
             <div className="container mx-auto px-4 py-4">
                 <div className="text-sm text-muted-foreground">
-                    <Link to="/" className="hover:underline">Home</Link> / <Link to={`/category/${category}`} className="hover:underline">{category}</Link> / {name}
+                    <Link to="/" className="hover:underline">Home</Link> /{" "}
+                    <Link to={`/category/${product.categoryName}`} className="hover:underline">{product.categoryName}</Link> / {product.itemName}
                 </div>
             </div>
 
-            {/* Cashback Banner (Unchanged) */}
+            {/* Cashback Banner */}
             <div className="container mx-auto px-4 mb-8">
                 <div className="bg-yellow-banner text-navy text-center py-3 rounded-lg font-semibold">
                     Earn 10% Cashback on Every App Order
@@ -219,18 +178,18 @@ const ProductDetail = () => {
             {/* Product Detail */}
             <section className="container mx-auto px-4 py-8">
                 <div className="grid md:grid-cols-2 gap-12">
-                    {/* Product Images */}
+                    {/* Images & Colors */}
                     <div>
                         <div className="bg-blue-light rounded-2xl overflow-hidden mb-4">
-                            <img 
-                                src={`${product.image}`} 
-                                alt={name} 
+                            <img
+                                src={product.images?.[0] || "/placeholder.svg"}
+                                alt={product.itemName}
                                 className="aspect-[3/4] w-full object-cover"
                             />
                         </div>
-                        {/* Color Selector and Size */}
-                        <div className="flex gap-2">
-                            <div className="text-sm font-semibold text-navy">Colours</div>
+
+                        <div className="flex gap-2 items-center">
+                            <span className="text-sm font-semibold text-navy">Colors:</span>
                             <div className="flex gap-2">
                                 {colors.map((color) => (
                                     <button
@@ -243,181 +202,63 @@ const ProductDetail = () => {
                                     />
                                 ))}
                             </div>
-                            <div className="ml-auto text-sm text-muted-foreground">
-                                Size: <span className="font-semibold text-navy">One Size</span>
-                            </div>
+                            <span className="ml-auto text-sm text-muted-foreground">Size: <span className="font-semibold text-navy">One Size</span></span>
                         </div>
                     </div>
 
                     {/* Product Info */}
                     <div>
-                        {/* Rating */}
                         <div className="flex items-center gap-2 mb-2">
-                            <div className="flex items-center gap-1">
-                                {[...Array(5)].map((_, i) => (
-                                    <Star key={i} className={`h-4 w-4 ${i < currentRating ? 'fill-accent text-accent' : 'text-gray-300'}`} />
-                                ))}
-                            </div>
+                            {[...Array(5)].map((_, i) => (
+                                <Star key={i} className={`h-4 w-4 ${i < currentRating ? 'fill-accent text-accent' : 'text-gray-300'}`} />
+                            ))}
                             <span className="text-sm text-muted-foreground">(Write a review)</span>
                         </div>
 
-                        {/* Store Link */}
-                        <div className="flex items-center gap-2 mb-4">
-                            <span className="text-sm text-muted-foreground">Visit the Store: <Link to={`/vendor/${vendorId}`} className="text-accent hover:underline">{product.vendorName || "Store Name"}</Link></span>
-                        </div>
-
-                        {/* Product Title */}
                         <h1 className="text-3xl font-bold text-navy mb-4">
-                            {name}
-                            <span className="text-base font-normal text-muted-foreground block">({product.sku || 'T12636'}_{selectedColor}_Onesize)</span>
+                            {product.itemName}
+                            <span className="text-base font-normal text-muted-foreground block">
+                                ({product.skuCode}_{selectedColor}_Onesize)
+                            </span>
                         </h1>
 
-                        {/* Offer Tag */}
                         <div className="flex items-center gap-3 mb-6">
-                            <div className="bg-accent text-white px-3 py-1 rounded text-sm font-semibold">
-                                Limited Offer
-                            </div>
-                            <span className="text-lg font-bold text-accent">{discount || 68}% Off</span>
+                            <div className="bg-accent text-white px-3 py-1 rounded text-sm font-semibold">Limited Offer</div>
+                            <span className="text-lg font-bold text-accent">{product.discount || 0}% Off</span>
                         </div>
 
-                        {/* Price */}
                         <div className="mb-6">
                             <div className="flex items-baseline gap-3">
-                                <span className="text-5xl font-bold text-navy">{formatCurrency(price)}</span>
-                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(originalPrice)}</span>
+                                <span className="text-5xl font-bold text-navy">{formatCurrency(product.afterDiscount)}</span>
+                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.salesPrice)}</span>
                             </div>
                         </div>
 
-                        {/* Offers (Static) */}
-                        <div className="mb-6">
-                            <h3 className="font-semibold text-navy mb-3">Offers</h3>
-                            <div className="grid gap-3">
-                                <div className="bg-secondary p-3 rounded-lg">
-                                    <p className="text-sm">Earn 10% Cashback on Every App Order</p>
-                                </div>
-                                <div className="bg-secondary p-3 rounded-lg">
-                                    <p className="text-sm">Rs. 500 Off for App Download</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Quantity Selector */}
+                        {/* Quantity */}
                         <div className="mb-6 flex items-center gap-4">
                             <span className="text-sm font-semibold text-navy">Quantity:</span>
                             <div className="flex items-center border rounded-lg overflow-hidden">
-                                <Button 
-                                    onClick={() => setQuantity(q => Math.max(1, q - 1))} 
-                                    className="h-8 w-8 p-0 bg-gray-100 text-navy hover:bg-gray-200"
-                                >
-                                    -
-                                </Button>
+                                <Button onClick={() => setQuantity(q => Math.max(1, q - 1))} className="h-8 w-8 p-0 bg-gray-100 text-navy hover:bg-gray-200">-</Button>
                                 <span className="w-8 text-center text-sm font-semibold">{quantity}</span>
-                                <Button 
-                                    onClick={() => setQuantity(q => q + 1)} 
-                                    className="h-8 w-8 p-0 bg-gray-100 text-navy hover:bg-gray-200"
-                                >
-                                    +
-                                </Button>
-                            </div>
-                        </div>
-
-                        {/* Product Attributes */}
-                        <div className="mb-6">
-                            <div className="flex items-center gap-2 mb-2">
-                                <span className="text-sm font-semibold text-navy">Size:</span>
-                                <span className="text-sm">One Size</span>
-                            </div>
-                            <div className="flex items-center gap-2 mb-2">
-                                <span className="text-sm font-semibold text-navy">Style Name:</span>
-                                <span className="text-sm">Saree</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold text-navy">Colour:</span>
-                                <span className="text-sm">{selectedColor}</span>
+                                <Button onClick={() => setQuantity(q => q + 1)} className="h-8 w-8 p-0 bg-gray-100 text-navy hover:bg-gray-200">+</Button>
                             </div>
                         </div>
 
                         {/* Action Buttons */}
                         <div className="flex gap-4 mb-8">
-                            <Button 
-                                onClick={handleAddToCart}
-                                className="flex-1 bg-accent hover:bg-accent/90 text-white"
-                            >
-                                Add to Cart
-                            </Button>
-                            <Button 
-                                onClick={handleBuyNow}
-                                className="flex-1 bg-navy hover:bg-navy/90 text-white"
-                            >
-                                Buy Now
-                            </Button>
+                            <Button onClick={handleAddToCart} className="flex-1 bg-accent hover:bg-accent/90 text-white">Add to Cart</Button>
+                            <Button onClick={handleBuyNow} className="flex-1 bg-navy hover:bg-navy/90 text-white">Buy Now</Button>
                         </div>
 
-                        {/* Product Details Box */}
+                        {/* Product Details */}
                         <div className="bg-secondary p-6 rounded-lg">
-                            <h3 className="font-bold text-navy mb-3">Product details</h3>
-                            <p className="text-sm text-muted-foreground mb-2">
-                                <span className="font-semibold text-navy">Material composition:</span> {product.details?.composition || 'Synthetic'}
-                            </p>
-                            <p className="text-sm text-muted-foreground">{product.description || 'Women\'s lightweight floral print saree'}</p>
+                            <h3 className="font-bold text-navy mb-3">Product Details</h3>
+                            <p className="text-sm text-muted-foreground mb-2">{product.description || "Description not available."}</p>
                             <button className="text-sm text-accent mt-2 hover:underline">See more ↓</button>
                         </div>
                     </div>
                 </div>
             </section>
-
-            {/* Similar Styles (Dynamic) */}
-          {similarProducts.length > 0 && (
-  <section className="container mx-auto px-4 py-12">
-    <div className="flex items-center justify-between mb-8">
-      <h2 className="text-2xl font-bold text-navy">
-        Similar Styles in {category}
-      </h2>
-
-      {/* View All Button */}
-      <button
-        onClick={() => navigate(`/category/${category}`)}
-        className="text-sm px-4 py-2 bg-navy text-white rounded-lg hover:bg-navy/80 transition"
-      >
-        View All
-      </button>
-    </div>
-
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-6">
-      {similarProducts.map((p) => (
-        <div
-          key={p._id}
-          className="border rounded-xl p-3 shadow-md hover:shadow-xl transition cursor-pointer group"
-          onClick={() => navigate(`/product/${p._id}`)}
-        >
-          <img
-            src={`${p.image}`}
-            alt={p.name}
-            className="w-full h-48 object-cover rounded-md group-hover:scale-105 transition"
-          />
-
-          <h3 className="font-semibold mt-3 text-gray-900 truncate">
-            {p.name}
-          </h3>
-
-          <p className="text-navy font-bold mt-1">₹{p.price}</p>
-
-          {/* View Product Button */}
-          <button
-            className="w-full mt-3 border border-navy text-navy py-2 rounded-lg hover:bg-navy hover:text-white transition"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/product/${p._id}`);
-            }}
-          >
-            View Product
-          </button>
-        </div>
-      ))}
-    </div>
-  </section>
-)}
-
 
             <Footer />
         </div>

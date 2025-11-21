@@ -2,60 +2,40 @@ import mongoose from "mongoose";
 
 const productSchema = new mongoose.Schema(
   {
-    vendorId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Vendor",
-      required: true,
-    },
+    vendorId: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor", required: true },
 
-    name: { type: String, required: true, trim: true },
+    // PRODUCT DETAILS
+    itemType: String,
+    category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
+    itemName: String,
+    salesPrice: Number,
+    taxOption: String,
+    gstRate: Number,
+    description: String,
 
-    slug: { type: String, unique: true },
+    // IMAGES (local paths)
+    images: [String],
+slug: {
+  type: String,
+  unique: true,
+  sparse: true
+},
+    // STOCK DETAILS
+    skuCode: { type: String, unique: true },
+    measuringUnit: String,
+    hsnCode: String,
+    godown: String,
+    openStock: Number,
+    asOnDate: String,
 
-    sku: {
-      type: String,
-      unique: true,
-      required: true,
-    },
-
-    price: { type: Number, required: true, min: 0 },
-
-    category: { type: String, required: true },
-
-    subcategory: { type: String, default: "" },
-
-    stock: { type: Number, default: 0 },
-
-    description: { type: String, trim: true },
-
-    image: { type: String, default: "" },
-
-    images: { type: [String], default: [] },
-
-    isApproved: {
-      type: Boolean,
-      default: false,
-    },
+    // PRICE DETAILS
+    userPrice: Number,         // User given price (sales price)
+    discount: Number,          // User given discount
+    afterDiscount: Number,     // auto-calculated
+    commission: Number,        // auto-calculated
+    finalAmount: Number,       // auto-calculated
   },
   { timestamps: true }
 );
-
-// Auto create slug and SKU
-productSchema.pre("save", function (next) {
-  if (this.isModified("name")) {
-    this.slug = this.name
-      .toLowerCase()
-      .replace(/ /g, "-")
-      .replace(/[^\w-]+/g, "");
-  }
-
-  // Generate SKU only if not provided
-  if (!this.sku) {
-    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-    this.sku = `PROD-${random}`;
-  }
-
-  next();
-});
 
 export default mongoose.model("Product", productSchema);

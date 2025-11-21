@@ -1,25 +1,52 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Link } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import CategoryIcon from "@/components/CategoryIcon";
 import StoreCard from "@/components/StoreCard";
 import BrandCard from "@/components/BrandCard";
-import LocationModal from "@/components/LocationModal";
 import WaveSection from "@/components/WaveSection";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+
 import ratnadeepLogo from "../Web images/Web images/ratandeep.png";
 import wodden from "../Web images/Web images/wodden.png";
 import urben from '../Web images/Web images/urban.png';
 import grocary from '../Web images/Web images/grocary.png';
 
 const Home = () => {
-  const [showLocationModal, setShowLocationModal] = useState(true);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loggedInUser, setLoggedInUser] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
   const navigate = useNavigate();
+
+  // Check if user is logged in
+  useEffect(() => {
+    const user = localStorage.getItem("user");
+    if (user) setLoggedInUser(JSON.parse(user));
+  }, []);
+
+  // Automatically get live location on mount
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          setUserLocation({ latitude, longitude });
+          console.log("User location:", latitude, longitude);
+          // Optional: Send location to backend or filter stores
+        },
+        (error) => {
+          console.warn("Error getting location:", error.message);
+        },
+        { enableHighAccuracy: true }
+      );
+    } else {
+      console.warn("Geolocation is not supported by this browser.");
+    }
+  }, []);
 
   // Fetch categories from backend
   useEffect(() => {
@@ -29,12 +56,10 @@ const Home = () => {
   const fetchCategories = async () => {
     try {
       setLoading(true);
-      const response = await fetch("https://api.apexbee.in/api/categories");
-      
+      const response = await fetch("http://localhost:5000/api/categories");
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.categories) {
-          // Transform backend categories to frontend format
           const transformedCategories = data.categories.map(cat => ({
             icon: getCategoryIcon(cat.name),
             label: cat.name.charAt(0).toUpperCase() + cat.name.slice(1),
@@ -47,14 +72,13 @@ const Home = () => {
       }
     } catch (error) {
       console.error("Error fetching categories:", error);
-      // Fallback to default categories if API fails
+      // Fallback to default categories
       setCategories(getDefaultCategories());
     } finally {
       setLoading(false);
     }
   };
 
-  // Helper function to get appropriate icons for categories
   const getCategoryIcon = (categoryName) => {
     const iconMap = {
       fashion: "🏃",
@@ -68,11 +92,9 @@ const Home = () => {
       food: "🥘",
       default: "🏷️"
     };
-    
     return iconMap[categoryName.toLowerCase()] || iconMap.default;
   };
 
-  // Default categories fallback
   const getDefaultCategories = () => [
     { icon: "🏃", label: "Fashion", to: "/category/fashion" },
     { icon: "🍎", label: "Grocery", to: "/category/grocery" },
@@ -109,7 +131,6 @@ const Home = () => {
     navigate('/categories');
   };
 
-  // Scroll functionality for categories
   const scrollCategories = (direction) => {
     const container = document.getElementById('categories-container');
     if (container) {
@@ -121,12 +142,13 @@ const Home = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <LocationModal open={showLocationModal} onOpenChange={setShowLocationModal} />
 
-      {/* Banner Notice */}
-      <div className="bg-blue-light border-b text-center py-2 text-sm">
-        On Direct <span className="font-semibold">(LI)</span> registration other complete KYC - 50/-
-      </div>
+      {/* Top banner notice only if user is NOT logged in */}
+      {!loggedInUser && (
+        <div className="bg-blue-light border-b text-center py-2 text-sm">
+          On Direct <span className="font-semibold">(LI)</span> registration other complete KYC - 50/-
+        </div>
+      )}
 
       {/* Categories Section */}
       <section className="container mx-auto px-4 py-8">
@@ -140,7 +162,7 @@ const Home = () => {
             View All Categories
           </Button>
         </div>
-        
+
         <div className="flex items-center gap-2">
           <Button 
             variant="ghost" 
@@ -150,13 +172,12 @@ const Home = () => {
           >
             <ChevronLeft className="h-5 w-5" />
           </Button>
-          
+
           <div 
             id="categories-container"
             className="flex gap-4 md:gap-6 overflow-x-auto scrollbar-hide scroll-smooth flex-1"
           >
             {loading ? (
-              // Loading skeletons
               Array.from({ length: 6 }).map((_, index) => (
                 <div key={index} className="flex flex-col items-center gap-2 min-w-[80px]">
                   <Skeleton className="w-16 h-16 rounded-full" />
@@ -172,7 +193,7 @@ const Home = () => {
               ))
             )}
           </div>
-          
+
           <Button 
             variant="ghost" 
             size="icon" 
@@ -185,29 +206,27 @@ const Home = () => {
       </section>
 
       {/* Hero Banners */}
-      <section className="container mx-auto px-4 py-8">
-        <div className="grid md:grid-cols-2 gap-6">
-          <div className="relative group cursor-pointer">
-            <img 
-              src={grocary} 
-              alt="Grocery Delivery" 
-              className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition-transform duration-300"
-            />
-            <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg backdrop-blur-sm">
-              <h3 className="text-lg font-bold">Fresh Groceries</h3>
-              <p className="text-sm">Delivery in 30 minutes</p>
-            </div>
+      <section className="container mx-auto px-4 py-8 grid md:grid-cols-2 gap-6">
+        <div className="relative group cursor-pointer">
+          <img 
+            src={grocary} 
+            alt="Grocery Delivery" 
+            className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition-transform duration-300"
+          />
+          <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg backdrop-blur-sm">
+            <h3 className="text-lg font-bold">Fresh Groceries</h3>
+            <p className="text-sm">Delivery in 30 minutes</p>
           </div>
-          <div className="relative group cursor-pointer">
-            <img 
-              src={grocary} 
-              alt="Special Offers" 
-              className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition-transform duration-300"
-            />
-            <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg backdrop-blur-sm">
-              <h3 className="text-lg font-bold">Special Offers</h3>
-              <p className="text-sm">Up to 50% off</p>
-            </div>
+        </div>
+        <div className="relative group cursor-pointer">
+          <img 
+            src={grocary} 
+            alt="Special Offers" 
+            className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition-transform duration-300"
+          />
+          <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg backdrop-blur-sm">
+            <h3 className="text-lg font-bold">Special Offers</h3>
+            <p className="text-sm">Up to 50% off</p>
           </div>
         </div>
       </section>

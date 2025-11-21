@@ -26,6 +26,8 @@ import {
 
 const menuItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Bussiness", url: "/business", icon: LayoutDashboard },
+  { title: "Vendor", url: "/vendor", icon: LayoutDashboard },
   { title: "Categories", url: "/categories", icon: FolderTree },
   { title: "Subcategories", url: "/subcategories", icon: Layers },
   { title: "Products", url: "/products", icon: Package },

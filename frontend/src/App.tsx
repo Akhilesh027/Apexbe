@@ -4,7 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Home from "./pages/Home";
-import Fashion from "./pages/Fashion";
+import Fashion from "./pages/Category";
 import Sarees from "./pages/Sarees";
 import Jewelry from "./pages/Jewelry";
 import Grocery from "./pages/Grocery";

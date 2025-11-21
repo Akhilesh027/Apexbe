@@ -1,284 +1,346 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import AppLayout from "@/components/AppLayout";
-import { Button } from "@/components/ui/button";
+import axios from "axios";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { toast } from "sonner";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import AppLayout from "@/components/AppLayout";
 
-const AddProduct = () => {
-  const navigate = useNavigate();
+const Addproduct = () => {
+  const vendorId = localStorage.getItem("vendorId");
 
-  // ----------------------------------------
-  // STATES
-  // ----------------------------------------
+  const [activeSection, setActiveSection] = useState("product");
+  const [business, setBusiness] = useState(null);
+
+  // Categories & Subcategories
   const [categories, setCategories] = useState([]);
+  const [subcategories, setSubcategories] = useState([]);
+  const [category, setCategory] = useState("");
+  const [subcategory, setSubcategory] = useState("");
 
-  const [formData, setFormData] = useState({
-    name: "",
-    sku: "",
-    price: "",
-    category: "",
-    subcategory: "",
-    stock: "",
-    description: "",
-    image: null as File | null,
-  });
+  // PRODUCT DETAILS
+  const [itemType, setItemType] = useState("product");
+  const [itemName, setItemName] = useState("");
+  const [salesPrice, setSalesPrice] = useState("");
+  const [gstRate, setGstRate] = useState("");
+  const [description, setDescription] = useState("");
+  const [images, setImages] = useState([]);
 
-  const [preview, setPreview] = useState<string>("");
+  // STOCK DETAILS
+  const [skuCode] = useState("APX-" + Date.now());
+  const [measuringUnit, setMeasuringUnit] = useState("");
+  const [hsnCode, setHsnCode] = useState("");
+  const [godown, setGodown] = useState("");
+  const [openStock, setOpenStock] = useState("");
+  const [asOnDate, setAsOnDate] = useState("");
 
-  // ----------------------------------------
-  // SKU GENERATOR FUNCTION
-  // ----------------------------------------
-  const generateSKU = () => {
-    if (!formData.name) {
-      return toast.error("Enter product name first");
-    }
+  // PRICE DETAILS
+  const [mrp, setMrp] = useState("");
+  const [discount, setDiscount] = useState("");
+  const [afterDiscount, setAfterDiscount] = useState("");
+  const [finalAmount, setFinalAmount] = useState("");
+  const [commission] = useState(20);
 
-    const cleaned = formData.name.replace(/\s+/g, "").toUpperCase();
-    const random = Math.floor(10000 + Math.random() * 90000);
-    const sku = `${cleaned}-${random}`;
-
-    setFormData({ ...formData, sku });
-    toast.success("SKU generated!");
-  };
-
-  // ----------------------------------------
-  // LOAD CATEGORIES
-  // ----------------------------------------
+  /* ---------------- FETCH BUSINESS DETAILS ---------------- */
   useEffect(() => {
-    const loadCategories = async () => {
+    if (!vendorId) return;
+
+    const fetchBusiness = async () => {
       try {
-        const res = await fetch("https://api.apexbee.in/api/categories");
-        const data = await res.json();
-        setCategories(data.categories || []);
+        const res = await axios.get(`http://localhost:5000/api/business/get-business/${vendorId}`);
+        setBusiness(res.data.business);
       } catch (err) {
-        toast.error("Failed to load categories");
+        console.error("Business Fetch Error:", err);
       }
     };
 
-    loadCategories();
+    fetchBusiness();
+  }, [vendorId]);
+
+  /* ---------------- FETCH CATEGORIES ---------------- */
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const res = await axios.get("http://localhost:5000/api/categories");
+        setCategories(res.data.categories || []);
+      } catch (err) {
+        console.error("Category fetch error:", err);
+      }
+    };
+    fetchCategories();
   }, []);
 
-  // ----------------------------------------
-  // IMAGE PREVIEW
-  // ----------------------------------------
-  const handleImageChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setFormData({ ...formData, image: file });
-      setPreview(URL.createObjectURL(file));
+  /* ---------------- FETCH SUBCATEGORIES ON CATEGORY CHANGE ---------------- */
+  useEffect(() => {
+    if (!category) {
+      setSubcategories([]);
+      setSubcategory("");
+      return;
+    }
+
+    const fetchSubcategories = async () => {
+      try {
+        const res = await axios.get(`http://localhost:5000/api/subcategories/${category}`);
+        setSubcategories(res.data.subcategories || []);
+        setSubcategory(""); // Reset subcategory when category changes
+      } catch (err) {
+        console.error("Subcategory fetch error:", err);
+      }
+    };
+
+    fetchSubcategories();
+  }, [category]);
+
+  /* ---------------- AUTO PRICE CALCULATIONS ---------------- */
+  useEffect(() => {
+    if (!mrp || !discount) return;
+    const ad = Number(mrp) - (Number(mrp) * Number(discount)) / 100;
+    setAfterDiscount(ad.toFixed(2));
+    const final = ad - commission;
+    setFinalAmount(final.toFixed(2));
+  }, [mrp, discount]);
+
+  /* ---------------- IMAGE HANDLER ---------------- */
+  const handleImageUpload = (e) => {
+    setImages([...e.target.files]);
+  };
+
+  /* ---------------- SUBMIT HANDLER ---------------- */
+  const handleSubmit = async () => {
+    if (!vendorId) {
+      alert("Vendor ID missing.");
+      return;
+    }
+
+    if (!category || !itemName || !mrp) {
+      alert("Please fill required fields!");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("vendorId", vendorId);
+    formData.append("itemType", itemType);
+    formData.append("category", category);
+    formData.append("subcategory", subcategory);
+    formData.append("itemName", itemName);
+    formData.append("salesPrice", salesPrice);
+    business?.gstApplicable && formData.append("gstRate", gstRate);
+    formData.append("description", description);
+    formData.append("skuCode", skuCode);
+    formData.append("measuringUnit", measuringUnit);
+    formData.append("hsnCode", hsnCode);
+    formData.append("godown", godown);
+    formData.append("openStock", openStock);
+    formData.append("asOnDate", asOnDate);
+    formData.append("mrp", mrp);
+    formData.append("discount", discount);
+    formData.append("afterDiscount", afterDiscount);
+    formData.append("commission", commission);
+    formData.append("finalAmount", finalAmount);
+
+    images.forEach((img) => formData.append("images", img));
+
+    try {
+      await axios.post("http://localhost:5000/api/products/add-product", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      alert("Product Added Successfully!");
+    } catch (err) {
+      console.error(err);
+      alert("Error saving product");
     }
   };
 
-  // ----------------------------------------
-  // SUBMIT
-  // ----------------------------------------
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    const vendor = JSON.parse(localStorage.getItem("vendor"));
-    if (!vendor) return toast.error("Login first");
-
-    const form = new FormData();
-    form.append("name", formData.name);
-    form.append("sku", formData.sku);
-    form.append("price", formData.price);
-    form.append("category", formData.category);
-    form.append("subcategory", formData.subcategory);
-    form.append("stock", formData.stock);
-    form.append("description", formData.description);
-    form.append("vendorId", vendor.id);
-
-    if (formData.image) form.append("image", formData.image);
-
-    const res = await fetch("https://api.apexbee.in/api/products", {
-      method: "POST",
-      body: form,
-    });
-
-    const data = await res.json();
-
-    if (data.product) {
-      toast.success("Product added!");
-      navigate("/products");
-    } else {
-      toast.error("Failed to add product");
-    }
-  };
+  /* ---------------- UI ---------------- */
+  const sections = [
+    { id: "product", label: "PRODUCT DETAILS" },
+    { id: "stock", label: "STOCK DETAILS" },
+    { id: "price", label: "PRICE DETAILS" },
+  ];
 
   return (
     <AppLayout>
-      <div className="container mx-auto px-4 py-8">
-        <Card className="max-w-3xl mx-auto">
-          <CardHeader>
-            <CardTitle>Add New Product</CardTitle>
-          </CardHeader>
+      <div className="max-w-6xl mx-auto px-4 pb-8">
+        {/* SECTION SWITCH */}
+        <div className="flex justify-center gap-4 mb-6 mt-4">
+          {sections.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveSection(tab.id)}
+              className={`px-4 py-2 text-sm font-semibold rounded ${
+                activeSection === tab.id
+                  ? "bg-primary text-white"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* PRODUCT SECTION */}
+        {activeSection === "product" && (
+          <div className="space-y-6">
+            <div>
+              <Label className="font-bold">Category *</Label>
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat._id} value={cat._id}>
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-                {/* Product Name */}
-                <div className="space-y-2">
-                  <Label>Product Name *</Label>
-                  <Input
-                    placeholder="Enter product name"
-                    value={formData.name}
-                    onChange={(e) =>
-                      setFormData({ ...formData, name: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-
-                {/* SKU + BTN */}
-                <div className="space-y-2">
-                  <Label>SKU *</Label>
-
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Click generate button"
-                      value={formData.sku}
-                      onChange={(e) =>
-                        setFormData({ ...formData, sku: e.target.value })
-                      }
-                      required
-                    />
-
-                    <Button type="button" onClick={generateSKU}>
-                      Generate
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Price */}
-                <div className="space-y-2">
-                  <Label>Price *</Label>
-                  <Input
-                    type="number"
-                    placeholder="Enter price"
-                    value={formData.price}
-                    onChange={(e) =>
-                      setFormData({ ...formData, price: e.target.value })
-                    }
-                    required
-                  />
-                </div>
-
-                {/* Dynamic Categories */}
-                <div className="space-y-2">
-                  <Label>Category *</Label>
-                  <Select
-                    value={formData.category}
-                    onValueChange={(value) =>
-                      setFormData({ ...formData, category: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-
-                    <SelectContent>
-                      {categories.map((cat) => (
-                        <SelectItem key={cat._id} value={cat.name}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Subcategory */}
-                <div className="space-y-2">
-                  <Label>Subcategory</Label>
-                  <Select
-                    value={formData.subcategory}
-                    onValueChange={(value) =>
-                      setFormData({ ...formData, subcategory: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select subcategory" />
-                    </SelectTrigger>
-
-                    <SelectContent>
-                      <SelectItem value="new">New</SelectItem>
-                      <SelectItem value="popular">Popular</SelectItem>
-                      <SelectItem value="trending">Trending</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Stock */}
-                <div className="space-y-2">
-                  <Label>Stock</Label>
-                  <Input
-                    type="number"
-                    placeholder="Stock quantity"
-                    value={formData.stock}
-                    onChange={(e) =>
-                      setFormData({ ...formData, stock: e.target.value })
-                    }
-                  />
-                </div>
+            {subcategories.length > 0 && (
+              <div>
+                <Label className="font-bold">Subcategory</Label>
+                <Select value={subcategory} onValueChange={setSubcategory}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Select Subcategory" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {subcategories.map((sub) => (
+                      <SelectItem key={sub._id} value={sub._id}>
+                        {sub.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+            )}
 
-              {/* Description */}
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <Textarea
-                  rows={4}
-                  placeholder="Product description"
-                  value={formData.description}
-                  onChange={(e) =>
-                    setFormData({ ...formData, description: e.target.value })
-                  }
-                />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label className="font-bold">Item Name *</Label>
+                <Input value={itemName} onChange={(e) => setItemName(e.target.value)} />
               </div>
-
-              {/* Image */}
-              <div className="space-y-2">
-                <Label>Product Image</Label>
-                <Input type="file" accept="image/*" onChange={handleImageChange} />
-
-                {preview && (
-                  <img
-                    src={preview}
-                    className="w-32 h-32 rounded object-cover mt-4"
-                  />
-                )}
+              <div>
+                <Label className="font-bold">
+                  Sales Price {business?.gstApplicable ? "(Without GST)" : ""}
+                </Label>
+                <Input value={salesPrice} onChange={(e) => setSalesPrice(e.target.value)} />
               </div>
+            </div>
 
-              <div className="flex gap-4">
-                <Button type="submit" className="flex-1">
-                  Add Product
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => navigate("/products")}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
+            {business?.gstApplicable && (
+              <div>
+                <Label className="font-bold">GST Rate *</Label>
+                <Select value={gstRate} onValueChange={setGstRate}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select GST %" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="5">5%</SelectItem>
+                    <SelectItem value="12">12%</SelectItem>
+                    <SelectItem value="18">18%</SelectItem>
+                    <SelectItem value="28">28%</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            </form>
-          </CardContent>
-        </Card>
+            )}
+
+            <div>
+              <Label className="font-bold">Description *</Label>
+              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+
+            <div>
+              <Label className="font-bold">Upload Images *</Label>
+              <input type="file" multiple onChange={handleImageUpload} />
+            </div>
+          </div>
+        )}
+
+        {/* STOCK SECTION */}
+        {activeSection === "stock" && (
+          <div className="space-y-6">
+            <div>
+              <Label className="font-bold">SKU Code</Label>
+              <Input value={skuCode} readOnly />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label>Measuring Unit</Label>
+                <Input value={measuringUnit} onChange={(e) => setMeasuringUnit(e.target.value)} />
+              </div>
+              <div>
+                <Label>HSN Code</Label>
+                <Input value={hsnCode} onChange={(e) => setHsnCode(e.target.value)} />
+              </div>
+            </div>
+
+            <div>
+              <Label className="font-bold">Godown / Shop</Label>
+              <Select value={godown} onValueChange={setGodown}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={business?.businessName}>{business?.businessName}</SelectItem>
+                  <SelectItem value="Main Godown">Main Godown</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label>Open Stock</Label>
+                <Input value={openStock} onChange={(e) => setOpenStock(e.target.value)} />
+              </div>
+              <div>
+                <Label>As On Date</Label>
+                <Input type="date" value={asOnDate} onChange={(e) => setAsOnDate(e.target.value)} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PRICE SECTION */}
+        {activeSection === "price" && (
+          <div className="space-y-6">
+            <div>
+              <Label className="font-bold">M.R.P</Label>
+              <Input value={mrp} onChange={(e) => setMrp(e.target.value)} />
+            </div>
+
+            <div>
+              <Label className="font-bold">Discount (%)</Label>
+              <Input value={discount} onChange={(e) => setDiscount(e.target.value)} />
+            </div>
+
+            <div>
+              <Label className="font-bold">After Discount Price</Label>
+              <Input value={afterDiscount} readOnly />
+            </div>
+
+            <div>
+              <Label className="font-bold">Commission (APEXBEE)</Label>
+              <Input value={commission} readOnly />
+            </div>
+
+            <div>
+              <Label className="font-bold">Final Amount Vendor Gets</Label>
+              <Input value={finalAmount} readOnly />
+            </div>
+          </div>
+        )}
+
+        <div className="mt-10 flex justify-center">
+          <Button className="px-10 py-4 text-lg" onClick={handleSubmit}>
+            SAVE PRODUCT
+          </Button>
+        </div>
       </div>
     </AppLayout>
   );
 };
 
-export default AddProduct;
+export default Addproduct;

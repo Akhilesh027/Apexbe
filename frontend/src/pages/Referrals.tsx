@@ -57,19 +57,19 @@ const Referrals = () => {
       }
 
       const [codeRes, statsRes, historyRes] = await Promise.all([
-        fetch('https://api.apexbee.in/api/referrals/code', {
+        fetch('http://localhost:5000/api/referrals/code', {
           headers: { 
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         }),
-        fetch('https://api.apexbee.in/api/referrals/stats', {
+        fetch('http://localhost:5000/api/referrals/stats', {
           headers: { 
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         }),
-        fetch('https://api.apexbee.in/api/referrals/history?limit=20', {
+        fetch('http://localhost:5000/api/referrals/history?limit=20', {
           headers: { 
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'

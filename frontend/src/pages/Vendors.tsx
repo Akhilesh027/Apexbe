@@ -22,7 +22,7 @@ const Vendors = () => {
   // ⭐ Fetch products from backend
   const loadProducts = async () => {
     try {
-      const res = await fetch("https://api.apexbee.in/api/product");
+      const res = await fetch("http://localhost:5000/api/product");
       const data = await res.json();
       setProducts(data.products || []);
     } catch (error) {

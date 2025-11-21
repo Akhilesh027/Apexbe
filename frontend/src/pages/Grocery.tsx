@@ -23,7 +23,7 @@ const Grocery = () => {
     const fetchGroceryProducts = async () => {
       try {
         const res = await axios.get(
-          "https://api.apexbee.in/api/products?category=grocery"
+          "http://localhost:5000/api/products?category=grocery"
         );
 
         setProducts(res.data);
