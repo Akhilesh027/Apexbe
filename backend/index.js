@@ -8,6 +8,7 @@ import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary.js";
 
 import Vendor from "./models/vendor.js";
+import Products from "./models/Products.js";
 import Cart from "./models/Cart.js";
 import Address from "./models/Address.js";
 import Order from "./models/Order.js";
@@ -25,7 +26,6 @@ import dotenv from "dotenv";
 import Referral from "./models/Referral.js";
 import Bussiness from "./models/Bussiness.js";
 import Form from "./models/Form.js";
-import Products from "./models/Products.js";
 dotenv.config();
 cloudinary.api.ping()
   .then(() => {
