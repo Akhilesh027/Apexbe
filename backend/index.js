@@ -840,11 +840,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
 
     const slug = generateSlug(itemName);
 
-    // ☁️ CLOUDINARY IMAGES
     const images = req.files?.map((f) => f.path) || [];  
-    // f.path automatically contains Cloudinary URL (since you used CloudinaryStorage)
-
-    // CREATE PRODUCT DOCUMENT
     const product = new Products({
       vendorId,
 
