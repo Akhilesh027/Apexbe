@@ -9,23 +9,32 @@ import { toast } from "sonner";
 
 interface Product {
   _id: string;
-  name: string;
+  vendorName: string;
+  itemType: string;
+  categoryName: string;
+  subcategoryName?: string;
+  itemName: string;
+  salesPrice: number;
+  gstRate: number;
   description: string;
-  category: string;
-  subcategory: string;
-  price: number;
-  originalPrice?: number;
-  discount?: string;
-  stock: number;
-  status: string[];
   images: string[];
-  specifications: Record<string, string>;
+  skuCode: string;
+  measuringUnit: string;
+  hsnCode: string;
+  godown: string;
+  openStock: number;
+  asOnDate: string;
+  userPrice: number;
+  discount: number;
+  afterDiscount: number;
+  commission: number;
+  finalAmount: number;
+  priceType: string;
 }
 
 const ProductDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-
   const [product, setProduct] = useState<Product | null>(null);
   const [selectedImage, setSelectedImage] = useState<string>("");
 
@@ -35,9 +44,9 @@ const ProductDetails = () => {
         const res = await fetch(`https://api.apexbee.in/api/product/${id}`);
         const data = await res.json();
 
-        if (res.ok && data.success) {
-          setProduct(data.product);
-          setSelectedImage(data.product.images?.[0] || "");
+        if (res.ok) {
+          setProduct(data);
+          setSelectedImage(data.images?.[0] || "");
         } else {
           toast.error(data.message || "Failed to fetch product details");
         }
@@ -77,8 +86,8 @@ const ProductDetails = () => {
           <Card className="p-6">
             <div className="mb-4">
               <img
-                src={`${selectedImage}`}
-                alt={product.name}
+                src={selectedImage}
+                alt={product.itemName}
                 className="w-full h-96 object-cover rounded-lg"
               />
             </div>
@@ -86,8 +95,8 @@ const ProductDetails = () => {
               {product.images?.map((img, index) => (
                 <img
                   key={index}
-                  src={`${img}`}
-                  alt={`${product.name} ${index + 1}`}
+                  src={img}
+                  alt={`${product.itemName} ${index + 1}`}
                   className={`w-full h-24 object-cover rounded cursor-pointer hover:opacity-80 ${
                     selectedImage === img ? "ring-2 ring-primary" : ""
                   }`}
@@ -100,69 +109,90 @@ const ProductDetails = () => {
           {/* Product Info */}
           <div className="space-y-6">
             <Card className="p-6">
-              <h2 className="text-2xl font-bold mb-2">{product.name}</h2>
+              <h2 className="text-2xl font-bold mb-2">{product.itemName}</h2>
 
-              {/* Status Badges */}
-              <div className="flex gap-2 mb-4 flex-wrap">
-                {product.status?.map((status, i) => (
-                  <Badge
-                    key={i}
-                    variant={status === "Top" ? "default" : "outline"}
-                    className={status === "Deal" ? "bg-success text-white hover:bg-success/90" : ""}
-                  >
-                    {status}
-                  </Badge>
-                ))}
-              </div>
-
-              {/* Price Section */}
-              <div className="flex items-baseline gap-3 mb-4">
-                <span className="text-3xl font-bold text-foreground">₹{product.price}</span>
-                {product.originalPrice && (
-                  <span className="text-lg text-muted-foreground line-through">
-                    ₹{product.originalPrice}
-                  </span>
-                )}
-                {product.discount && (
-                  <span className="text-lg text-success font-semibold">{product.discount}</span>
-                )}
-              </div>
-
-              {/* Category / Subcategory / Stock */}
               <div className="space-y-2 mb-4">
                 <div className="flex justify-between">
+                  <span className="text-muted-foreground">Vendor:</span>
+                  <span className="font-medium">{product.vendorName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Item Type:</span>
+                  <span className="font-medium">{product.itemType}</span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-muted-foreground">Category:</span>
-                  <span className="font-medium">{product.category}</span>
+                  <span className="font-medium">{product.categoryName}</span>
+                </div>
+                {product.subcategoryName && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Subcategory:</span>
+                    <span className="font-medium">{product.subcategoryName}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Sales Price:</span>
+                  <span className="font-medium">₹{product.salesPrice}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Subcategory:</span>
-                  <span className="font-medium">{product.subcategory}</span>
+                  <span className="text-muted-foreground">GST Rate:</span>
+                  <span className="font-medium">{product.gstRate}%</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Stock:</span>
-                  <Badge variant={product.stock > 0 ? "default" : "destructive"}>
-                    {product.stock} units
+                  <span className="text-muted-foreground">SKU Code:</span>
+                  <span className="font-medium">{product.skuCode}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Measuring Unit:</span>
+                  <span className="font-medium">{product.measuringUnit}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">HSN Code:</span>
+                  <span className="font-medium">{product.hsnCode}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Godown:</span>
+                  <span className="font-medium">{product.godown}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Open Stock:</span>
+                  <Badge variant={product.openStock > 0 ? "default" : "destructive"}>
+                    {product.openStock} units
                   </Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">As On Date:</span>
+                  <span className="font-medium">{product.asOnDate}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">MRP:</span>
+                  <span className="font-medium">₹{product.userPrice}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Discount:</span>
+                  <span className="font-medium">{product.discount}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">After Discount:</span>
+                  <span className="font-medium">₹{product.afterDiscount}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Commission:</span>
+                  <span className="font-medium">₹{product.commission}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Final Amount:</span>
+                  <span className="font-medium">₹{product.finalAmount}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Price Type:</span>
+                  <span className="font-medium">{product.priceType}</span>
                 </div>
               </div>
 
-              {/* Description */}
               <div className="border-t pt-4">
                 <h3 className="font-semibold mb-3">Description</h3>
                 <p className="text-muted-foreground">{product.description}</p>
-              </div>
-            </Card>
-
-            {/* Specifications */}
-            <Card className="p-6">
-              <h3 className="font-semibold mb-4">Specifications</h3>
-              <div className="space-y-2">
-                {Object.entries(product.specifications || {}).map(([key, value]) => (
-                  <div key={key} className="flex justify-between border-b pb-2">
-                    <span className="text-muted-foreground">{key}:</span>
-                    <span className="font-medium">{value}</span>
-                  </div>
-                ))}
               </div>
             </Card>
           </div>

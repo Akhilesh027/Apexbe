@@ -1,10 +1,57 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { mockDashboardStats, mockSalesData, mockRecentActivity } from "@/data/mockData";
 import { Users, Store, Package, ShoppingCart, DollarSign, Clock } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import axios from "axios";
 
 const Dashboard = () => {
-  const stats = mockDashboardStats;
+  const [stats, setStats] = useState({
+    totalUsers: 0,
+    totalVendors: 0,
+    totalProducts: 0,
+    totalOrders: 0,
+    pendingShopApprovals: 0,
+    totalRevenue: 0,
+  });
+
+  const [salesData, setSalesData] = useState([]);
+  const [recentActivity, setRecentActivity] = useState([]);
+
+  // Fetch dashboard stats
+  const fetchStats = async () => {
+    try {
+      const res = await axios.get("https://api.apexbee.in/api/admin/dashboard/stats");
+      setStats(res.data);
+    } catch (error) {
+      console.error("Failed to fetch dashboard stats:", error);
+    }
+  };
+
+  // Fetch sales data for chart
+  const fetchSalesData = async () => {
+    try {
+      const res = await axios.get("https://api.apexbee.in/api/admin/dashboard/sales");
+      setSalesData(res.data);
+    } catch (error) {
+      console.error("Failed to fetch sales data:", error);
+    }
+  };
+
+  // Fetch recent activity
+  const fetchRecentActivity = async () => {
+    try {
+      const res = await axios.get("https://api.apexbee.in/api/admin/dashboard/recent-activity");
+      setRecentActivity(res.data);
+    } catch (error) {
+      console.error("Failed to fetch recent activity:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+    fetchSalesData();
+    fetchRecentActivity();
+  }, []);
 
   const statCards = [
     { title: "Total Users", value: stats.totalUsers, icon: Users, color: "text-primary" },
@@ -43,16 +90,20 @@ const Dashboard = () => {
           <CardTitle>Sales Overview</CardTitle>
         </CardHeader>
         <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={mockSalesData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis />
-              <Tooltip />
-              <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} />
-              <Line type="monotone" dataKey="sales" stroke="hsl(var(--accent))" strokeWidth={2} />
-            </LineChart>
-          </ResponsiveContainer>
+          {salesData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={salesData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis />
+                <Tooltip />
+                <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} />
+                <Line type="monotone" dataKey="sales" stroke="hsl(var(--accent))" strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-center text-muted-foreground">No sales data available.</p>
+          )}
         </CardContent>
       </Card>
 
@@ -62,19 +113,25 @@ const Dashboard = () => {
           <CardTitle>Recent Activity</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {mockRecentActivity.map((activity) => (
-              <div key={activity.id} className="flex items-center justify-between border-b pb-3 last:border-0">
-                <div>
-                  <p className="font-medium">{activity.action}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {activity.user || activity.product || activity.order || activity.vendor}
-                  </p>
+          {recentActivity.length > 0 ? (
+            <div className="space-y-4">
+              {recentActivity.map((activity) => (
+                <div key={activity._id} className="flex items-center justify-between border-b pb-3 last:border-0">
+                  <div>
+                    <p className="font-medium">{activity.action}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {activity.user?.name || activity.product?.itemName || activity.order?._id || activity.vendor?.name}
+                    </p>
+                  </div>
+                  <span className="text-sm text-muted-foreground">
+                    {new Date(activity.createdAt).toLocaleString()}
+                  </span>
                 </div>
-                <span className="text-sm text-muted-foreground">{activity.time}</span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-center text-muted-foreground">No recent activity found.</p>
+          )}
         </CardContent>
       </Card>
     </div>

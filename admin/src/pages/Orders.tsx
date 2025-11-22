@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { mockOrders, Order } from "@/data/mockData";
+import { useState, useEffect } from "react";
+import axios from "axios";
 import { DataTable } from "@/components/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,16 +21,31 @@ import { Eye, Package, Truck, CheckCircle2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const Orders = () => {
-  const [orders, setOrders] = useState(mockOrders);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+
+  // Fetch orders from backend
+  const fetchOrders = async () => {
+    try {
+      const { data } = await axios.get("https://api.apexbee.in/api/admin/orders");
+      if (data.success) setOrders(data.orders);
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to fetch orders");
+    }
+  };
+
+  useEffect(() => {
+    fetchOrders();
+  }, []);
 
   const getStatusBadge = (status: string) => {
     const config = {
-      pending: { variant: "secondary" as const, className: "bg-warning text-warning-foreground", icon: Package },
-      confirmed: { variant: "default" as const, className: "bg-primary text-primary-foreground", icon: CheckCircle2 },
-      shipped: { variant: "default" as const, className: "bg-accent text-accent-foreground", icon: Truck },
-      delivered: { variant: "default" as const, className: "bg-success text-success-foreground", icon: CheckCircle2 },
-      cancelled: { variant: "destructive" as const, className: "bg-destructive text-destructive-foreground", icon: XCircle },
+      pending: { variant: "secondary", className: "bg-warning text-warning-foreground", icon: Package },
+      confirmed: { variant: "default", className: "bg-primary text-primary-foreground", icon: CheckCircle2 },
+      shipped: { variant: "default", className: "bg-accent text-accent-foreground", icon: Truck },
+      delivered: { variant: "default", className: "bg-success text-success-foreground", icon: CheckCircle2 },
+      cancelled: { variant: "destructive", className: "bg-destructive text-destructive-foreground", icon: XCircle },
     };
     const { variant, className, icon: Icon } = config[status as keyof typeof config];
     return (
@@ -41,23 +56,15 @@ const Orders = () => {
     );
   };
 
-  const updateOrderStatus = (orderId: string, newStatus: Order["status"]) => {
-    setOrders((prev) =>
-      prev.map((order) => (order.id === orderId ? { ...order, status: newStatus } : order))
-    );
-    toast.success("Order status updated");
-  };
-
   const columns = [
-    { header: "Order #", accessor: (item: Order) => item.orderNumber },
-    { header: "Customer", accessor: (item: Order) => item.customerName },
-    { header: "Vendor", accessor: (item: Order) => item.vendorName },
-    { header: "Total", accessor: (item: Order) => `$${item.total.toFixed(2)}` },
-    { header: "Status", accessor: (item: Order) => getStatusBadge(item.status) },
-    { header: "Order Date", accessor: (item: Order) => item.orderDate },
+    { header: "Order #", accessor: (item: any) => item.orderNumber },
+    { header: "Customer", accessor: (item: any) => item.userDetails.name },
+    { header: "Total", accessor: (item: any) => `₹${item.orderSummary.total.toFixed(2)}` },
+    { header: "Status", accessor: (item: any) => getStatusBadge(item.orderStatus.currentStatus) },
+    { header: "Order Date", accessor: (item: any) => new Date(item.createdAt).toLocaleDateString() },
     {
       header: "Actions",
-      accessor: (item: Order) => (
+      accessor: (item: any) => (
         <Button size="sm" variant="outline" onClick={() => setSelectedOrder(item)}>
           <Eye className="h-4 w-4" />
         </Button>
@@ -82,6 +89,7 @@ const Orders = () => {
             <DialogTitle>Order Details</DialogTitle>
             <DialogDescription>Complete information about the order</DialogDescription>
           </DialogHeader>
+
           {selectedOrder && (
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
@@ -91,36 +99,32 @@ const Orders = () => {
                 </div>
                 <div>
                   <p className="text-sm font-medium">Order Date</p>
-                  <p className="text-sm text-muted-foreground">{selectedOrder.orderDate}</p>
+                  <p className="text-sm text-muted-foreground">{new Date(selectedOrder.createdAt).toLocaleString()}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Customer</p>
-                  <p className="text-sm text-muted-foreground">{selectedOrder.customerName}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Vendor</p>
-                  <p className="text-sm text-muted-foreground">{selectedOrder.vendorName}</p>
+                  <p className="text-sm text-muted-foreground">{selectedOrder.userDetails.name}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Total Amount</p>
-                  <p className="text-sm text-muted-foreground">${selectedOrder.total.toFixed(2)}</p>
+                  <p className="text-sm text-muted-foreground">₹{selectedOrder.orderSummary.total.toFixed(2)}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Current Status</p>
-                  {getStatusBadge(selectedOrder.status)}
+                  {getStatusBadge(selectedOrder.orderStatus.currentStatus)}
                 </div>
               </div>
 
               <div>
                 <p className="text-sm font-medium mb-2">Products</p>
                 <div className="space-y-2">
-                  {selectedOrder.products.map((product, index) => (
+                  {selectedOrder.orderItems.map((product: any, index: number) => (
                     <div key={index} className="flex justify-between items-center p-3 bg-muted rounded-lg">
                       <div>
                         <p className="font-medium">{product.name}</p>
                         <p className="text-sm text-muted-foreground">Quantity: {product.quantity}</p>
                       </div>
-                      <p className="font-medium">${(product.price * product.quantity).toFixed(2)}</p>
+                      <p className="font-medium">₹{product.itemTotal.toFixed(2)}</p>
                     </div>
                   ))}
                 </div>
@@ -129,10 +133,14 @@ const Orders = () => {
               <div>
                 <p className="text-sm font-medium mb-2">Update Status</p>
                 <Select
-                  value={selectedOrder.status}
+                  value={selectedOrder.orderStatus.currentStatus}
                   onValueChange={(value) => {
-                    updateOrderStatus(selectedOrder.id, value as Order["status"]);
-                    setSelectedOrder({ ...selectedOrder, status: value as Order["status"] });
+                    setSelectedOrder({
+                      ...selectedOrder,
+                      orderStatus: { ...selectedOrder.orderStatus, currentStatus: value },
+                    });
+                    toast.success("Order status updated locally");
+                    // TODO: Call backend API to update status
                   }}
                 >
                   <SelectTrigger>
@@ -146,47 +154,6 @@ const Orders = () => {
                     <SelectItem value="cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-
-              {/* Order Timeline */}
-              <div>
-                <p className="text-sm font-medium mb-3">Order Timeline</p>
-                <div className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <div className="h-2 w-2 rounded-full bg-primary mt-2" />
-                    <div>
-                      <p className="font-medium">Order Placed</p>
-                      <p className="text-sm text-muted-foreground">{selectedOrder.orderDate}</p>
-                    </div>
-                  </div>
-                  {selectedOrder.status !== "pending" && (
-                    <div className="flex items-start gap-3">
-                      <div className="h-2 w-2 rounded-full bg-primary mt-2" />
-                      <div>
-                        <p className="font-medium">Order Confirmed</p>
-                        <p className="text-sm text-muted-foreground">Status updated</p>
-                      </div>
-                    </div>
-                  )}
-                  {(selectedOrder.status === "shipped" || selectedOrder.status === "delivered") && (
-                    <div className="flex items-start gap-3">
-                      <div className="h-2 w-2 rounded-full bg-primary mt-2" />
-                      <div>
-                        <p className="font-medium">Order Shipped</p>
-                        <p className="text-sm text-muted-foreground">On the way</p>
-                      </div>
-                    </div>
-                  )}
-                  {selectedOrder.status === "delivered" && (
-                    <div className="flex items-start gap-3">
-                      <div className="h-2 w-2 rounded-full bg-success mt-2" />
-                      <div>
-                        <p className="font-medium">Order Delivered</p>
-                        <p className="text-sm text-muted-foreground">{selectedOrder.deliveryDate}</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           )}

@@ -27,7 +27,12 @@ const businessSchema = new mongoose.Schema(
     pinCode: { type: String, required: true },
 
     gstApplicable: { type: Boolean, default: false },
-    gstNumber: { type: String, default: "" }
+    gstNumber: { type: String, default: "" },
+     status: {
+      type: String,
+      enum: ["pending", "approved", "rejected", "blocked"],
+      default: "pending",
+    },
   },
   { timestamps: true }
 );

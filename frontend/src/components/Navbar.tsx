@@ -173,7 +173,7 @@ const handleOpenForm = (title, endpoint) => {
 
               </div>
 
-              <Link to="/local-stores" className="hover:text-accent transition">LOCAL STORES</Link>
+              <Link to="/local" className="hover:text-accent transition">LOCAL STORES</Link>
               <Link to="/referrals" className="hover:text-accent transition">REFER & EARN</Link>
             </div>
 <FormModal

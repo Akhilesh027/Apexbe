@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { mockProducts, Product } from "@/data/mockData";
+import { useState, useEffect } from "react";
+import axios from "axios";
 import { DataTable } from "@/components/DataTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,58 +14,104 @@ import {
 import { CheckCircle, XCircle, Eye } from "lucide-react";
 import { toast } from "sonner";
 
+interface Product {
+  _id: string;
+  itemName: string;
+  category: { name: string } | null;
+  subcategory: string;
+  salesPrice: number;
+  afterDiscount: number;
+  skuCode: string;
+  priceType: string;
+  openStock: number;
+  vendorId: { name: string } | null;
+  images: string[];
+  status?: "pending" | "approved" | "rejected";
+  createdAt: string;
+  [key: string]: any;
+}
+
 const Products = () => {
-  const [products, setProducts] = useState(mockProducts);
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [actionDialog, setActionDialog] = useState<{
     open: boolean;
     action: "approve" | "reject" | null;
   }>({ open: false, action: null });
 
-  const getStatusBadge = (status: string) => {
-    return (
-      <Badge
-        variant={status === "approved" ? "default" : status === "pending" ? "secondary" : "destructive"}
-        className={
-          status === "approved"
-            ? "bg-success text-success-foreground"
-            : status === "pending"
-            ? "bg-warning text-warning-foreground"
-            : "bg-destructive text-destructive-foreground"
-        }
-      >
-        {status}
-      </Badge>
-    );
-  };
+  // Fetch products from backend
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const res = await axios.get("https://api.apexbee.in/api/products");
+        const productsWithStatus = res.data.products.map((p: any) => ({
+          ...p,
+          status: "pending", // default, backend may also provide actual status
+        }));
+        setProducts(productsWithStatus);
+      } catch (error) {
+        console.error("Error fetching products:", error);
+        toast.error("Failed to load products");
+      }
+    };
+    fetchProducts();
+  }, []);
+
+  const getStatusBadge = (status: string) => (
+    <Badge
+      variant={status === "approved" ? "default" : status === "pending" ? "secondary" : "destructive"}
+      className={
+        status === "approved"
+          ? "bg-success text-success-foreground"
+          : status === "pending"
+          ? "bg-warning text-warning-foreground"
+          : "bg-destructive text-destructive-foreground"
+      }
+    >
+      {status}
+    </Badge>
+  );
 
   const handleAction = (product: Product, action: "approve" | "reject") => {
     setSelectedProduct(product);
     setActionDialog({ open: true, action });
   };
 
-  const confirmAction = () => {
+  const confirmAction = async () => {
     if (!selectedProduct || !actionDialog.action) return;
 
-    const newStatus = actionDialog.action === "approve" ? "approved" : "rejected";
+    try {
+      // Call backend API
+      const endpoint = `https://api.apexbee.in/api/products/${selectedProduct._id}/${actionDialog.action}`;
+      await axios.post(endpoint);
 
-    setProducts((prev) =>
-      prev.map((p) => (p.id === selectedProduct.id ? { ...p, status: newStatus as any } : p))
-    );
+      // Update locally
+      const newStatus = actionDialog.action === "approve" ? "approved" : "rejected";
+      setProducts((prev) =>
+        prev.map((p) => (p._id === selectedProduct._id ? { ...p, status: newStatus } : p))
+      );
 
-    toast.success(`Product ${actionDialog.action}ed successfully`);
-    setActionDialog({ open: false, action: null });
-    setSelectedProduct(null);
+      toast.success(`Product ${actionDialog.action}ed successfully`);
+    } catch (error) {
+      console.error("Error updating product status:", error);
+      toast.error("Failed to update product status");
+    } finally {
+      setActionDialog({ open: false, action: null });
+      setSelectedProduct(null);
+    }
   };
 
   const columns = [
-    { header: "Product Name", accessor: (item: Product) => item.name },
-    { header: "Category", accessor: (item: Product) => item.category },
-    { header: "Sub-Category", accessor: (item: Product) => item.subCategory },
-    { header: "Price", accessor: (item: Product) => `$${item.price.toFixed(2)}` },
-    { header: "Stock", accessor: (item: Product) => item.stock },
-    { header: "Vendor", accessor: (item: Product) => item.vendorName },
-    { header: "Status", accessor: (item: Product) => getStatusBadge(item.status) },
+    { header: "Product Name", accessor: (item: Product) => item.itemName },
+    { header: "Category", accessor: (item: Product) => item.category?.name || "N/A" },
+    { header: "Sub-Category", accessor: (item: Product) => item.subcategory || "N/A" },
+    { header: "Price", accessor: (item: Product) => `₹${item.salesPrice}` },
+    { header: "After Discount", accessor: (item: Product) => `₹${item.afterDiscount}` },
+    { header: "SKU Code", accessor: (item: Product) => item.skuCode },
+    { header: "Price Type", accessor: (item: Product) => item.priceType },
+    { header: "Stock", accessor: (item: Product) => item.openStock },
+    { header: "Vendor", accessor: (item: Product) => item.vendorId?.name || "N/A" },
+    { header: "Status", accessor: (item: Product) => getStatusBadge(item.status || "pending") },
     {
       header: "Actions",
       accessor: (item: Product) => (
@@ -112,7 +158,7 @@ const Products = () => {
         <p className="text-muted-foreground">Manage product listings and approvals</p>
       </div>
 
-      <DataTable data={products} columns={columns} searchKey="name" />
+      <DataTable data={products} columns={columns} searchKey="itemName" />
 
       {/* Product Details Dialog */}
       <Dialog open={!!selectedProduct && !actionDialog.open} onOpenChange={() => setSelectedProduct(null)}>
@@ -126,36 +172,62 @@ const Products = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm font-medium">Product Name</p>
-                  <p className="text-sm text-muted-foreground">{selectedProduct.name}</p>
+                  <p className="text-sm text-muted-foreground">{selectedProduct.itemName}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Category</p>
-                  <p className="text-sm text-muted-foreground">{selectedProduct.category}</p>
+                  <p className="text-sm text-muted-foreground">{selectedProduct.category?.name || "N/A"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Sub-Category</p>
-                  <p className="text-sm text-muted-foreground">{selectedProduct.subCategory}</p>
+                  <p className="text-sm text-muted-foreground">{selectedProduct.subcategory || "N/A"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Price</p>
-                  <p className="text-sm text-muted-foreground">${selectedProduct.price.toFixed(2)}</p>
+                  <p className="text-sm text-muted-foreground">₹{selectedProduct.salesPrice}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">After Discount</p>
+                  <p className="text-sm text-muted-foreground">₹{selectedProduct.afterDiscount}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">SKU Code</p>
+                  <p className="text-sm text-muted-foreground">{selectedProduct.skuCode}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Price Type</p>
+                  <p className="text-sm text-muted-foreground">{selectedProduct.priceType}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Stock</p>
-                  <p className="text-sm text-muted-foreground">{selectedProduct.stock}</p>
+                  <p className="text-sm text-muted-foreground">{selectedProduct.openStock}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Vendor</p>
-                  <p className="text-sm text-muted-foreground">{selectedProduct.vendorName}</p>
+                  <p className="text-sm text-muted-foreground">{selectedProduct.vendorId?.name || "N/A"}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium">Status</p>
-                  {getStatusBadge(selectedProduct.status)}
+                  {getStatusBadge(selectedProduct.status || "pending")}
                 </div>
                 <div>
                   <p className="text-sm font-medium">Created At</p>
-                  <p className="text-sm text-muted-foreground">{selectedProduct.createdAt}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {new Date(selectedProduct.createdAt).toLocaleString()}
+                  </p>
                 </div>
+              </div>
+
+              {/* Images */}
+              <div className="grid grid-cols-3 gap-2 mt-4">
+                {selectedProduct.images.map((img, idx) => (
+                  <img
+                    key={idx}
+                    src={img}
+                    alt={`product-${idx}`}
+                    className="w-full h-32 object-cover rounded"
+                  />
+                ))}
               </div>
             </div>
           )}

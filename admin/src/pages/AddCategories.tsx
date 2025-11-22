@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import AppLayout from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,7 +64,7 @@ const AddCategory = () => {
   };
 
   return (
-    <AppLayout>
+
       <div className="container mx-auto px-4 py-8">
         <Card className="max-w-2xl mx-auto">
           <CardHeader>
@@ -118,7 +117,7 @@ const AddCategory = () => {
           </CardContent>
         </Card>
       </div>
-    </AppLayout>
+ 
   );
 };
 

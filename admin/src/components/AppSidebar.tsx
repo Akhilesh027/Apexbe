@@ -24,11 +24,13 @@ import {
 
 const menuItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Vendors & Shops", url: "/vendors", icon: Store },
+  { title: "Vendors", url: "/vendors", icon: Store },
+  { title: "Bussiness", url: "/bussiness", icon: Store },
   { title: "Products", url: "/products", icon: Package },
   { title: "Categories", url: "/categories", icon: Grid3x3 },
   { title: "Users", url: "/users", icon: Users },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
+  { title: "Forms", url: "/Forms", icon: ShoppingCart },
   { title: "Payouts", url: "/payouts", icon: DollarSign },
   { title: "Settings", url: "/settings", icon: Settings },
 ];

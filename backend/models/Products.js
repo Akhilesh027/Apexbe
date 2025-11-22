@@ -7,19 +7,21 @@ const productSchema = new mongoose.Schema(
     // PRODUCT DETAILS
     itemType: String,
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
+    subcategory: { type: String, required: false},
     itemName: String,
     salesPrice: Number,
-    taxOption: String,
     gstRate: Number,
     description: String,
 
     // IMAGES (local paths)
     images: [String],
-slug: {
-  type: String,
-  unique: true,
-  sparse: true
-},
+
+    slug: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
     // STOCK DETAILS
     skuCode: { type: String, unique: true },
     measuringUnit: String,
@@ -29,11 +31,12 @@ slug: {
     asOnDate: String,
 
     // PRICE DETAILS
-    userPrice: Number,         // User given price (sales price)
-    discount: Number,          // User given discount
-    afterDiscount: Number,     // auto-calculated
-    commission: Number,        // auto-calculated
-    finalAmount: Number,       // auto-calculated
+    userPrice: Number,
+    discount: Number,
+    afterDiscount: Number,
+    commission: Number,
+    finalAmount: Number,
+    priceType: String,
   },
   { timestamps: true }
 );

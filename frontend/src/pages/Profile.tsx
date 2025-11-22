@@ -31,7 +31,7 @@ const Profile = () => {
     const user = JSON.parse(localStorage.getItem("user"));
     if (user) {
       setUserData({
-        _id: user._id,
+        _id: user.id,
         name: user.name || user.username,
         email: user.email,
         phone: user.phone || "+91 98765 43210",

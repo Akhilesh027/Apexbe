@@ -4,8 +4,9 @@ import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import multer from "multer";
-import { v2 as cloudinary } from "cloudinary";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
+import cloudinary from "./cloudinary.js";
+
 import Vendor from "./models/vendor.js";
 import Product from "./models/Products.js";
 import Cart from "./models/Cart.js";
@@ -26,41 +27,70 @@ import Referral from "./models/Referral.js";
 import Bussiness from "./models/Bussiness.js";
 import Form from "./models/Form.js";
 dotenv.config();
-
+cloudinary.api.ping()
+  .then(() => {
+    console.log("✅ Cloudinary Connected Successfully!");
+  })
+  .catch((err) => {
+    console.log("❌ Cloudinary Connection Failed:", err.message);
+  });
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("DB Connected"))
   .catch((err) => console.error("DB Error:", err));
 
-
 app.post("/api/register", async (req, res) => {
   try {
-    const { name, email, password, confirmPassword } = req.body;
+    const {
+      name,
+      email,
+      cell,
+      password,
+      confirmPassword,
+      address = {}, // street, city, state, zip, country
+    } = req.body;
 
-    if (!name || !email || !password || !confirmPassword)
-      return res.status(400).json({ error: "All fields required" });
+    // Validate required fields
+    if (!name || !email || !cell || !password || !confirmPassword) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
 
-    if (password !== confirmPassword)
+    if (password !== confirmPassword) {
       return res.status(400).json({ error: "Passwords do not match" });
+    }
 
+    // Check if email already exists
     const existingVendor = await Vendor.findOne({ email });
-    if (existingVendor)
+    if (existingVendor) {
       return res.status(400).json({ error: "Email already registered" });
+    }
 
+    // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Create new vendor
     const vendor = new Vendor({
       name,
       email,
+      cell,
       password: hashedPassword,
+      address: {
+        street: address.street || "",
+        city: address.city || "",
+        state: address.state || "",
+        zip: address.zip || "",
+        country: address.country || "",
+      },
+      status: "pending", // default status
     });
 
     await vendor.save();
-    return res.json({ message: "Registration successful" });
+
+    return res.json({ message: "Registration successful", vendorId: vendor._id });
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: "Server Error" });
   }
 });
-
 // ----------------------
 // LOGIN VENDOR
 // ----------------------
@@ -68,20 +98,31 @@ app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const vendor = await Vendor.findOne({ email });
-    if (!vendor)
+    // Find vendor by email and include password
+    const vendor = await Vendor.findOne({ email }).select("+password");
+    if (!vendor) {
       return res.status(400).json({ error: "Invalid email or password" });
+    }
 
+    // Ensure password exists
+    if (!vendor.password) {
+      return res.status(400).json({ error: "Password not set for this account" });
+    }
+
+    // Compare password
     const isMatch = await bcrypt.compare(password, vendor.password);
-    if (!isMatch)
+    if (!isMatch) {
       return res.status(400).json({ error: "Invalid email or password" });
+    }
 
+    // Generate JWT token
     const token = jwt.sign(
       { id: vendor._id, email: vendor.email },
-      "SECRET_KEY",
+      "BANNU9",
       { expiresIn: "7d" }
     );
 
+    // Return vendor details including cell, address, status, and subscriptionPlan
     return res.json({
       message: "Login successful",
       token,
@@ -89,12 +130,33 @@ app.post("/api/login", async (req, res) => {
         id: vendor._id,
         name: vendor.name,
         email: vendor.email,
+        cell: vendor.cell,
+        status: vendor.status,
+        address: vendor.address, // street, city, state, zip, country
+        subscriptionPlan: vendor.subscriptionPlan || null,
       },
     });
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: "Server Error" });
   }
 });
+// GET /api/vendor/:vendorId
+app.get("/api/vendor/:vendorId", async (req, res) => {
+  try {
+    const vendor = await Vendor.findById(req.params.vendorId).select(
+      "name email cell status address subscriptionPlan"
+    );
+
+    if (!vendor) return res.status(404).json({ error: "Vendor not found" });
+
+    res.json({ vendor });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server Error" });
+  }
+});
+
 const userSchema = new mongoose.Schema(
   {
     name: String,
@@ -588,7 +650,16 @@ app.get("/api/user/profile", auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to get profile' });
   }
 });
-
+// ---------------------------------------------
+app.get("/api/admin/users", async (req, res) => {
+  try {
+    const user = await User.find();
+    res.json({ user });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
 // ---------------------------------------------
 // 📌 UPDATE USER PROFILE
 // ---------------------------------------------
@@ -710,22 +781,17 @@ app.post("/api/user/wallet/deduct/:userId", auth, async (req, res) => {
   }
 });
 
-const uploadPath = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadPath)) {
-  fs.mkdirSync(uploadPath);
-}
-
-// Multer local storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadPath);
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "products", // Folder name in Cloudinary
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    transformation: [{ width: 500, height: 500, crop: "limit" }],
   },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  }
 });
 
-const upload = multer({ storage });
+export const upload = multer({ storage });
+
 app.post(
   "/api/business/add-business",
   upload.single("logo"),
@@ -753,6 +819,9 @@ app.post(
         return res.status(400).json({ message: "Vendor ID required" });
       }
 
+      // CLOUDINARY LOGO URL
+      const logoUrl = req.file ? req.file.path : "";
+
       const newBusiness = new Bussiness({
         vendorId,
         businessName,
@@ -762,8 +831,8 @@ app.post(
         registrationType,
         businessTypes: JSON.parse(businessTypes),
 
-        // LOCAL FILE PATH
-        logo: req.file ? `/uploads/${req.file.filename}` : "",
+        // CLOUDINARY URL
+        logo: logoUrl,
 
         // Step 2 fields
         address,
@@ -786,6 +855,7 @@ app.post(
     }
   }
 );
+
 app.get("/api/business/get-business/:vendorId", async (req, res) => {
   try {
     const business = await Bussiness.findOne({ vendorId: req.params.vendorId });
@@ -801,6 +871,11 @@ const generateSKU = () => {
   return "APX-" + Date.now();
 };
 
+// SLUG GENERATOR
+
+const generateSlug = (text) =>
+  text.toLowerCase().replace(/ /g, "-") + "-" + Date.now();
+
 // ------------------ ADD PRODUCT API ------------------
 app.post("/api/products/add-product", upload.array("images", 10), async (req, res) => {
   try {
@@ -808,9 +883,9 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       vendorId,
       itemType,
       category,
+      subcategory,
       itemName,
       salesPrice,
-      taxOption,
       gstRate,
       description,
 
@@ -820,47 +895,52 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       openStock,
       asOnDate,
 
+      mrp,
       discount,
+      afterDiscount,
+      commission,
+      finalAmount,
+      priceType,
     } = req.body;
 
-    // SKU auto generate
+    // AUTO GENERATED VALUES
     const skuCode = generateSKU();
+    const slug = generateSlug(itemName);
 
-    // price calculations
-    const userPrice = Number(salesPrice);
-    const disc = Number(discount);
-    const afterDiscount = userPrice - disc;
-    const commission = afterDiscount * 0.10;       // 10% commission
-    const finalAmount = afterDiscount - commission;
+    // ☁️ CLOUDINARY IMAGES
+    const images = req.files?.map((f) => f.path) || [];  
+    // f.path automatically contains Cloudinary URL (since you used CloudinaryStorage)
 
-    const images = req.files ? req.files.map((f) => f.path) : [];
-
-  
+    // CREATE PRODUCT DOCUMENT
     const product = new Product({
       vendorId,
-      itemType,
-      category,
-      itemName,
-      salesPrice: userPrice,
-      taxOption,
-      gstRate,
-      description,
-      images,
 
-      // stock
+      // PRODUCT DETAILS
+      itemType: itemType || "product",
+      category,
+      subcategory,
+      itemName,
+      salesPrice: Number(salesPrice) || 0,
+      gstRate: Number(gstRate) || 0,
+      description,
+      images,  // <-- Cloudinary URLs added
+      slug,
+
+      // STOCK DETAILS
       skuCode,
       measuringUnit,
       hsnCode,
       godown,
-      openStock,
+      openStock: Number(openStock) || 0,
       asOnDate,
 
-      // price auto
-      userPrice,
-      discount: disc,
-      afterDiscount,
-      commission,
-      finalAmount,
+      // PRICE DETAILS
+      userPrice: Number(mrp) || 0,
+      discount: Number(discount) || 0,
+      afterDiscount: Number(afterDiscount) || 0,
+      commission: Number(commission) || 0,
+      finalAmount: Number(finalAmount) || 0,
+      priceType,
     });
 
     await product.save();
@@ -876,16 +956,22 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
   }
 });
 
-
-
-app.get("/api/product", async (req, res) => {
+// Get all products with vendor & category details
+app.get("/api/products", async (req, res) => {
   try {
-    const products = await Product.find();
+    // Fetch products and populate vendor and category details
+    const products = await Product.find()
+      .populate("vendorId", "name email") // only fetch vendor name & email
+      .populate("category", "name")       // only fetch category name
+      .populate("subcategory", "name");   // optional, if you have a subcategory collection
+
     res.json({ products });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 app.get("/api/products/:category", async (req, res) => {
   try {
@@ -942,45 +1028,85 @@ app.get('/api/product/:id', async (req, res) => {
         res.status(500).json({ error: "Server error while fetching product details." });
     }
 });
-app.put("/api/products/:id", upload.single("image"), async (req, res) => {
+
+app.put("/api/products/:id", upload.array("images", 10), async (req, res) => {
   try {
-    const { name, price, category, subcategory, stock, description } = req.body;
+    const productId = req.params.id;
 
-    // Validate required fields
-    if (!name || !price || !category) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Name, price, and category are required" 
-      });
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ error: "Invalid product ID" });
     }
 
-    // Prepare update object
-    const updateData = {
-      name,
-      price: Number(price),
+    const existingProduct = await Product.findById(productId);
+    if (!existingProduct) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    // Extract fields from form-data
+    const {
+      itemType,
       category,
-      subcategory: subcategory || undefined,
-      stock: stock ? Number(stock) : undefined,
+      subcategory,
+      itemName,
+      salesPrice,
+      gstRate,
       description,
-    };
+      skuCode,
+      measuringUnit,
+      hsnCode,
+      godown,
+      openStock,
+      asOnDate,
+      mrp,
+      discount,
+      afterDiscount,
+      commission,
+      finalAmount,
+      priceType,
+    } = req.body;
 
-    // Add Cloudinary image URL if uploaded
-    if (req.file && req.file.path) {
-      updateData.image = req.file.path; // Cloudinary URL
+    // Update fields
+    existingProduct.itemType = itemType || existingProduct.itemType;
+    existingProduct.category = category || existingProduct.category;
+    existingProduct.subcategory = subcategory || existingProduct.subcategory;
+    existingProduct.itemName = itemName || existingProduct.itemName;
+    existingProduct.salesPrice = salesPrice || existingProduct.salesPrice;
+    existingProduct.gstRate = gstRate || existingProduct.gstRate;
+    existingProduct.description = description || existingProduct.description;
+    existingProduct.skuCode = skuCode || existingProduct.skuCode;
+    existingProduct.measuringUnit = measuringUnit || existingProduct.measuringUnit;
+    existingProduct.hsnCode = hsnCode || existingProduct.hsnCode;
+    existingProduct.godown = godown || existingProduct.godown;
+    existingProduct.openStock = openStock || existingProduct.openStock;
+    existingProduct.asOnDate = asOnDate || existingProduct.asOnDate;
+    existingProduct.userPrice = mrp || existingProduct.userPrice;
+    existingProduct.discount = discount || existingProduct.discount;
+    existingProduct.afterDiscount = afterDiscount || existingProduct.afterDiscount;
+    existingProduct.commission = commission || existingProduct.commission;
+    existingProduct.finalAmount = finalAmount || existingProduct.finalAmount;
+    existingProduct.priceType = priceType || existingProduct.priceType;
+
+    // Handle image uploads (Cloudinary example)
+    if (req.files && req.files.length > 0) {
+      const uploadedUrls = [];
+      for (const file of req.files) {
+        // Upload to Cloudinary
+        // const uploadResult = await cloudinary.uploader.upload_stream(...);
+        // For demo, let's just store a placeholder URL
+        uploadedUrls.push(`uploaded/${file.originalname}`);
+      }
+      existingProduct.images = uploadedUrls;
     }
 
-    // Update product in DB
-    const product = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true });
-    if (!product) {
-      return res.status(404).json({ success: false, message: "Product not found" });
-    }
+    await existingProduct.save();
 
-    res.json({ success: true, message: "Product updated successfully", product });
+    res.json({ success: true, message: "Product updated successfully", product: existingProduct });
   } catch (err) {
     console.error("Error updating product:", err);
-    res.status(500).json({ success: false, message: "Failed to update product" });
+    res.status(500).json({ error: "Server error while updating product" });
   }
 });
+
 // DELETE /api/products/:id
 app.delete("/api/products/:id", async (req, res) => {
   try {
@@ -1003,14 +1129,11 @@ app.delete("/api/products/:id", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-
 app.get("/api/products/vendor/:vendorId", async (req, res) => {
   try {
     const products = await Product.find({ vendorId: req.params.vendorId })
-      .populate("category", "name"); // populate only the 'name' field
+      .populate("category", "name"); 
 
-    // Transform products to include category name directly
     const productsWithCategory = products.map((p) => ({
       ...p._doc,
       categoryName: p.category?.name || "Unknown"
@@ -1021,6 +1144,7 @@ app.get("/api/products/vendor/:vendorId", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 app.post("/api/cart/add", async (req, res) => {
@@ -1680,25 +1804,47 @@ app.put('/api/orders/:orderId/payment', async (req, res) => {
 app.post("/api/categories", upload.single("image"), async (req, res) => {
   try {
     const { name } = req.body;
+
+    // Validate fields
     if (!name || !req.file) {
-      return res.status(400).json({ success: false, message: "Name and image required" });
+      return res.status(400).json({
+        success: false,
+        message: "Name and image are required",
+      });
     }
 
-    const categoryExists = await Category.findOne({ name });
+    // Check category exists
+    const categoryExists = await Category.findOne({ name: name.trim() });
     if (categoryExists) {
-      return res.status(400).json({ success: false, message: "Category already exists" });
+      return res.status(400).json({
+        success: false,
+        message: "Category already exists",
+      });
     }
 
+    // Cloudinary image URL
+    const imageUrl = req.file.path;
+
+    // Create new category
     const newCategory = new Category({
-      name,
-      image: req.file.path, // Cloudinary URL
+      name: name.trim(),
+      image: imageUrl, // Cloudinary image URL
     });
 
     await newCategory.save();
-    res.json({ success: true, category: newCategory });
+
+    return res.json({
+      success: true,
+      message: "Category created successfully",
+      category: newCategory,
+    });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("Category creation error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 });
 
@@ -1871,6 +2017,55 @@ app.get("/api/dashboard", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch dashboard data" });
   }
 });
+app.get("/api/admin/business", async (req, res) => {
+  try {
+    const businesses = await Bussiness.find()
+      .populate("vendorId", "name email phone") // fetch vendor data
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      count: businesses.length,
+      businesses,
+    });
+  } catch (error) {
+    console.error("Error fetching business:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+// UPDATE BUSINESS STATUS
+app.put("/api/admin/business/:id/status", async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    // VALIDATION
+    const validStatuses = ["approved", "rejected", "blocked", "pending"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const updatedBusiness = await Bussiness.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
+
+    if (!updatedBusiness) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Business not found" });
+    }
+
+    res.json({
+      success: true,
+      message: `Business ${status} successfully`,
+      business: updatedBusiness,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // POST form data
 app.post("/api/:endpoint", async (req, res) => {
@@ -1902,6 +2097,234 @@ app.get("/api/:endpoint", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Server error!" });
+  }
+});
+app.get("/api/admin/forms", async (req, res) => {
+  try {
+    const forms = await Form.find().sort({ createdAt: -1 });
+    res.json({ success: true, count: forms.length, forms });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+});
+app.get("/api/admin/dashboard/stats", async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const totalVendors = await Vendor.countDocuments();
+    const totalProducts = await Product.countDocuments();
+    const totalOrders = await Order.countDocuments();
+    const pendingShopApprovals = await Vendor.countDocuments({ status: "pending" });
+
+    // Total revenue: sum of all completed order amounts
+    const completedOrders = await Order.find({ status: "completed" });
+    const totalRevenue = completedOrders.reduce((acc, order) => acc + order.totalAmount, 0);
+
+    res.json({
+      totalUsers,
+      totalVendors,
+      totalProducts,
+      totalOrders,
+      pendingShopApprovals,
+      totalRevenue,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /api/admin/dashboard/sales
+app.get("/api/admin/dashboard/sales", async (req, res) => {
+  try {
+    // Example: monthly sales data
+    const salesData = [];
+
+    const currentYear = new Date().getFullYear();
+    for (let month = 0; month < 12; month++) {
+      const start = new Date(currentYear, month, 1);
+      const end = new Date(currentYear, month + 1, 0);
+
+      const monthlyOrders = await Order.find({
+        status: "completed",
+        createdAt: { $gte: start, $lte: end },
+      });
+
+      const revenue = monthlyOrders.reduce((acc, order) => acc + order.totalAmount, 0);
+      const sales = monthlyOrders.length;
+
+      salesData.push({
+        month: start.toLocaleString("default", { month: "short" }),
+        revenue,
+        sales,
+      });
+    }
+
+    res.json(salesData);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /api/admin/dashboard/recent-activity
+app.get("/api/admin/dashboard/recent-activity", async (req, res) => {
+  try {
+    // Get latest 10 activities: orders, user actions, product actions
+    const recentOrders = await Order.find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate("user", "name")
+      .populate("products.product", "itemName");
+
+    const recentUsers = await User.find()
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    const recentProducts = await Product.find()
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    const recentActivity = [];
+
+    recentOrders.forEach((order) => {
+      recentActivity.push({
+        _id: order._id,
+        action: "Order Placed",
+        order,
+        user: order.user,
+        createdAt: order.createdAt,
+      });
+    });
+
+    recentUsers.forEach((user) => {
+      recentActivity.push({
+        _id: user._id,
+        action: "New User Registered",
+        user,
+        createdAt: user.createdAt,
+      });
+    });
+
+    recentProducts.forEach((product) => {
+      recentActivity.push({
+        _id: product._id,
+        action: "Product Added",
+        product,
+        createdAt: product.createdAt,
+      });
+    });
+
+    // Sort all activities by createdAt descending
+    recentActivity.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // Limit to 10
+    res.json(recentActivity.slice(0, 10));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+app.post("/api/products/:id/approve", async (req, res) => {
+  try {
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { status: "approved" },
+      { new: true }
+    );
+    if (!product) return res.status(404).json({ message: "Product not found" });
+    res.json({ message: "Product approved successfully", product });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Reject product
+app.post("/api/products/:id/reject", async (req, res) => {
+  try {
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { status: "rejected" },
+      { new: true }
+    );
+    if (!product) return res.status(404).json({ message: "Product not found" });
+    res.json({ message: "Product rejected successfully", product });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+// GET all orders
+app.get("/api/admin/orders", async (req, res) => {
+   try {
+    const orders = await Order.find()
+      .populate('userId', 'name email phone')
+      .populate('orderItems.productId', 'itemName salesPrice')
+      .populate('orderItems.vendorId', 'name email')
+      .sort({ createdAt: -1 }); // latest first
+
+    res.json({ success: true, orders });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// GET /api/admin/vendors
+app.get("/api/admin/vendors", async (req, res) => {
+  try {
+    const vendors = await Vendor.find(); // fetch all vendors
+    res.json({ vendors });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server Error" });
+  }
+});
+// PUT /api/admin/vendor/:vendorId/status
+app.put("/api/admin/vendor/:vendorId/status", async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const { status } = req.body;
+
+    const vendor = await Vendor.findById(vendorId);
+    if (!vendor) return res.status(404).json({ error: "Vendor not found" });
+
+    vendor.status = status;
+    await vendor.save();
+
+    res.json({ message: "Vendor status updated", vendor });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server Error" });
+  }
+});
+// GET /api/admin/business
+app.get("/api/admin/businesses", async (req, res) => {
+  try {
+    const businesses = await Bussiness.find().populate("vendorId", "name email"); // optional populate vendor info
+    res.json({ businesses });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server Error" });
+  }
+});
+// PUT /api/admin/business/:businessId/status
+app.put("/api/admin/business/:businessId/status", async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const { status } = req.body;
+
+    const business = await Business.findById(businessId);
+    if (!business) return res.status(404).json({ error: "Business not found" });
+
+    business.status = status;
+    await business.save();
+
+    res.json({ message: "Business status updated", business });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server Error" });
   }
 });
 

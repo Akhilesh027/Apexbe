@@ -70,17 +70,13 @@ const BusinessDetails = () => {
 
             {/* Logo */}
             <div className="flex justify-center">
-              {business.logo ? (
+            
                 <img
                   src={business.logo}
                   alt="Business Logo"
                   className="w-32 h-32 object-cover rounded-xl border"
                 />
-              ) : (
-                <div className="w-32 h-32 bg-gray-200 rounded-xl flex justify-center items-center text-gray-500">
-                  No Logo
-                </div>
-              )}
+             
             </div>
 
             {/* Basic Info */}

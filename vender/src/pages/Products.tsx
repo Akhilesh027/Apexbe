@@ -165,16 +165,22 @@ const Products = () => {
                         onCheckedChange={() => handleToggleActive(productId, activeStatus)}
                       />
                     </td>
-                    <td className="px-6 py-4">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleDeleteProduct(productId)}
-                        className="flex items-center gap-2"
-                      >
-                        <Trash2 className="h-4 w-4" /> Delete
-                      </Button>
-                    </td>
+                   <td className="px-6 py-4 flex gap-2">
+  <Link to={`/products/edit/${productId}`}>
+    <Button variant="outline" size="sm" className="flex items-center gap-2">
+      Edit
+    </Button>
+  </Link>
+  <Button
+    variant="destructive"
+    size="sm"
+    onClick={() => handleDeleteProduct(productId)}
+    className="flex items-center gap-2"
+  >
+    <Trash2 className="h-4 w-4" /> Delete
+  </Button>
+</td>
+
                   </tr>
                 );
               })}

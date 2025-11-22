@@ -13,6 +13,10 @@ import Payouts from "./pages/Payouts";
 import Categories from "./pages/Categories";
 import Settings from "./pages/Settings";
 import DashboardLayout from "./layouts/DashboardLayout";
+import AddCategory from "./pages/AddCategories";
+import AddSubcategory from "./pages/AddSubCategories";
+import Forms from "./pages/Form";
+import Businesses from "./pages/Bussiness";
 
 const queryClient = new QueryClient();
 
@@ -39,11 +43,15 @@ const App = () => (
           >
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="vendors" element={<Vendors />} />
+            <Route path="bussiness" element={<Businesses />} />
             <Route path="products" element={<Products />} />
             <Route path="categories" element={<Categories />} />
+            <Route path="categories/add" element={<AddCategory />} />
+            <Route path="subcategories" element={<AddSubcategory />} />
             <Route path="users" element={<Users />} />
             <Route path="orders" element={<Orders />} />
             <Route path="payouts" element={<Payouts />} />
+            <Route path="Forms" element={<Forms />} />
             <Route path="settings" element={<Settings />} />
             <Route index element={<Navigate to="/dashboard" />} />
           </Route>
