@@ -799,9 +799,14 @@ app.get("/api/business/get-business/:vendorId", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-const generateSKU = () => {
-  return "APX-" + Date.now();
+// Generates SKU using vendor initials + product initials + random number
+const generateSKU = (vendorId, itemName) => {
+  const vendorPart = vendorId ? vendorId.toString().slice(-3).toUpperCase() : "VEN";
+  const namePart = itemName ? itemName.replace(/\s+/g, "").slice(0, 3).toUpperCase() : "PRD";
+  const randomPart = Math.floor(1000 + Math.random() * 9000); // 4-digit random number
+  return `APX-${vendorPart}-${namePart}-${randomPart}`;
 };
+
 const generateSlug = (text) =>
   text.toLowerCase().replace(/ /g, "-") + "-" + Date.now();
 app.post("/api/products/add-product", upload.array("images", 10), async (req, res) => {
@@ -831,7 +836,8 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
     } = req.body;
 
     // AUTO GENERATED VALUES
-    const skuCode = generateSKU();
+  const skuCode = generateSKU(vendorId, itemName);
+
     const slug = generateSlug(itemName);
 
     // ☁️ CLOUDINARY IMAGES
