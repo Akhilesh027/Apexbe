@@ -8,7 +8,6 @@ import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary.js";
 
 import Vendor from "./models/vendor.js";
-import Product from "./models/Products.js";
 import Cart from "./models/Cart.js";
 import Address from "./models/Address.js";
 import Order from "./models/Order.js";
@@ -26,6 +25,7 @@ import dotenv from "dotenv";
 import Referral from "./models/Referral.js";
 import Bussiness from "./models/Bussiness.js";
 import Form from "./models/Form.js";
+import Products from "./models/Products.js";
 dotenv.config();
 cloudinary.api.ping()
   .then(() => {
@@ -839,7 +839,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
     // f.path automatically contains Cloudinary URL (since you used CloudinaryStorage)
 
     // CREATE PRODUCT DOCUMENT
-    const product = new Product({
+    const product = new Products({
       vendorId,
 
       // PRODUCT DETAILS
@@ -885,7 +885,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
 app.get("/api/products", async (req, res) => {
   try {
     // Fetch products and populate vendor and category details
-    const products = await Product.find()
+    const products = await Products.find()
       .populate("vendorId", "name email") // only fetch vendor name & email
       .populate("category", "name")       // only fetch category name
       .populate("subcategory", "name");   // optional, if you have a subcategory collection
@@ -907,7 +907,7 @@ app.get("/api/products/:category", async (req, res) => {
     }
 
     // Find products with this category ID
-    const products = await Product.find({ category: foundCategory._id })
+    const products = await Products.find({ category: foundCategory._id })
       .populate("category", "name"); // populate category name
 
     // Add categoryName field for convenience
@@ -931,7 +931,7 @@ app.get('/api/product/:id', async (req, res) => {
         }
 
         // Find the product by ID and populate vendor information
-        const product = await Product.findById(productId).populate("vendorId", "name email");
+        const product = await Products.findById(productId).populate("vendorId", "name email");
 
         if (!product) {
             return res.status(404).json({ error: "Product not found." });
@@ -959,7 +959,7 @@ app.put("/api/products/:id", upload.array("images", 10), async (req, res) => {
       return res.status(400).json({ error: "Invalid product ID" });
     }
 
-    const existingProduct = await Product.findById(productId);
+    const existingProduct = await Products.findById(productId);
     if (!existingProduct) {
       return res.status(404).json({ error: "Product not found" });
     }
@@ -1035,7 +1035,7 @@ app.delete("/api/products/:id", async (req, res) => {
 
     if (!vendorId) return res.status(401).json({ error: "Unauthorized" });
 
-    const product = await Product.findById(productId);
+    const product = await Products.findById(productId);
     if (!product) return res.status(404).json({ error: "Product not found" });
 
     if (product.vendorId.toString() !== vendorId) {
@@ -1051,7 +1051,7 @@ app.delete("/api/products/:id", async (req, res) => {
 });
 app.get("/api/products/vendor/:vendorId", async (req, res) => {
   try {
-    const products = await Product.find({ vendorId: req.params.vendorId })
+    const products = await Products.find({ vendorId: req.params.vendorId })
       .populate("category", "name"); 
 
     const productsWithCategory = products.map((p) => ({
@@ -2032,7 +2032,7 @@ app.get("/api/admin/dashboard/stats", async (req, res) => {
   try {
     const totalUsers = await User.countDocuments();
     const totalVendors = await Vendor.countDocuments();
-    const totalProducts = await Product.countDocuments();
+    const totalProducts = await Products.countDocuments();
     const totalOrders = await Order.countDocuments();
     const pendingShopApprovals = await Vendor.countDocuments({ status: "pending" });
 
@@ -2095,13 +2095,13 @@ app.get("/api/admin/dashboard/recent-activity", async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(5)
       .populate("user", "name")
-      .populate("products.product", "itemName");
+      .populate("products.Products", "itemName");
 
     const recentUsers = await User.find()
       .sort({ createdAt: -1 })
       .limit(5);
 
-    const recentProducts = await Product.find()
+    const recentProducts = await Products.find()
       .sort({ createdAt: -1 })
       .limit(5);
 
@@ -2147,7 +2147,7 @@ app.get("/api/admin/dashboard/recent-activity", async (req, res) => {
 });
 app.post("/api/products/:id/approve", async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(
+    const product = await Products.findByIdAndUpdate(
       req.params.id,
       { status: "approved" },
       { new: true }
@@ -2163,7 +2163,7 @@ app.post("/api/products/:id/approve", async (req, res) => {
 // Reject product
 app.post("/api/products/:id/reject", async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(
+    const product = await Products.findByIdAndUpdate(
       req.params.id,
       { status: "rejected" },
       { new: true }
