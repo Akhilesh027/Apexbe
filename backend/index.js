@@ -318,14 +318,6 @@ const completeReferral = async (userId, orderAmount) => {
     console.error('Error completing referral:', error);
   }
 };
-
-// =============================================
-// 🚀 AUTH ENDPOINTS
-// =============================================
-
-// ---------------------------------------------
-// 📌 REGISTER API
-// ---------------------------------------------
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, phone, password, referralCode } = req.body;
@@ -374,10 +366,6 @@ app.post("/api/auth/register", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-// ---------------------------------------------
-// 📌 LOGIN API
-// ---------------------------------------------
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -413,9 +401,6 @@ app.post("/api/auth/login", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-// ---------------------------------------------
-// 📌 GET REFERRAL CODE
-// ---------------------------------------------
 app.get("/api/referrals/code", auth, async (req, res) => {
   try {
     console.log('Getting referral code for user:', req.user?._id);
@@ -437,17 +422,13 @@ app.get("/api/referrals/code", auth, async (req, res) => {
 
     res.json({
       referralCode: user.referralCode,
-      referralLink: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/signup?ref=${user.referralCode}`
+      referralLink: `https://apexbee.in/login?ref=${user.referralCode}`
     });
   } catch (error) {
     console.error('Get referral code error:', error);
     res.status(500).json({ error: 'Failed to get referral code' });
   }
 });
-
-// ---------------------------------------------
-// 📌 GET REFERRAL STATS
-// ---------------------------------------------
 app.get("/api/referrals/stats", auth, async (req, res) => {
   try {
     console.log('Getting referral stats for user:', req.user?._id);
@@ -487,10 +468,6 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to get referral stats' });
   }
 });
-
-// ---------------------------------------------
-// 📌 GET REFERRAL HISTORY
-// ---------------------------------------------
 app.get("/api/referrals/history", auth, async (req, res) => {
   try {
     console.log('Getting referral history for user:', req.user?._id);
@@ -529,9 +506,6 @@ app.get("/api/referrals/history", auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to get referral history' });
   }
 });
-// ---------------------------------------------
-// 📌 GET REFERRAL STATS
-// ---------------------------------------------
 app.get("/api/referrals/stats", async (req, res) => {
   try {
     const userId = req.user.id;
@@ -565,10 +539,6 @@ app.get("/api/referrals/stats", async (req, res) => {
     res.status(500).json({ error: 'Failed to get referral stats' });
   }
 });
-
-// ---------------------------------------------
-// 📌 GET REFERRAL HISTORY
-// ---------------------------------------------
 app.get("/api/referrals/history", async (req, res) => {
   try {
     const userId = req.user.id;
@@ -601,19 +571,6 @@ app.get("/api/referrals/history", async (req, res) => {
     res.status(500).json({ error: 'Failed to get referral history' });
   }
 });
-
-// =============================================
-// 🛒 ORDER ENDPOINTS (For Referral Completion)
-// =============================================
-
-// ---------------------------------------------
-// 📌 CREATE ORDER (Complete referral)
-// ---------------------------------------------
-
-
-// ---------------------------------------------
-// 📌 COMPLETE REFERRAL MANUALLY (Admin/Test)
-// ---------------------------------------------
 app.post("/api/referrals/complete", auth, async (req, res) => {
   try {
     const { userId } = req.body;
@@ -633,14 +590,6 @@ app.post("/api/referrals/complete", auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to complete referral' });
   }
 });
-
-// =============================================
-// 👤 USER PROFILE ENDPOINTS
-// =============================================
-
-// ---------------------------------------------
-// 📌 GET USER PROFILE
-// ---------------------------------------------
 app.get("/api/user/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
@@ -650,7 +599,6 @@ app.get("/api/user/profile", auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to get profile' });
   }
 });
-// ---------------------------------------------
 app.get("/api/admin/users", async (req, res) => {
   try {
     const user = await User.find();
@@ -660,9 +608,6 @@ app.get("/api/admin/users", async (req, res) => {
     res.status(500).json({ error: 'Failed to get profile' });
   }
 });
-// ---------------------------------------------
-// 📌 UPDATE USER PROFILE
-// ---------------------------------------------
 app.put("/api/user/profile", auth, async (req, res) => {
   try {
     const { name, phone } = req.body;
@@ -682,10 +627,6 @@ app.put("/api/user/profile", auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
-
-// ---------------------------------------------
-// 📌 LOGIN WITH EMAIL + PASSWORD
-// ---------------------------------------------
 app.post("/api/login/email", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -709,10 +650,6 @@ app.post("/api/login/email", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-// ---------------------------------------------
-// 📌 LOGIN WITH PHONE (NO OTP FOR NOW)
-// ---------------------------------------------
 app.post("/api/login/phone", async (req, res) => {
   try {
     const { phone } = req.body;
@@ -730,7 +667,6 @@ app.post("/api/login/phone", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-// GET /api/user/wallet/:userId
 app.get("/api/user/wallet/:userId", auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -750,7 +686,6 @@ app.get("/api/user/wallet/:userId", auth, async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-// POST /api/user/wallet/deduct/:userId
 app.post("/api/user/wallet/deduct/:userId", auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -864,19 +799,11 @@ app.get("/api/business/get-business/:vendorId", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
-
-
 const generateSKU = () => {
   return "APX-" + Date.now();
 };
-
-// SLUG GENERATOR
-
 const generateSlug = (text) =>
   text.toLowerCase().replace(/ /g, "-") + "-" + Date.now();
-
-// ------------------ ADD PRODUCT API ------------------
 app.post("/api/products/add-product", upload.array("images", 10), async (req, res) => {
   try {
     const {
@@ -955,8 +882,6 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
     res.status(500).json({ success: false, message: "Server Error" });
   }
 });
-
-// Get all products with vendor & category details
 app.get("/api/products", async (req, res) => {
   try {
     // Fetch products and populate vendor and category details
@@ -971,8 +896,6 @@ app.get("/api/products", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-
 app.get("/api/products/:category", async (req, res) => {
   try {
     const categoryName = req.params.category;
@@ -1028,7 +951,6 @@ app.get('/api/product/:id', async (req, res) => {
         res.status(500).json({ error: "Server error while fetching product details." });
     }
 });
-
 app.put("/api/products/:id", upload.array("images", 10), async (req, res) => {
   try {
     const productId = req.params.id;
@@ -1106,8 +1028,6 @@ app.put("/api/products/:id", upload.array("images", 10), async (req, res) => {
     res.status(500).json({ error: "Server error while updating product" });
   }
 });
-
-// DELETE /api/products/:id
 app.delete("/api/products/:id", async (req, res) => {
   try {
     const productId = req.params.id;
