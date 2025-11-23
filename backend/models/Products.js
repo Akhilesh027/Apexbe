@@ -22,7 +22,7 @@ const productSchema = new mongoose.Schema(
       sparse: true,
     },
 
- skuCode: { type: String, required: true },
+ skuCode: { type: String, required: true, unique: true },
 
     measuringUnit: String,
     hsnCode: String,

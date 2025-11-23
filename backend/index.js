@@ -851,7 +851,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       category,
       subcategory,
       itemName,
-
+    
       gstRate,
       description,
 
@@ -867,9 +867,13 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       commission,
       finalAmount,
       priceType,
-
-      skuCode, // <-- Coming from frontend
     } = req.body;
+
+    // =============================
+    // 🔹 Auto-generated fields
+    // =============================
+    const skuCode = generateSKU(vendorId, itemName);
+    const slug = generateSlug(itemName);
 
     // =============================
     // 🔹 Cloudinary image URLs
@@ -887,12 +891,14 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       category,
       subcategory,
       itemName,
+      
       gstRate: Number(gstRate) || 0,
       description,
       images,
+      slug,
 
       // STOCK DETAILS
-      skuCode, // <-- Save the exact SKU sent by frontend
+      skuCode,
       measuringUnit,
       hsnCode,
       godown,
