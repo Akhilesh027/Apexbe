@@ -1093,7 +1093,7 @@ app.delete("/api/products/:id", async (req, res) => {
       return res.status(403).json({ error: "You cannot delete this product" });
     }
 
-    await Product.findByIdAndDelete(productId);
+    await Products.findByIdAndDelete(productId);
     res.json({ message: "Product deleted successfully" });
   } catch (err) {
     console.error(err);
