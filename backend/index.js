@@ -905,7 +905,6 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       openStock: Number(openStock) || 0,
       asOnDate,
 
-      // PRICE DETAILS
       userPrice: Number(mrp) || 0,
       discount: Number(discount) || 0,
       afterDiscount: Number(afterDiscount) || 0,
