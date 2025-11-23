@@ -188,22 +188,7 @@ const ProductDetail = () => {
                             />
                         </div>
 
-                        <div className="flex gap-2 items-center">
-                            <span className="text-sm font-semibold text-navy">Colors:</span>
-                            <div className="flex gap-2">
-                                {colors.map((color) => (
-                                    <button
-                                        key={color.name}
-                                        onClick={() => setSelectedColor(color.name)}
-                                        className={`w-6 h-6 rounded-full border-2 ${
-                                            selectedColor === color.name ? "border-navy" : "border-gray-300"
-                                        }`}
-                                        style={{ backgroundColor: color.hex }}
-                                    />
-                                ))}
-                            </div>
-                            <span className="ml-auto text-sm text-muted-foreground">Size: <span className="font-semibold text-navy">One Size</span></span>
-                        </div>
+                      
                     </div>
 
                     {/* Product Info */}
@@ -230,7 +215,7 @@ const ProductDetail = () => {
                         <div className="mb-6">
                             <div className="flex items-baseline gap-3">
                                 <span className="text-5xl font-bold text-navy">{formatCurrency(product.afterDiscount)}</span>
-                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.salesPrice)}</span>
+                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.userPrice)}</span>
                             </div>
                         </div>
 

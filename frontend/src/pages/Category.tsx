@@ -196,7 +196,7 @@ const Category = () => {
                     </h3>
                     <div className="flex items-baseline gap-2">
                       <span className="text-lg font-bold text-navy">
-                        Rs. {product.salesPrice || product.price}
+                        Rs. {product.finalAmount || product.price}
                       </span>
                       {product.userPrice && (
                         <span className="text-sm text-muted-foreground line-through">

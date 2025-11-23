@@ -145,7 +145,7 @@ const Products = () => {
                     <td className="px-6 py-4">{product.categoryName}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
-                        <span className="font-semibold">{formatCurrency(product.afterDiscount)}</span>
+                        <span className="font-semibold">{formatCurrency(product.finalAmount)}</span>
                         {product.userPrice && (
                           <span className="text-xs text-muted-foreground line-through">
                             {formatCurrency(product.userPrice)}
