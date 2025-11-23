@@ -801,14 +801,23 @@ app.get("/api/business/get-business/:vendorId", async (req, res) => {
 });
 // Generates SKU using vendor initials + product initials + random number
 const generateSKU = (vendorId, itemName) => {
-  const vendorPart = vendorId ? vendorId.toString().slice(-3).toUpperCase() : "VEN";
-  const namePart = itemName ? itemName.replace(/\s+/g, "").slice(0, 3).toUpperCase() : "PRD";
-  const randomPart = Math.floor(1000 + Math.random() * 9000); // 4-digit random number
+  const vendorPart = vendorId
+    ? vendorId.toString().slice(-3).toUpperCase()
+    : "VEN";
+
+  const namePart = itemName
+    ? itemName.replace(/\s+/g, "").slice(0, 3).toUpperCase()
+    : "PRD";
+
+  const randomPart = Math.floor(1000 + Math.random() * 9000); // 4-digit number
+
   return `APX-${vendorPart}-${namePart}-${randomPart}`;
 };
 
 const generateSlug = (text) =>
   text.toLowerCase().replace(/ /g, "-") + "-" + Date.now();
+
+
 app.post("/api/products/add-product", upload.array("images", 10), async (req, res) => {
   try {
     const {
@@ -835,12 +844,20 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       priceType,
     } = req.body;
 
-    // AUTO GENERATED VALUES
-  const skuCode = generateSKU(vendorId, itemName);
-
+    // =============================
+    // 🔹 Auto-generated fields
+    // =============================
+    const skuCode = generateSKU(vendorId, itemName);
     const slug = generateSlug(itemName);
 
-    const images = req.files?.map((f) => f.path) || [];  
+    // =============================
+    // 🔹 Cloudinary image URLs
+    // =============================
+    const images = req.files?.map((f) => f.path) || [];
+
+    // =============================
+    // 🔹 Create product document
+    // =============================
     const product = new Products({
       vendorId,
 
@@ -852,7 +869,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       salesPrice: Number(salesPrice) || 0,
       gstRate: Number(gstRate) || 0,
       description,
-      images,  // <-- Cloudinary URLs added
+      images,
       slug,
 
       // STOCK DETAILS
@@ -874,16 +891,23 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
 
     await product.save();
 
-    res.json({
+    return res.json({
       success: true,
       message: "Product added successfully",
       product,
     });
+
   } catch (error) {
-    console.log("Error:", error);
-    res.status(500).json({ success: false, message: "Server Error" });
+    console.error("Error Adding Product:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+      error: error.message,
+    });
   }
 });
+
 app.get("/api/products", async (req, res) => {
   try {
     // Fetch products and populate vendor and category details
@@ -1378,7 +1402,7 @@ app.post("/api/orders", auth, async (req, res) => {
 
     for (const item of rawItems) {
       const productId = item._id || item.productId;
-      const product = await Product.findById(productId);
+      const product = await Products.findById(productId);
       if (!product) {
         return res.status(400).json({ success: false, message: `Product "${item.itemName || item.name}" not found` });
       }
@@ -1462,7 +1486,7 @@ app.post("/api/orders", auth, async (req, res) => {
 
     // Decrement product stock
     for (const item of orderItems) {
-      await Product.findByIdAndUpdate(item.productId, { $inc: { openStock: -item.quantity } });
+      await Products.findByIdAndUpdate(item.productId, { $inc: { openStock: -item.quantity } });
     }
 
     // Deduct wallet if used
@@ -1474,6 +1498,7 @@ app.post("/api/orders", auth, async (req, res) => {
         body: JSON.stringify({ amount: walletAmount })
       });
     }
+  
 
     // Referral reward
     let referralResult = null;

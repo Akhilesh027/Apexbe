@@ -13,6 +13,10 @@ import {
 import AppLayout from "@/components/AppLayout";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
+
+
+
 const Addproduct = () => {
   const vendorId = localStorage.getItem("vendorId");
 
@@ -20,9 +24,9 @@ const Addproduct = () => {
   const [business, setBusiness] = useState(null);
 
   // ITEM TYPE (Product / Service)
-  const [itemType, setItemType] = useState("product"); // "Product" | "Service"
-
-  // PRICE TYPE (Product-wise / Order-wise)
+  const [itemType, setItemType] = useState("product");
+const navigate = useNavigate();
+  // PRICE TYPE (product-wise / order-wise)
   const [priceType, setPriceType] = useState("product-wise");
 
   // Categories
@@ -33,20 +37,21 @@ const Addproduct = () => {
 
   // PRODUCT DETAILS
   const [itemName, setItemName] = useState("");
-  const [salesPrice, setSalesPrice] = useState(""); // unchanged
+  const [salesPrice, setSalesPrice] = useState("");
   const [gstRate, setGstRate] = useState("");
   const [description, setDescription] = useState("");
   const [images, setImages] = useState([]);
 
   // STOCK DETAILS
-  const [skuCode] = useState("APX-" + Date.now());
   const [measuringUnit, setMeasuringUnit] = useState("PCS");
   const [customUnitInput, setCustomUnitInput] = useState("");
   const [unitList, setUnitList] = useState(["PCS", "KG", "GMS", "LTR", "ML", "BOX", "BAG"]);
+
   const [hsnCode, setHsnCode] = useState("");
   const [godownList, setGodownList] = useState(["Main Godown"]);
   const [godown, setGodown] = useState("");
   const [newGodown, setNewGodown] = useState("");
+
   const [openStock, setOpenStock] = useState("");
   const [asOnDate, setAsOnDate] = useState("");
 
@@ -73,6 +78,14 @@ const Addproduct = () => {
     load();
   }, [vendorId]);
 
+  /* ---------------- SKU PREVIEW (Frontend only) ---------------- */
+  const previewSKU = () => {
+    if (!vendorId || !itemName) return "";
+    const vendorPart = vendorId.slice(-3).toUpperCase();
+    const namePart = itemName.replace(/\s+/g, "").slice(0, 3).toUpperCase();
+    return `APX-${vendorPart}-${namePart}-XXXX`;
+  };
+
   /* ---------------- FETCH CATEGORIES ---------------- */
   useEffect(() => {
     axios
@@ -96,14 +109,12 @@ const Addproduct = () => {
 
   /* ---------------- PRICE CALCULATIONS ---------------- */
   useEffect(() => {
-    // If order-wise: skip calculation (fields disabled)
     if (priceType === "order-wise") {
       setAfterDiscount("");
       setFinalAmount("");
       return;
     }
 
-    // If no mrp -> try salesPrice fallback
     const basePrice = mrp || salesPrice;
     if (!basePrice) {
       setAfterDiscount("");
@@ -111,8 +122,6 @@ const Addproduct = () => {
       return;
     }
 
-    // discount could be percentage or absolute; previous UI assumed %
-    // We'll treat discount as percent (existing UI had % label)
     const pBase = Number(basePrice) || 0;
     const pDiscount = Number(discount) || 0;
     const ad = pBase - (pBase * pDiscount) / 100;
@@ -127,18 +136,18 @@ const Addproduct = () => {
     setImages([...e.target.files]);
   };
 
-  /* ---------------- ADD GODOWN (adds inside dropdown list) ---------------- */
+  /* ---------------- ADD GODOWN ---------------- */
   const addGodown = () => {
-    const v = (newGodown || "").trim();
+    const v = newGodown.trim();
     if (!v) return;
     if (!godownList.includes(v)) setGodownList((s) => [...s, v]);
     setGodown(v);
     setNewGodown("");
   };
 
-  /* ---------------- ADD MEASURE UNIT ---------------- */
+  /* ---------------- ADD MEASURING UNIT ---------------- */
   const addMeasureUnit = () => {
-    const v = (customUnitInput || "").trim();
+    const v = customUnitInput.trim();
     if (!v) return;
     if (!unitList.includes(v)) setUnitList((s) => [...s, v]);
     setMeasuringUnit(v);
@@ -147,16 +156,15 @@ const Addproduct = () => {
 
   /* ---------------- SUBMIT HANDLER ---------------- */
   const handleSubmit = async () => {
-    // simple required validations
     if (!category || !itemName) {
       alert("Please fill required fields (Category & Item Name).");
       return;
     }
 
-    // If itemType is Service, it's okay for stock fields to be empty; we'll send empty or defaults
     const fd = new FormData();
+
     fd.append("vendorId", vendorId);
-    fd.append("itemType", itemType); // "Product" or "Service"
+    fd.append("itemType", itemType);
     fd.append("category", category);
     fd.append("subcategory", subcategory);
     fd.append("itemName", itemName);
@@ -164,7 +172,8 @@ const Addproduct = () => {
     fd.append("gstRate", gstRate || "");
     fd.append("description", description || "");
 
-    fd.append("skuCode", skuCode);
+    /* ❌ DON’T SEND SKU — Backend will generate automatically */
+
     fd.append("measuringUnit", itemType === "Service" ? "" : measuringUnit);
     fd.append("hsnCode", itemType === "Service" ? "" : hsnCode);
     fd.append("godown", itemType === "Service" ? "" : godown);
@@ -181,11 +190,19 @@ const Addproduct = () => {
     images.forEach((img) => fd.append("images", img));
 
     try {
-      await axios.post("https://api.apexbee.in/api/products/add-product", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      alert("Product Added Successfully!");
-      // Optionally reset form or navigate away
+      const res = await axios.post(
+        "https://api.apexbee.in/api/products/add-product",
+        fd,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+
+      alert(
+        `Product Added Successfully!`
+      );
+      navigate("/products");  
+
+
+      
     } catch (err) {
       console.error(err);
       alert("Error adding product");
@@ -196,7 +213,6 @@ const Addproduct = () => {
   return (
     <AppLayout>
       <div className="max-w-5xl mx-auto px-5 pb-10">
-
         {/* SECTION TABS */}
         <div className="flex justify-center gap-4 my-6">
           {["product", "stock", "price"].map((id) => (
@@ -204,7 +220,9 @@ const Addproduct = () => {
               key={id}
               onClick={() => setActiveSection(id)}
               className={`px-4 py-2 rounded font-semibold ${
-                activeSection === id ? "bg-primary text-white" : "bg-muted text-muted-foreground"
+                activeSection === id
+                  ? "bg-primary text-white"
+                  : "bg-muted text-muted-foreground"
               }`}
             >
               {id.toUpperCase()} DETAILS
@@ -218,22 +236,21 @@ const Addproduct = () => {
             {/* ITEM TYPE */}
             <div>
               <Label className="font-semibold">Item Type</Label>
-<RadioGroup
-  value={itemType}
-  onValueChange={(value) => setItemType(value)}
-  className="flex gap-6 mt-1"
->
-  <div className="flex items-center space-x-2">
-    <RadioGroupItem value="product" id="product" />
-    <Label htmlFor="product">Product</Label>
-  </div>
+              <RadioGroup
+                value={itemType}
+                onValueChange={(value) => setItemType(value)}
+                className="flex gap-6 mt-1"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="product" id="product" />
+                  <Label htmlFor="product">Product</Label>
+                </div>
 
-  <div className="flex items-center space-x-2">
-    <RadioGroupItem value="service" id="service" />
-    <Label htmlFor="service">Service</Label>
-  </div>
-</RadioGroup>
-
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="service" id="service" />
+                  <Label htmlFor="service">Service</Label>
+                </div>
+              </RadioGroup>
             </div>
 
             {/* CATEGORY */}
@@ -276,14 +293,20 @@ const Addproduct = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label className="font-bold">Item Name *</Label>
-                <Input value={itemName} onChange={(e) => setItemName(e.target.value)} />
+                <Input
+                  value={itemName}
+                  onChange={(e) => setItemName(e.target.value)}
+                />
               </div>
 
               <div>
                 <Label className="font-bold">
                   Sales Price {business?.gstApplicable ? "(Without GST)" : ""}
                 </Label>
-                <Input value={salesPrice} onChange={(e) => setSalesPrice(e.target.value)} />
+                <Input
+                  value={salesPrice}
+                  onChange={(e) => setSalesPrice(e.target.value)}
+                />
               </div>
             </div>
 
@@ -308,7 +331,10 @@ const Addproduct = () => {
             {/* DESCRIPTION */}
             <div>
               <Label className="font-bold">Description</Label>
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
             </div>
 
             {/* IMAGES */}
@@ -322,29 +348,41 @@ const Addproduct = () => {
         {/* ---------------- STOCK SECTION ---------------- */}
         {activeSection === "stock" && itemType === "product" && (
           <div className="space-y-6">
+            {/* AUTO SKU PREVIEW */}
             <div>
-              <Label className="font-bold">SKU Code</Label>
-              <Input value={skuCode} readOnly />
+              <Label className="font-bold">SKU Code (Auto Generated)</Label>
+              <Input value={previewSKU()} readOnly />
+              <p className="text-xs text-gray-500 mt-1">
+                Final SKU will be generated automatically after saving.
+              </p>
             </div>
 
-            {/* MEASURING UNIT with add */}
+            {/* MEASURING UNIT */}
             <div>
               <Label className="font-bold">Measuring Unit *</Label>
               <div className="flex gap-2 items-center">
-                <Select value={measuringUnit} onValueChange={setMeasuringUnit}>
+                <Select
+                  value={measuringUnit}
+                  onValueChange={setMeasuringUnit}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select Unit" />
                   </SelectTrigger>
                   <SelectContent>
                     {unitList.map((u) => (
-                      <SelectItem key={u} value={u}>{u}</SelectItem>
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
                     ))}
+
                     <div className="p-2 border-t mt-1">
                       <div className="flex gap-2">
                         <Input
                           placeholder="Add custom unit"
                           value={customUnitInput}
-                          onChange={(e) => setCustomUnitInput(e.target.value)}
+                          onChange={(e) =>
+                            setCustomUnitInput(e.target.value)
+                          }
                         />
                         <Button onClick={addMeasureUnit}>Add</Button>
                       </div>
@@ -357,10 +395,13 @@ const Addproduct = () => {
             {/* HSN */}
             <div>
               <Label className="font-bold">HSN Code</Label>
-              <Input value={hsnCode} onChange={(e) => setHsnCode(e.target.value)} />
+              <Input
+                value={hsnCode}
+                onChange={(e) => setHsnCode(e.target.value)}
+              />
             </div>
 
-            {/* GODOWN / SHOP: dropdown with add inside */}
+            {/* GODOWN */}
             <div>
               <Label className="font-bold">Godown / Shop *</Label>
               <div className="flex gap-2 items-center">
@@ -370,8 +411,11 @@ const Addproduct = () => {
                   </SelectTrigger>
                   <SelectContent>
                     {godownList.map((g) => (
-                      <SelectItem key={g} value={g}>{g}</SelectItem>
+                      <SelectItem key={g} value={g}>
+                        {g}
+                      </SelectItem>
                     ))}
+
                     <div className="p-2 border-t mt-1">
                       <div className="flex gap-2">
                         <Input
@@ -387,19 +431,28 @@ const Addproduct = () => {
               </div>
             </div>
 
-            {/* OPEN STOCK + AS ON DATE */}
+            {/* OPEN STOCK / DATE */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label className="font-bold">Open Stock</Label>
                 <div className="flex gap-2 items-center">
-                  <Input value={openStock} onChange={(e) => setOpenStock(e.target.value)} />
-                  <span className="px-3 py-2 bg-blue-100 rounded">{measuringUnit}</span>
+                  <Input
+                    value={openStock}
+                    onChange={(e) => setOpenStock(e.target.value)}
+                  />
+                  <span className="px-3 py-2 bg-blue-100 rounded">
+                    {measuringUnit}
+                  </span>
                 </div>
               </div>
 
               <div>
                 <Label className="font-bold">As On Date</Label>
-                <Input type="date" value={asOnDate} onChange={(e) => setAsOnDate(e.target.value)} />
+                <Input
+                  type="date"
+                  value={asOnDate}
+                  onChange={(e) => setAsOnDate(e.target.value)}
+                />
               </div>
             </div>
           </div>
@@ -408,18 +461,28 @@ const Addproduct = () => {
         {/* ---------------- PRICE SECTION ---------------- */}
         {activeSection === "price" && (
           <div className="space-y-6">
-            {/* PRICE TYPE SWITCH */}
+            {/* PRICE TYPE */}
             <div className="flex gap-6 items-center">
               <Label className="font-bold text-lg">PRICE DETAILS</Label>
 
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2">
-                  <input type="radio" value="product-wise" checked={priceType === "product-wise"} onChange={() => setPriceType("product-wise")} />
+                  <input
+                    type="radio"
+                    value="product-wise"
+                    checked={priceType === "product-wise"}
+                    onChange={() => setPriceType("product-wise")}
+                  />
                   Product Wise
                 </label>
 
                 <label className="flex items-center gap-2">
-                  <input type="radio" value="order-wise" checked={priceType === "order-wise"} onChange={() => setPriceType("order-wise")} />
+                  <input
+                    type="radio"
+                    value="order-wise"
+                    checked={priceType === "order-wise"}
+                    onChange={() => setPriceType("order-wise")}
+                  />
                   Order Wise
                 </label>
               </div>
@@ -428,14 +491,22 @@ const Addproduct = () => {
             {/* MRP */}
             <div>
               <Label className="font-bold">Maximum Retail Price (MRP)</Label>
-              <Input disabled={priceType === "order-wise"} value={mrp} onChange={(e) => setMrp(e.target.value)} />
+              <Input
+                disabled={priceType === "order-wise"}
+                value={mrp}
+                onChange={(e) => setMrp(e.target.value)}
+              />
             </div>
 
             {/* DISCOUNT */}
             <div>
               <Label className="font-bold">Discount</Label>
               <div className="flex gap-2 items-center">
-                <Input disabled={priceType === "order-wise"} value={discount} onChange={(e) => setDiscount(e.target.value)} />
+                <Input
+                  disabled={priceType === "order-wise"}
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                />
                 <div className="px-3 py-2 bg-blue-100 rounded">%</div>
               </div>
             </div>
