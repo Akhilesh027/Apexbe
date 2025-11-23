@@ -64,6 +64,9 @@ const Addproduct = () => {
   const [finalAmount, setFinalAmount] = useState("");
   const [commission] = useState(20);
 
+  // SKU (frontend-generated)
+  const [skuCode, setSkuCode] = useState("");
+
   /* ---------------- FETCH BUSINESS ---------------- */
   useEffect(() => {
     if (!vendorId) return;
@@ -83,12 +86,40 @@ const Addproduct = () => {
     load();
   }, [vendorId]);
 
-  /* ---------------- SKU PREVIEW (Frontend only) ---------------- */
-  const previewSKU = () => {
-    if (!vendorId || !itemName) return "";
-    const vendorPart = vendorId.slice(-3).toUpperCase();
-    const namePart = itemName.replace(/\s+/g, "").slice(0, 3).toUpperCase();
-    return `APX-${vendorPart}-${namePart}-XXXX`;
+  /* ---------------- SKU GENERATOR (APX-XXX-YYY-4DIGIT) ---------------- */
+  const generateSKU = (vendorIdVal, itemNameVal) => {
+    const vendorPart = vendorIdVal
+      ? vendorIdVal.toString().slice(-3).toUpperCase()
+      : "VEN";
+
+    const namePart = itemNameVal
+      ? itemNameVal.replace(/\s+/g, "").slice(0, 3).toUpperCase()
+      : "PRD";
+
+    const randomPart = Math.floor(1000 + Math.random() * 9000); // 4-digit number
+
+    return `APX-${vendorPart}-${namePart}-${randomPart}`;
+  };
+
+  // auto-generate SKU whenever vendorId or itemName changes
+  useEffect(() => {
+    const sku = generateSKU(vendorId || "", itemName || "");
+    setSkuCode(sku);
+  }, [vendorId, itemName]);
+
+  // optional: allow manual regen
+  const regenSKU = () => {
+    setSkuCode(generateSKU(vendorId || "", itemName || ""));
+  };
+
+  const copySKUToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(skuCode);
+      // small feedback could be added (toast) — using alert for simplicity
+      alert("SKU copied to clipboard");
+    } catch (err) {
+      console.error("copy failed", err);
+    }
   };
 
   /* ---------------- FETCH CATEGORIES ---------------- */
@@ -152,6 +183,9 @@ const Addproduct = () => {
     const files = Array.from(e.target.files);
     setImages(files);
     
+    // revoke old previews
+    imagePreviews.forEach((url) => URL.revokeObjectURL(url));
+
     // Create preview URLs
     const previewUrls = files.map(file => URL.createObjectURL(file));
     setImagePreviews(previewUrls);
@@ -162,7 +196,7 @@ const Addproduct = () => {
     const newPreviews = [...imagePreviews];
     
     // Revoke object URL to prevent memory leaks
-    URL.revokeObjectURL(newPreviews[index]);
+    if (newPreviews[index]) URL.revokeObjectURL(newPreviews[index]);
     
     newImages.splice(index, 1);
     newPreviews.splice(index, 1);
@@ -220,13 +254,14 @@ const Addproduct = () => {
     fd.append("gstRate", gstRate || "");
     fd.append("description", description || "");
 
-    /* ❌ DON'T SEND SKU — Backend will generate automatically */
+    // <-- send frontend-generated SKU to backend
+    fd.append("skuCode", skuCode || "");
 
-    fd.append("measuringUnit", itemType === "Service" ? "" : measuringUnit);
-    fd.append("hsnCode", itemType === "Service" ? "" : hsnCode);
-    fd.append("godown", itemType === "Service" ? "" : godown);
-    fd.append("openStock", itemType === "Service" ? 0 : openStock);
-    fd.append("asOnDate", itemType === "Service" ? "" : asOnDate);
+    fd.append("measuringUnit", itemType === "service" ? "" : measuringUnit);
+    fd.append("hsnCode", itemType === "service" ? "" : hsnCode);
+    fd.append("godown", itemType === "service" ? "" : godown);
+    fd.append("openStock", itemType === "service" ? 0 : openStock);
+    fd.append("asOnDate", itemType === "service" ? "" : asOnDate);
 
     fd.append("mrp", mrp || "");
     fd.append("discount", discount || "");
@@ -371,49 +406,6 @@ const Addproduct = () => {
               )}
             </div>
 
-            {/* SUBCATEGORY - Always show when category is selected */}
-            {/* {category && (
-              <div className="bg-card p-6 rounded-lg border">
-                <Label className="font-bold text-lg">
-                  Subcategory {subcategories.length > 0 ? "" : "(No subcategories available)"}
-                </Label>
-                {subcategoriesLoading ? (
-                  <SkeletonLoader />
-                ) : (
-                  <Select value={subcategory} onValueChange={setSubcategory}>
-                    <SelectTrigger className="mt-3 h-12">
-                      {subcategoriesLoading ? (
-                        <div className="flex items-center">
-                          <LoadingSpinner size="sm" />
-                          <span className="ml-2">Loading subcategories...</span>
-                        </div>
-                      ) : (
-                        <SelectValue placeholder={
-                          subcategories.length > 0 
-                            ? "Select Subcategory" 
-                            : "No subcategories available"
-                        } />
-                      )}
-                    </SelectTrigger>
-                    {subcategories.length > 0 && (
-                      <SelectContent>
-                        {subcategories.map((sub) => (
-                          <SelectItem key={sub._id} value={sub._id}>
-                            {sub.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    )}
-                  </Select>
-                )}
-                {subcategories.length === 0 && !subcategoriesLoading && (
-                  <p className="text-sm text-muted-foreground mt-2">
-                    No subcategories available for this category.
-                  </p>
-                )}
-              </div>
-            )} */}
-
             {/* ITEM NAME */}
             <div className="bg-card p-6 rounded-lg border">
               <Label className="font-bold text-lg">Item Name *</Label>
@@ -523,9 +515,15 @@ const Addproduct = () => {
             {/* AUTO SKU PREVIEW */}
             <div className="bg-card p-6 rounded-lg border">
               <Label className="font-bold text-lg">SKU Code (Auto Generated)</Label>
-              <Input value={previewSKU()} readOnly className="mt-3 h-12 bg-muted" />
+              <div className="flex gap-2 items-center mt-3">
+                <Input value={skuCode} readOnly className="h-12 bg-muted flex-1" />
+                <div className="flex gap-2">
+                  <Button onClick={regenSKU} disabled={submitting} className="h-10">Regenerate</Button>
+                  <Button onClick={copySKUToClipboard} disabled={submitting} className="h-10">Copy</Button>
+                </div>
+              </div>
               <p className="text-sm text-muted-foreground mt-2">
-                Final SKU will be generated automatically after saving.
+                This SKU will be sent to backend and saved as provided.
               </p>
             </div>
 
