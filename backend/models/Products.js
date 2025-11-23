@@ -23,7 +23,12 @@ const productSchema = new mongoose.Schema(
     },
 
     // STOCK DETAILS
-    skuCode: { type: String, unique: true },
+    skucode: {
+  type: String,
+  required: true,
+  unique: true,
+},
+
     measuringUnit: String,
     hsnCode: String,
     godown: String,
