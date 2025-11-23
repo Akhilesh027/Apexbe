@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import CategoryIcon from "@/components/CategoryIcon";
 import StoreCard from "@/components/StoreCard";
 import BrandCard from "@/components/BrandCard";
 import WaveSection from "@/components/WaveSection";
+
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -28,7 +30,7 @@ const Home = () => {
     if (user) setLoggedInUser(JSON.parse(user));
   }, []);
 
-  // Automatically get live location on mount
+  // Get live location
   useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -36,15 +38,12 @@ const Home = () => {
           const { latitude, longitude } = position.coords;
           setUserLocation({ latitude, longitude });
           console.log("User location:", latitude, longitude);
-          // Optional: Send location to backend or filter stores
         },
         (error) => {
           console.warn("Error getting location:", error.message);
         },
         { enableHighAccuracy: true }
       );
-    } else {
-      console.warn("Geolocation is not supported by this browser.");
     }
   }, []);
 
@@ -57,52 +56,26 @@ const Home = () => {
     try {
       setLoading(true);
       const response = await fetch("https://api.apexbee.in/api/categories");
+
       if (response.ok) {
         const data = await response.json();
+
         if (data.success && data.categories) {
-          const transformedCategories = data.categories.map(cat => ({
-            icon: getCategoryIcon(cat.name),
+          const transformed = data.categories.map((cat) => ({
             label: cat.name.charAt(0).toUpperCase() + cat.name.slice(1),
             to: `/category/${cat.name.toLowerCase()}`,
             image: cat.image,
             id: cat._id
           }));
-          setCategories(transformedCategories);
+          setCategories(transformed);
         }
       }
     } catch (error) {
       console.error("Error fetching categories:", error);
-      // Fallback to default categories
-      setCategories(getDefaultCategories());
     } finally {
       setLoading(false);
     }
   };
-
-  const getCategoryIcon = (categoryName) => {
-    const iconMap = {
-      fashion: "🏃",
-      grocery: "🍎",
-      electronics: "📱",
-      furniture: "🪑",
-      medicine: "💊",
-      beauty: "💄",
-      sports: "⚽",
-      books: "📚",
-      food: "🥘",
-      default: "🏷️"
-    };
-    return iconMap[categoryName.toLowerCase()] || iconMap.default;
-  };
-
-  const getDefaultCategories = () => [
-    { icon: "🏃", label: "Fashion", to: "/category/fashion" },
-    { icon: "🍎", label: "Grocery", to: "/category/grocery" },
-    { icon: "📱", label: "Electronics", to: "/category/electronics" },
-    { icon: "🪑", label: "Furniture", to: "/category/furniture" },
-    { icon: "💊", label: "Medicines", to: "/category/medicines" },
-    { icon: "💄", label: "Beauty", to: "/category/beauty" },
-  ];
 
   const stores = [
     { name: "RATNADEEP", tagline: "Recycling since 1987", image: ratnadeepLogo },
@@ -128,14 +101,14 @@ const Home = () => {
   ];
 
   const handleViewAllCategories = () => {
-    navigate('/categories');
+    navigate("/categories");
   };
 
   const scrollCategories = (direction) => {
-    const container = document.getElementById('categories-container');
+    const container = document.getElementById("categories-container");
     if (container) {
-      const scrollAmount = 200;
-      container.scrollLeft += direction === 'left' ? -scrollAmount : scrollAmount;
+      const amount = 200;
+      container.scrollLeft += direction === "left" ? -amount : amount;
     }
   };
 
@@ -143,7 +116,7 @@ const Home = () => {
     <div className="min-h-screen bg-background">
       <Navbar />
 
-      {/* Top banner notice only if user is NOT logged in */}
+      {/* Banner if NOT logged in */}
       {!loggedInUser && (
         <div className="bg-blue-light border-b text-center py-2 text-sm">
           On Direct <span className="font-semibold">(LI)</span> registration other complete KYC - 50/-
@@ -151,80 +124,93 @@ const Home = () => {
       )}
 
       {/* Categories Section */}
-      <section className="container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-navy">Explore Categories</h2>
-          <Button 
-            variant="outline" 
-            className="text-accent border-accent hover:bg-accent hover:text-white"
-            onClick={handleViewAllCategories}
-          >
-            View All Categories
-          </Button>
-        </div>
+  {/* Categories Section */}
+<section className="container mx-auto px-4 py-8">
+  <div className="flex items-center justify-between mb-6">
+    <h2 className="text-2xl font-bold text-navy">Explore Categories</h2>
+    <Button
+      variant="outline"
+      className="text-accent border-accent hover:bg-accent hover:text-white"
+      onClick={handleViewAllCategories}
+    >
+      View All Categories
+    </Button>
+  </div>
 
-        <div className="flex items-center gap-2">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="shrink-0 hidden md:flex"
-            onClick={() => scrollCategories('left')}
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </Button>
+  <div className="flex items-center gap-2">
+    <Button
+      variant="ghost"
+      size="icon"
+      className="hidden md:flex"
+      onClick={() => scrollCategories("left")}
+    >
+      <ChevronLeft className="h-5 w-5" />
+    </Button>
 
-          <div 
-            id="categories-container"
-            className="flex gap-4 md:gap-6 overflow-x-auto scrollbar-hide scroll-smooth flex-1"
-          >
-            {loading ? (
-              Array.from({ length: 6 }).map((_, index) => (
-                <div key={index} className="flex flex-col items-center gap-2 min-w-[80px]">
-                  <Skeleton className="w-16 h-16 rounded-full" />
-                  <Skeleton className="w-16 h-4 rounded" />
-                </div>
-              ))
-            ) : (
-              categories.map((category) => (
-                <CategoryIcon 
-                  key={category.id || category.label} 
-                  {...category} 
-                />
-              ))
-            )}
+    <div
+      id="categories-container"
+      className="flex gap-4 md:gap-6 overflow-x-auto scrollbar-hide scroll-smooth flex-1"
+    >
+      {loading ? (
+        Array.from({ length: 6 }).map((_, index) => (
+          <div key={index} className="flex flex-col items-center gap-2 min-w-[80px]">
+            <Skeleton className="w-16 h-16 rounded-full" />
+            <Skeleton className="w-16 h-4 rounded" />
           </div>
-
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="shrink-0 hidden md:flex"
-            onClick={() => scrollCategories('right')}
+        ))
+      ) : (
+        categories.map((category) => (
+          <div
+            key={category.id}
+            onClick={() => navigate(category.to)}
+            className="flex flex-col items-center min-w-[90px] cursor-pointer group"
           >
-            <ChevronRight className="h-5 w-5" />
-          </Button>
-        </div>
-      </section>
+            <img
+              src={category.image}
+              alt={category.label}
+              className="w-16 h-16 rounded-full object-cover border group-hover:scale-105 transition"
+            />
+            <p className="text-sm mt-2 text-center font-semibold text-navy group-hover:text-accent">
+              {category.label}
+            </p>
+          </div>
+        ))
+      )}
+    </div>
+
+    <Button
+      variant="ghost"
+      size="icon"
+      className="hidden md:flex"
+      onClick={() => scrollCategories("right")}
+    >
+      <ChevronRight className="h-5 w-5" />
+    </Button>
+  </div>
+</section>
+
 
       {/* Hero Banners */}
       <section className="container mx-auto px-4 py-8 grid md:grid-cols-2 gap-6">
         <div className="relative group cursor-pointer">
-          <img 
-            src={grocary} 
-            alt="Grocery Delivery" 
-            className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition-transform duration-300"
+          <img
+            src={grocary}
+            alt="Grocery Delivery"
+            className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition"
           />
-          <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg backdrop-blur-sm">
+          <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg">
             <h3 className="text-lg font-bold">Fresh Groceries</h3>
             <p className="text-sm">Delivery in 30 minutes</p>
           </div>
         </div>
+
         <div className="relative group cursor-pointer">
-          <img 
-            src={grocary} 
-            alt="Special Offers" 
-            className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition-transform duration-300"
+          <img
+            src={grocary}
+            alt="Special Offers"
+            className="w-full h-full object-cover rounded-xl shadow-md group-hover:scale-105 transition"
           />
-          <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg backdrop-blur-sm">
+          <div className="absolute bottom-4 left-4 bg-black/50 text-white p-3 rounded-lg">
             <h3 className="text-lg font-bold">Special Offers</h3>
             <p className="text-sm">Up to 50% off</p>
           </div>

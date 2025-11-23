@@ -15,17 +15,19 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
-
-
 const Addproduct = () => {
   const vendorId = localStorage.getItem("vendorId");
-
-  const [activeSection, setActiveSection] = useState("product");
+  const [currentStep, setCurrentStep] = useState(1);
   const [business, setBusiness] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [subcategoriesLoading, setSubcategoriesLoading] = useState(false);
 
   // ITEM TYPE (Product / Service)
   const [itemType, setItemType] = useState("product");
-const navigate = useNavigate();
+  const navigate = useNavigate();
+  
   // PRICE TYPE (product-wise / order-wise)
   const [priceType, setPriceType] = useState("product-wise");
 
@@ -37,10 +39,10 @@ const navigate = useNavigate();
 
   // PRODUCT DETAILS
   const [itemName, setItemName] = useState("");
-  const [salesPrice, setSalesPrice] = useState("");
   const [gstRate, setGstRate] = useState("");
   const [description, setDescription] = useState("");
   const [images, setImages] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
 
   // STOCK DETAILS
   const [measuringUnit, setMeasuringUnit] = useState("PCS");
@@ -66,6 +68,7 @@ const navigate = useNavigate();
   useEffect(() => {
     if (!vendorId) return;
     const load = async () => {
+      setLoading(true);
       try {
         const res = await axios.get(
           `https://api.apexbee.in/api/business/get-business/${vendorId}`
@@ -73,6 +76,8 @@ const navigate = useNavigate();
         setBusiness(res.data.business);
       } catch (err) {
         console.error(err);
+      } finally {
+        setLoading(false);
       }
     };
     load();
@@ -88,10 +93,12 @@ const navigate = useNavigate();
 
   /* ---------------- FETCH CATEGORIES ---------------- */
   useEffect(() => {
+    setCategoriesLoading(true);
     axios
       .get("https://api.apexbee.in/api/categories")
       .then((res) => setCategories(res.data.categories || []))
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => setCategoriesLoading(false));
   }, []);
 
   /* ---------------- FETCH SUBCATEGORIES ---------------- */
@@ -101,13 +108,17 @@ const navigate = useNavigate();
       setSubcategory("");
       return;
     }
+    setSubcategoriesLoading(true);
     axios
       .get(`https://api.apexbee.in/api/subcategories/${category}`)
-      .then((res) => setSubcategories(res.data.subcategories || []))
-      .catch(console.error);
+      .then((res) => {
+        setSubcategories(res.data.subcategories || []);
+      })
+      .catch(console.error)
+      .finally(() => setSubcategoriesLoading(false));
   }, [category]);
 
-  /* ---------------- PRICE CALCULATIONS ---------------- */
+  /* ---------------- PRICE CALCULATIONS WITH GST ---------------- */
   useEffect(() => {
     if (priceType === "order-wise") {
       setAfterDiscount("");
@@ -115,25 +126,49 @@ const navigate = useNavigate();
       return;
     }
 
-    const basePrice = mrp || salesPrice;
+    const basePrice = Number(mrp) || 0;
     if (!basePrice) {
       setAfterDiscount("");
       setFinalAmount("");
       return;
     }
 
-    const pBase = Number(basePrice) || 0;
+    // Calculate GST amount if GST rate is set
+    const gstAmount = gstRate ? (basePrice * Number(gstRate)) / 100 : 0;
+    
+    // Price after discount (applied on base price + GST)
+    const priceWithGST = basePrice + gstAmount;
     const pDiscount = Number(discount) || 0;
-    const ad = pBase - (pBase * pDiscount) / 100;
+    const ad = priceWithGST - (priceWithGST * pDiscount) / 100;
     setAfterDiscount(isNaN(ad) ? "" : ad.toFixed(2));
 
+    // Final amount after commission
     const final = ad - commission;
     setFinalAmount(isNaN(final) ? "" : final.toFixed(2));
-  }, [mrp, salesPrice, discount, priceType, commission]);
+  }, [mrp, discount, priceType, commission, gstRate]);
 
-  /* ---------------- IMAGE HANDLER ---------------- */
+  /* ---------------- IMAGE HANDLER WITH PREVIEW ---------------- */
   const handleImageUpload = (e) => {
-    setImages([...e.target.files]);
+    const files = Array.from(e.target.files);
+    setImages(files);
+    
+    // Create preview URLs
+    const previewUrls = files.map(file => URL.createObjectURL(file));
+    setImagePreviews(previewUrls);
+  };
+
+  const removeImage = (index) => {
+    const newImages = [...images];
+    const newPreviews = [...imagePreviews];
+    
+    // Revoke object URL to prevent memory leaks
+    URL.revokeObjectURL(newPreviews[index]);
+    
+    newImages.splice(index, 1);
+    newPreviews.splice(index, 1);
+    
+    setImages(newImages);
+    setImagePreviews(newPreviews);
   };
 
   /* ---------------- ADD GODOWN ---------------- */
@@ -154,6 +189,19 @@ const navigate = useNavigate();
     setCustomUnitInput("");
   };
 
+  /* ---------------- STEP NAVIGATION ---------------- */
+  const nextStep = () => {
+    if (currentStep === 1 && (!category || !itemName)) {
+      alert("Please fill required fields (Category & Item Name).");
+      return;
+    }
+    setCurrentStep(prev => prev + 1);
+  };
+
+  const prevStep = () => {
+    setCurrentStep(prev => prev - 1);
+  };
+
   /* ---------------- SUBMIT HANDLER ---------------- */
   const handleSubmit = async () => {
     if (!category || !itemName) {
@@ -161,6 +209,7 @@ const navigate = useNavigate();
       return;
     }
 
+    setSubmitting(true);
     const fd = new FormData();
 
     fd.append("vendorId", vendorId);
@@ -168,11 +217,10 @@ const navigate = useNavigate();
     fd.append("category", category);
     fd.append("subcategory", subcategory);
     fd.append("itemName", itemName);
-    fd.append("salesPrice", salesPrice || "");
     fd.append("gstRate", gstRate || "");
     fd.append("description", description || "");
 
-    /* ❌ DON’T SEND SKU — Backend will generate automatically */
+    /* ❌ DON'T SEND SKU — Backend will generate automatically */
 
     fd.append("measuringUnit", itemType === "Service" ? "" : measuringUnit);
     fd.append("hsnCode", itemType === "Service" ? "" : hsnCode);
@@ -180,7 +228,7 @@ const navigate = useNavigate();
     fd.append("openStock", itemType === "Service" ? 0 : openStock);
     fd.append("asOnDate", itemType === "Service" ? "" : asOnDate);
 
-    fd.append("mrp", mrp || salesPrice || "");
+    fd.append("mrp", mrp || "");
     fd.append("discount", discount || "");
     fd.append("afterDiscount", afterDiscount || "");
     fd.append("commission", commission || 0);
@@ -196,129 +244,198 @@ const navigate = useNavigate();
         { headers: { "Content-Type": "multipart/form-data" } }
       );
 
-      alert(
-        `Product Added Successfully!`
-      );
+      alert(`Product Added Successfully!`);
       navigate("/products");  
-
-
-      
     } catch (err) {
       console.error(err);
       alert("Error adding product");
+    } finally {
+      setSubmitting(false);
     }
   };
+
+  /* ---------------- LOADING COMPONENTS ---------------- */
+  const LoadingSpinner = ({ size = "default" }) => (
+    <div className={`flex items-center justify-center ${
+      size === "sm" ? "py-1" : "py-4"
+    }`}>
+      <div className={`animate-spin rounded-full border-2 border-primary border-t-transparent ${
+        size === "sm" ? "w-4 h-4" : "w-6 h-6"
+      }`}></div>
+    </div>
+  );
+
+  const SkeletonLoader = () => (
+    <div className="animate-pulse space-y-2">
+      <div className="bg-gray-200 h-4 rounded w-3/4"></div>
+      <div className="bg-gray-200 h-10 rounded w-full"></div>
+    </div>
+  );
+
+  /* ---------------- STEP INDICATOR ---------------- */
+  const StepIndicator = () => (
+    <div className="flex justify-center mb-8">
+      <div className="flex items-center">
+        {[1, 2, 3].map((step) => (
+          <div key={step} className="flex items-center">
+            <div
+              className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${
+                currentStep >= step
+                  ? "bg-primary text-white border-primary"
+                  : "bg-muted border-muted-foreground text-muted-foreground"
+              }`}
+            >
+              {step}
+            </div>
+            {step < 3 && (
+              <div
+                className={`w-16 h-1 ${
+                  currentStep > step ? "bg-primary" : "bg-muted"
+                }`}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   /* ---------------- UI ---------------- */
   return (
     <AppLayout>
       <div className="max-w-5xl mx-auto px-5 pb-10">
-        {/* SECTION TABS */}
-        <div className="flex justify-center gap-4 my-6">
-          {["product", "stock", "price"].map((id) => (
-            <button
-              key={id}
-              onClick={() => setActiveSection(id)}
-              className={`px-4 py-2 rounded font-semibold ${
-                activeSection === id
-                  ? "bg-primary text-white"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {id.toUpperCase()} DETAILS
-            </button>
-          ))}
-        </div>
+        
+        {/* STEP INDICATOR */}
+        <StepIndicator />
 
-        {/* ---------------- PRODUCT DETAILS ---------------- */}
-        {activeSection === "product" && (
+        {/* LOADING OVERLAY */}
+        {loading && (
+          <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
+            <div className="bg-card p-8 rounded-lg shadow-lg flex flex-col items-center gap-4">
+              <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-lg font-semibold">Loading product form...</p>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 1: PRODUCT DETAILS */}
+        {currentStep === 1 && (
           <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-center mb-6">Product Details</h2>
+            
             {/* ITEM TYPE */}
-            <div>
-              <Label className="font-semibold">Item Type</Label>
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-semibold text-lg">Item Type</Label>
               <RadioGroup
                 value={itemType}
                 onValueChange={(value) => setItemType(value)}
-                className="flex gap-6 mt-1"
+                className="flex gap-6 mt-3"
               >
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="product" id="product" />
-                  <Label htmlFor="product">Product</Label>
+                  <Label htmlFor="product" className="text-base">Product</Label>
                 </div>
 
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="service" id="service" />
-                  <Label htmlFor="service">Service</Label>
+                  <Label htmlFor="service" className="text-base">Service</Label>
                 </div>
               </RadioGroup>
             </div>
 
             {/* CATEGORY */}
-            <div>
-              <Label className="font-bold">Category *</Label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat._id} value={cat._id}>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* SUBCATEGORY */}
-            {subcategories.length > 0 && (
-              <div>
-                <Label className="font-bold">Subcategory</Label>
-                <Select value={subcategory} onValueChange={setSubcategory}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select Subcategory" />
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">Category *</Label>
+              {categoriesLoading ? (
+                <SkeletonLoader />
+              ) : (
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger className="mt-3 h-12">
+                    {categoriesLoading ? (
+                      <div className="flex items-center">
+                        <LoadingSpinner size="sm" />
+                        <span className="ml-2">Loading categories...</span>
+                      </div>
+                    ) : (
+                      <SelectValue placeholder="Select Category" />
+                    )}
                   </SelectTrigger>
                   <SelectContent>
-                    {subcategories.map((sub) => (
-                      <SelectItem key={sub._id} value={sub._id}>
-                        {sub.name}
+                    {categories.map((cat) => (
+                      <SelectItem key={cat._id} value={cat._id}>
+                        {cat.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-            )}
-
-            {/* ITEM NAME & SALES PRICE */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label className="font-bold">Item Name *</Label>
-                <Input
-                  value={itemName}
-                  onChange={(e) => setItemName(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <Label className="font-bold">
-                  Sales Price {business?.gstApplicable ? "(Without GST)" : ""}
-                </Label>
-                <Input
-                  value={salesPrice}
-                  onChange={(e) => setSalesPrice(e.target.value)}
-                />
-              </div>
+              )}
             </div>
 
-            {/* GST */}
+            {/* SUBCATEGORY - Always show when category is selected */}
+            {/* {category && (
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">
+                  Subcategory {subcategories.length > 0 ? "" : "(No subcategories available)"}
+                </Label>
+                {subcategoriesLoading ? (
+                  <SkeletonLoader />
+                ) : (
+                  <Select value={subcategory} onValueChange={setSubcategory}>
+                    <SelectTrigger className="mt-3 h-12">
+                      {subcategoriesLoading ? (
+                        <div className="flex items-center">
+                          <LoadingSpinner size="sm" />
+                          <span className="ml-2">Loading subcategories...</span>
+                        </div>
+                      ) : (
+                        <SelectValue placeholder={
+                          subcategories.length > 0 
+                            ? "Select Subcategory" 
+                            : "No subcategories available"
+                        } />
+                      )}
+                    </SelectTrigger>
+                    {subcategories.length > 0 && (
+                      <SelectContent>
+                        {subcategories.map((sub) => (
+                          <SelectItem key={sub._id} value={sub._id}>
+                            {sub.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    )}
+                  </Select>
+                )}
+                {subcategories.length === 0 && !subcategoriesLoading && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    No subcategories available for this category.
+                  </p>
+                )}
+              </div>
+            )} */}
+
+            {/* ITEM NAME */}
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">Item Name *</Label>
+              <Input
+                value={itemName}
+                onChange={(e) => setItemName(e.target.value)}
+                className="mt-3 h-12"
+                placeholder="Enter product name"
+                disabled={submitting}
+              />
+            </div>
+
+            {/* GST - Always show if business has GST applicable */}
             {business?.gstApplicable && (
-              <div>
-                <Label className="font-bold">GST Rate *</Label>
-                <Select value={gstRate} onValueChange={setGstRate}>
-                  <SelectTrigger>
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">GST Rate *</Label>
+                <Select value={gstRate} onValueChange={setGstRate} disabled={submitting}>
+                  <SelectTrigger className="mt-3 h-12">
                     <SelectValue placeholder="Select GST %" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="0">0%</SelectItem>
                     <SelectItem value="5">5%</SelectItem>
                     <SelectItem value="12">12%</SelectItem>
                     <SelectItem value="18">18%</SelectItem>
@@ -329,43 +446,95 @@ const navigate = useNavigate();
             )}
 
             {/* DESCRIPTION */}
-            <div>
-              <Label className="font-bold">Description</Label>
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">Description</Label>
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                className="mt-3 min-h-[120px]"
+                placeholder="Enter product description..."
+                disabled={submitting}
               />
             </div>
 
-            {/* IMAGES */}
-            <div>
-              <Label className="font-bold">Upload Images</Label>
-              <input type="file" multiple onChange={handleImageUpload} />
+            {/* IMAGES WITH PREVIEW */}
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">Upload Images</Label>
+              
+              {/* File Input with Custom Styling */}
+              <div className="mt-4 border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
+                <input 
+                  type="file" 
+                  multiple 
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  id="image-upload"
+                  disabled={submitting}
+                />
+                <label 
+                  htmlFor="image-upload"
+                  className={`cursor-pointer block ${submitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+                      <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-lg font-medium">Click to upload images</p>
+                    <p className="text-sm text-muted-foreground">PNG, JPG, JPEG up to 10MB</p>
+                  </div>
+                </label>
+              </div>
+
+              {/* Image Previews */}
+              {imagePreviews.length > 0 && (
+                <div className="mt-6">
+                  <Label className="font-semibold">Image Previews</Label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+                    {imagePreviews.map((preview, index) => (
+                      <div key={index} className="relative group">
+                        <img 
+                          src={preview} 
+                          alt={`Preview ${index + 1}`}
+                          className="w-full h-32 object-cover rounded-lg border"
+                        />
+                        <button
+                          onClick={() => removeImage(index)}
+                          disabled={submitting}
+                          className="absolute -top-2 -right-2 w-6 h-6 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* ---------------- STOCK SECTION ---------------- */}
-        {activeSection === "stock" && itemType === "product" && (
+        {/* STEP 2: STOCK SECTION */}
+        {currentStep === 2 && itemType === "product" && (
           <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-center mb-6">Stock Details</h2>
+            
             {/* AUTO SKU PREVIEW */}
-            <div>
-              <Label className="font-bold">SKU Code (Auto Generated)</Label>
-              <Input value={previewSKU()} readOnly />
-              <p className="text-xs text-gray-500 mt-1">
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">SKU Code (Auto Generated)</Label>
+              <Input value={previewSKU()} readOnly className="mt-3 h-12 bg-muted" />
+              <p className="text-sm text-muted-foreground mt-2">
                 Final SKU will be generated automatically after saving.
               </p>
             </div>
 
             {/* MEASURING UNIT */}
-            <div>
-              <Label className="font-bold">Measuring Unit *</Label>
-              <div className="flex gap-2 items-center">
-                <Select
-                  value={measuringUnit}
-                  onValueChange={setMeasuringUnit}
-                >
-                  <SelectTrigger>
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">Measuring Unit *</Label>
+              <div className="flex gap-3 items-center mt-3">
+                <Select value={measuringUnit} onValueChange={setMeasuringUnit} disabled={submitting}>
+                  <SelectTrigger className="flex-1 h-12">
                     <SelectValue placeholder="Select Unit" />
                   </SelectTrigger>
                   <SelectContent>
@@ -380,11 +549,13 @@ const navigate = useNavigate();
                         <Input
                           placeholder="Add custom unit"
                           value={customUnitInput}
-                          onChange={(e) =>
-                            setCustomUnitInput(e.target.value)
-                          }
+                          onChange={(e) => setCustomUnitInput(e.target.value)}
+                          className="h-10"
+                          disabled={submitting}
                         />
-                        <Button onClick={addMeasureUnit}>Add</Button>
+                        <Button onClick={addMeasureUnit} className="h-10" disabled={submitting}>
+                          Add
+                        </Button>
                       </div>
                     </div>
                   </SelectContent>
@@ -393,20 +564,23 @@ const navigate = useNavigate();
             </div>
 
             {/* HSN */}
-            <div>
-              <Label className="font-bold">HSN Code</Label>
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">HSN Code</Label>
               <Input
                 value={hsnCode}
                 onChange={(e) => setHsnCode(e.target.value)}
+                className="mt-3 h-12"
+                placeholder="Enter HSN code"
+                disabled={submitting}
               />
             </div>
 
             {/* GODOWN */}
-            <div>
-              <Label className="font-bold">Godown / Shop *</Label>
-              <div className="flex gap-2 items-center">
-                <Select value={godown} onValueChange={setGodown}>
-                  <SelectTrigger>
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg">Godown / Shop *</Label>
+              <div className="flex gap-3 items-center mt-3">
+                <Select value={godown} onValueChange={setGodown} disabled={submitting}>
+                  <SelectTrigger className="flex-1 h-12">
                     <SelectValue placeholder="Select Godown / Shop" />
                   </SelectTrigger>
                   <SelectContent>
@@ -422,8 +596,12 @@ const navigate = useNavigate();
                           placeholder="Add Godown / Shop"
                           value={newGodown}
                           onChange={(e) => setNewGodown(e.target.value)}
+                          className="h-10"
+                          disabled={submitting}
                         />
-                        <Button onClick={addGodown}>+ Add</Button>
+                        <Button onClick={addGodown} className="h-10" disabled={submitting}>
+                          + Add
+                        </Button>
                       </div>
                     </div>
                   </SelectContent>
@@ -432,110 +610,239 @@ const navigate = useNavigate();
             </div>
 
             {/* OPEN STOCK / DATE */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label className="font-bold">Open Stock</Label>
-                <div className="flex gap-2 items-center">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">Open Stock</Label>
+                <div className="flex gap-3 items-center mt-3">
                   <Input
                     value={openStock}
                     onChange={(e) => setOpenStock(e.target.value)}
+                    className="h-12"
+                    placeholder="0"
+                    type="number"
+                    disabled={submitting}
                   />
-                  <span className="px-3 py-2 bg-blue-100 rounded">
+                  <div className="px-4 py-3 bg-primary text-primary-foreground rounded-md font-medium min-w-[80px] text-center">
                     {measuringUnit}
-                  </span>
+                  </div>
                 </div>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Current stock quantity in {measuringUnit}
+                </p>
               </div>
 
-              <div>
-                <Label className="font-bold">As On Date</Label>
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">As On Date</Label>
                 <Input
                   type="date"
                   value={asOnDate}
                   onChange={(e) => setAsOnDate(e.target.value)}
+                  className="mt-3 h-12"
+                  disabled={submitting}
                 />
               </div>
             </div>
           </div>
         )}
 
-        {/* ---------------- PRICE SECTION ---------------- */}
-        {activeSection === "price" && (
+        {/* STEP 3: PRICE SECTION */}
+        {currentStep === 3 && (
           <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-center mb-6">Price Details</h2>
+            
             {/* PRICE TYPE */}
-            <div className="flex gap-6 items-center">
-              <Label className="font-bold text-lg">PRICE DETAILS</Label>
+            <div className="bg-card p-6 rounded-lg border">
+              <Label className="font-bold text-lg mb-4 block">PRICE TYPE</Label>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div 
+                  className={`flex-1 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                    priceType === "product-wise" 
+                      ? "border-primary bg-primary/5" 
+                      : "border-muted hover:border-muted-foreground/50"
+                  } ${submitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  onClick={() => !submitting && setPriceType("product-wise")}
+                >
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      value="product-wise"
+                      checked={priceType === "product-wise"}
+                      onChange={() => !submitting && setPriceType("product-wise")}
+                      className="w-4 h-4"
+                      disabled={submitting}
+                    />
+                    <span className="font-medium">Product Wise Pricing</span>
+                  </label>
+                  <p className="text-sm text-muted-foreground mt-2 ml-7">
+                    Set individual prices for this product
+                  </p>
+                </div>
 
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    value="product-wise"
-                    checked={priceType === "product-wise"}
-                    onChange={() => setPriceType("product-wise")}
-                  />
-                  Product Wise
-                </label>
-
-                <label className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    value="order-wise"
-                    checked={priceType === "order-wise"}
-                    onChange={() => setPriceType("order-wise")}
-                  />
-                  Order Wise
-                </label>
+                <div 
+                  className={`flex-1 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                    priceType === "order-wise" 
+                      ? "border-primary bg-primary/5" 
+                      : "border-muted hover:border-muted-foreground/50"
+                  } ${submitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  onClick={() => !submitting && setPriceType("order-wise")}
+                >
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      value="order-wise"
+                      checked={priceType === "order-wise"}
+                      onChange={() => !submitting && setPriceType("order-wise")}
+                      className="w-4 h-4"
+                      disabled={submitting}
+                    />
+                    <span className="font-medium">Order Wise Pricing</span>
+                  </label>
+                  <p className="text-sm text-muted-foreground mt-2 ml-7">
+                    Set prices based on order quantity
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* MRP */}
-            <div>
-              <Label className="font-bold">Maximum Retail Price (MRP)</Label>
-              <Input
-                disabled={priceType === "order-wise"}
-                value={mrp}
-                onChange={(e) => setMrp(e.target.value)}
-              />
-            </div>
-
-            {/* DISCOUNT */}
-            <div>
-              <Label className="font-bold">Discount</Label>
-              <div className="flex gap-2 items-center">
+            {/* PRICE FIELDS */}
+            <div className="space-y-6">
+              {/* MRP */}
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">Maximum Retail Price (MRP) *</Label>
                 <Input
-                  disabled={priceType === "order-wise"}
-                  value={discount}
-                  onChange={(e) => setDiscount(e.target.value)}
+                  disabled={priceType === "order-wise" || submitting}
+                  value={mrp}
+                  onChange={(e) => setMrp(e.target.value)}
+                  className="mt-3 h-12"
+                  placeholder="0.00"
+                  type="number"
                 />
-                <div className="px-3 py-2 bg-blue-100 rounded">%</div>
               </div>
-            </div>
 
-            {/* AFTER DISCOUNT */}
-            <div>
-              <Label className="font-bold">After Discount Sale Price</Label>
-              <Input disabled value={afterDiscount} />
-            </div>
+              {/* GST */}
+              {business?.gstApplicable && (
+                <div className="bg-card p-6 rounded-lg border">
+                  <Label className="font-bold text-lg">GST Rate *</Label>
+                  <Select value={gstRate} onValueChange={setGstRate} disabled={submitting}>
+                    <SelectTrigger className="mt-3 h-12">
+                      <SelectValue placeholder="Select GST %" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">0%</SelectItem>
+                      <SelectItem value="5">5%</SelectItem>
+                      <SelectItem value="12">12%</SelectItem>
+                      <SelectItem value="18">18%</SelectItem>
+                      <SelectItem value="28">28%</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
-            {/* COMMISSION */}
-            <div>
-              <Label className="font-bold">Apex Bee Commission</Label>
-              <Input disabled value={commission} />
-            </div>
+              {/* GST CALCULATION DISPLAY */}
+              {business?.gstApplicable && gstRate && mrp && (
+                <div className="bg-card p-6 rounded-lg border">
+                  <Label className="font-bold text-lg">GST Calculation</Label>
+                  <div className="mt-3 space-y-2">
+                    <div className="flex justify-between">
+                      <span>Base Price:</span>
+                      <span>₹{Number(mrp).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>GST ({gstRate}%):</span>
+                      <span>₹{((Number(mrp) * Number(gstRate)) / 100).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold border-t pt-2">
+                      <span>Total with GST:</span>
+                      <span>₹{(Number(mrp) + (Number(mrp) * Number(gstRate)) / 100).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-            {/* FINAL AMOUNT */}
-            <div>
-              <Label className="font-bold">Final You Get Amount</Label>
-              <Input disabled value={finalAmount} />
+              {/* DISCOUNT */}
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">Discount</Label>
+                <div className="flex gap-3 items-center mt-3">
+                  <Input
+                    disabled={priceType === "order-wise" || submitting}
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    className="h-12"
+                    placeholder="0"
+                    type="number"
+                  />
+                  <div className="px-4 py-3 bg-muted rounded-md font-medium">%</div>
+                </div>
+              </div>
+
+              {/* AFTER DISCOUNT */}
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">After Discount Sale Price</Label>
+                <Input 
+                  disabled 
+                  value={afterDiscount} 
+                  className="mt-3 h-12 bg-muted"
+                />
+              </div>
+
+              {/* COMMISSION */}
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">Apex Bee Commission</Label>
+                <Input 
+                  disabled 
+                  value={commission} 
+                  className="mt-3 h-12 bg-muted"
+                />
+              </div>
+
+              {/* FINAL AMOUNT */}
+              <div className="bg-card p-6 rounded-lg border">
+                <Label className="font-bold text-lg">Final You Get Amount</Label>
+                <Input 
+                  disabled 
+                  value={finalAmount} 
+                  className="mt-3 h-12 bg-muted"
+                />
+              </div>
             </div>
           </div>
         )}
 
-        {/* SAVE BUTTON */}
-        <div className="flex justify-center mt-10">
-          <Button className="px-10 py-4 text-lg" onClick={handleSubmit}>
-            SAVE PRODUCT
+        {/* NAVIGATION BUTTONS */}
+        <div className="flex justify-between mt-10">
+          <Button 
+            variant="outline" 
+            onClick={prevStep}
+            disabled={currentStep === 1 || submitting}
+            className="px-8 py-3"
+          >
+            {submitting ? <LoadingSpinner size="sm" /> : "Previous"}
           </Button>
+
+          {currentStep < 3 ? (
+            <Button 
+              onClick={nextStep}
+              disabled={submitting}
+              className="px-8 py-3"
+            >
+              {submitting ? <LoadingSpinner size="sm" /> : "Next Step"}
+            </Button>
+          ) : (
+            <Button 
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="px-8 py-3 bg-green-600 hover:bg-green-700"
+            >
+              {submitting ? (
+                <div className="flex items-center gap-2">
+                  <LoadingSpinner size="sm" />
+                  <span>Saving Product...</span>
+                </div>
+              ) : (
+                "SAVE PRODUCT"
+              )}
+            </Button>
+          )}
         </div>
       </div>
     </AppLayout>

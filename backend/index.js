@@ -163,6 +163,31 @@ const userSchema = new mongoose.Schema(
     email: { type: String, unique: true, sparse: true },
     phone: { type: String, unique: true, sparse: true },
     password: String,
+    name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  phone: {
+    type: String,
+    trim: true
+  },
+  dateOfBirth: {
+    type: Date
+  },
+  gender: {
+    type: String,
+    enum: ['male', 'female', 'other', 'prefer-not-to-say'],
+    default: 'prefer-not-to-say'
+  },
+  bio: {
+    type: String,
+    maxlength: 500
+  },
+  avatar: {
+    type: String,
+    default: ''
+  },
       referralCode: {
     type: String,
     unique: true,
@@ -826,7 +851,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       category,
       subcategory,
       itemName,
-      salesPrice,
+    
       gstRate,
       description,
 
@@ -866,7 +891,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
       category,
       subcategory,
       itemName,
-      salesPrice: Number(salesPrice) || 0,
+      
       gstRate: Number(gstRate) || 0,
       description,
       images,
@@ -2274,6 +2299,72 @@ app.put("/api/admin/business/:businessId/status", async (req, res) => {
     res.status(500).json({ error: "Server Error" });
   }
 });
+app.get('/api/user/profile/:userId', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+app.put('/api/user/profile/:userId', auth, async (req, res) => {
+  try {
+    const { name, phone, dateOfBirth, gender, bio } = req.body;
+    
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (phone) updateData.phone = phone;
+    if (dateOfBirth) updateData.dateOfBirth = dateOfBirth;
+    if (gender) updateData.gender = gender;
+    if (bio) updateData.bio = bio;
+
+    const user = await User.findByIdAndUpdate(
+      req.params.userId,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+// Partial update user profile
+app.patch('/api/user/profile/:userId', auth, async (req, res) => {
+  try {
+    const allowedUpdates = ['name', 'phone', 'dateOfBirth', 'gender', 'bio', 'avatar'];
+    const updates = Object.keys(req.body);
+    const isValidOperation = updates.every(update => allowedUpdates.includes(update));
+
+    if (!isValidOperation) {
+      return res.status(400).json({ error: 'Invalid updates' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.userId,
+      req.body,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 app.use("/uploads", express.static("uploads"));
 

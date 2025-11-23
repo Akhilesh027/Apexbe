@@ -220,7 +220,7 @@ const Referrals = () => {
         <div className="bg-gradient-to-r from-navy to-accent rounded-3xl p-8 mb-8 text-white">
           <div className="text-center">
             <Gift className="h-16 w-16 mx-auto mb-4" />
-            <h2 className="text-3xl font-bold mb-2">Earn Rs. 100 per Referral</h2>
+            <h2 className="text-3xl font-bold mb-2">Earn Rs. 50 per Referral</h2>
             <p className="text-lg mb-6">Invite friends and earn rewards when they make their first purchase</p>
             <div className="bg-white/20 rounded-lg p-4 inline-block">
               <p className="text-xl font-semibold">Wallet Balance: Rs. {stats.walletBalance}</p>
@@ -325,7 +325,7 @@ const Referrals = () => {
               </div>
               <h4 className="font-semibold text-navy mb-3 text-lg">You Earn Rewards</h4>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Receive Rs. 100 directly in your wallet immediately after your friend completes their purchase
+                Receive Rs. 50 directly in your wallet immediately after your friend completes their purchase
               </p>
             </div>
           </div>

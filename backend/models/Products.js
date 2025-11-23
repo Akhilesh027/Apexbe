@@ -9,7 +9,7 @@ const productSchema = new mongoose.Schema(
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
     subcategory: { type: String, required: false},
     itemName: String,
-    salesPrice: Number,
+    
     gstRate: Number,
     description: String,
 

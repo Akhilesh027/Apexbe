@@ -478,24 +478,29 @@ const Checkout = () => {
                 </div>{" "}
               </div>{" "}
               {/* Order Summary */}{" "}
-              <div className="border-t border-gray-200 pt-4 space-y-2">
-                {" "}
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <span>₹{orderDetails.subtotal.toFixed(2)}</span>
-                </div>{" "}
-                <div className="flex justify-between">
-                  <span>Discount</span>
-                  <span>- ₹{orderDetails.discount.toFixed(2)}</span>
-                </div>{" "}
-                <div className="flex justify-between">
-                  <span>Shipping</span>
-                 
-                </div>{" "}
-                <div className="flex justify-between font-semibold text-lg">
-                  Total <span>₹{orderDetails.total.toFixed(2)}</span>
-                </div>{" "}
-              </div>{" "}
+           {/* Order Summary */}
+<div className="border-t border-gray-200 pt-4 space-y-2">
+  <div className="flex justify-between">
+    <span>Subtotal</span>
+    <span>₹{orderDetails.subtotal.toFixed(2)}</span>
+  </div>
+
+  <div className="flex justify-between">
+    <span>Discount</span>
+    <span>- ₹{orderDetails.discount.toFixed(2)}</span>
+  </div>
+
+  <div className="flex justify-between">
+    <span>Shipping</span>
+    <span>₹{orderDetails.shipping.toFixed(2)}</span>
+  </div>
+
+  <div className="flex justify-between font-semibold text-lg">
+    <span>Total</span>
+    <span>₹{orderDetails.total.toFixed(2)}</span>
+  </div>
+</div>
+
               <Button
                 className="w-full mt-6"
                 onClick={handlePlaceOrder}

@@ -13,27 +13,35 @@ const BusinessDetails = () => {
   const vendorId = localStorage.getItem("vendorId");
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!vendorId) {
-      setLoading(false);
-      return;
-    }
+ useEffect(() => {
+  if (!vendorId) {
+    setLoading(false);
+    return;
+  }
 
-    const fetchBusiness = async () => {
-      try {
-        const res = await axios.get(
-          `https://api.apexbee.in/api/business/get-business/${vendorId}`
-        );
-        setBusiness(res.data.business || null);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
+  const fetchBusiness = async () => {
+    try {
+      const res = await axios.get(
+        `https://api.apexbee.in/api/business/get-business/${vendorId}`
+      );
+
+      const biz = res.data.business || null;
+      setBusiness(biz);
+
+      // Save to localStorage
+      if (biz) {
+        localStorage.setItem("businessName", biz.businessName || "");
+        localStorage.setItem("businessLogo", biz.logo || "");
       }
-    };
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    fetchBusiness();
-  }, [vendorId]);
+  fetchBusiness();
+}, [vendorId]);
 
   // Loading
   if (loading) {
