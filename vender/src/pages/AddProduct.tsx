@@ -22,8 +22,8 @@ const Addproduct = () => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [categoriesLoading, setCategoriesLoading] = useState(false);
-    const [subcategoriesLoading, setSubcategoriesLoading] = useState(false);
-    const [addingSubcategory, setAddingSubcategory] = useState(false); // NEW: State for adding a new subcategory
+    // const [subcategoriesLoading, setSubcategoriesLoading] = useState(false); // REMOVED: Not used
+    const [addingSubcategory, setAddingSubcategory] = useState(false);
 
     // ITEM TYPE (Product / Service)
     const [itemType, setItemType] = useState("product");
@@ -33,16 +33,15 @@ const Addproduct = () => {
     const [priceType, setPriceType] = useState("product-wise");
 
     // Categories
-    // Assuming categories will now hold the full category object including its subcategories array
-    const [categories, setCategories] = useState([]); 
+    const [categories, setCategories] = useState([]);
     const [subcategories, setSubcategories] = useState([]);
     const [category, setCategory] = useState("");
     const [subcategory, setSubcategory] = useState("");
-    const [newSubcategory, setNewSubcategory] = useState(""); // NEW: Input for adding a new subcategory
+    const [newSubcategory, setNewSubcategory] = useState("");
 
     // PRODUCT DETAILS
     const [itemName, setItemName] = useState("");
-    const [gstRate, setGstRate] = useState(""); 
+    const [gstRate, setGstRate] = useState("");
     const [description, setDescription] = useState("");
     const [images, setImages] = useState([]);
     const [imagePreviews, setImagePreviews] = useState([]);
@@ -62,17 +61,17 @@ const Addproduct = () => {
 
     // PRICE DETAILS
     const [mrp, setMrp] = useState("");
-    const [discount, setDiscount] = useState(""); 
+    const [discount, setDiscount] = useState("");
     const [afterDiscount, setAfterDiscount] = useState("");
     const [finalAmount, setFinalAmount] = useState("");
-    const [commission] = useState(20);
+    // REMOVED: const [commission] = useState(20);
 
     // 💰 NEW STATES for Flexible Pricing Calculations
-    const [gstAmount, setGstAmount] = useState(""); 
-    const [discountAmount, setDiscountAmount] = useState(""); 
+    const [gstAmount, setGstAmount] = useState("");
+    const [discountAmount, setDiscountAmount] = useState("");
 
-    const [gstInputType, setGstInputType] = useState('percentage'); 
-    const [discountInputType, setDiscountInputType] = useState('percentage'); 
+    const [gstInputType, setGstInputType] = useState('percentage');
+    const [discountInputType, setDiscountInputType] = useState('percentage');
 
     /* ---------------- FETCH BUSINESS ---------------- */
     useEffect(() => {
@@ -105,7 +104,6 @@ const Addproduct = () => {
     useEffect(() => {
         setCategoriesLoading(true);
         axios
-            // Assuming this endpoint now returns the category object *with* its embedded subcategories array
             .get("https://api.apexbee.in/api/categories")
             .then((res) => setCategories(res.data.categories || []))
             .catch(console.error)
@@ -126,42 +124,42 @@ const Addproduct = () => {
 
 
     /* ---------------- NEW: ADD SUBCATEGORY HANDLER ---------------- */
-  // Inside the addNewSubcategory function in Addproduct.jsx
+    const addNewSubcategory = async () => {
+        const subName = newSubcategory.trim();
+        if (!subName || !category) {
+            alert("Please select a category and enter a subcategory name.");
+            return;
+        }
 
-const addNewSubcategory = async () => {
-    const subName = newSubcategory.trim();
-    if (!subName || !category) {
-        alert("Please select a category and enter a subcategory name.");
-        return;
-    }
+        setAddingSubcategory(true);
+        try {
+            const res = await axios.post(
+                // API call now uses the parent category ID in the URL
+                `https://api.apexbee.in/api/categories/${category}/subcategories`,
+                { name: subName } // Send the new subcategory name in the body
+            );
 
-    setAddingSubcategory(true);
-    try {
-        const res = await axios.post(
-            // API call now uses the parent category ID in the URL
-            `https://api.apexbee.in/api/categories/${category}/subcategories`, 
-            { name: subName } // Send the new subcategory name in the body
-        );
+            // Update local state based on the response
+            setCategories(prevCategories =>
+                prevCategories.map(cat =>
+                    cat._id === category ? res.data.updatedCategory : cat
+                )
+            );
 
-        // Update local state based on the response
-        setCategories(prevCategories => 
-            prevCategories.map(cat => 
-                cat._id === category ? res.data.updatedCategory : cat
-            )
-        );
+            // Set the newly created subcategory as selected
+            setSubcategory(res.data.newSubcategoryId);
 
-        // Set the newly created subcategory as selected
-        setSubcategory(res.data.newSubcategoryId); 
+            setNewSubcategory("");
+            alert(`${subName} added successfully to the category!`);
 
-        setNewSubcategory(""); 
-        alert(`${subName} added successfully to the category!`);
+        } catch (err) {
+            console.error(err);
+            alert("Error adding subcategory.");
+        } finally {
+            setAddingSubcategory(false);
+        }
+    };
 
-    } catch (err) {
-        // ... error handling
-    } finally {
-        setAddingSubcategory(false);
-    }
-};
     // 💰 NEW HANDLERS for Price Input Types (Keeping for completeness)
     const handleGstRateChange = (value) => {
         setGstInputType('percentage');
@@ -183,9 +181,8 @@ const addNewSubcategory = async () => {
         setDiscountAmount(e.target.value);
     };
 
-    /* ---------------- PRICE CALCULATIONS WITH GST (Keeping for completeness) ---------------- */
+    /* ---------------- UPDATED: PRICE CALCULATIONS (MRP, GST, Discount) ---------------- */
     useEffect(() => {
-        // ... (existing price calculation logic)
         if (priceType === "order-wise") {
             setAfterDiscount("");
             setFinalAmount("");
@@ -216,39 +213,47 @@ const addNewSubcategory = async () => {
                 setGstRate(isNaN(actualGstRate) || !isFinite(actualGstRate) ? "" : actualGstRate.toFixed(2));
             }
         } else {
+            // If GST is not applicable, clear fields and set amount/rate to zero
             setGstRate("");
             setGstAmount("");
+            calculatedGstAmount = 0; // Ensure the variable used below is zero
         }
-        
+
         const priceWithGST = basePrice + calculatedGstAmount;
 
         // --- 2. DETERMINE DISCOUNT (Percentage vs. Amount) ---
         let actualDiscountPercentage = 0;
         let calculatedDiscountAmount = 0;
 
+        // Discount is applied on (Base Price + GST)
         if (discountInputType === 'percentage') {
             actualDiscountPercentage = Number(discount) || 0;
             calculatedDiscountAmount = (priceWithGST * actualDiscountPercentage) / 100;
             setDiscountAmount(calculatedDiscountAmount.toFixed(2));
         } else if (discountInputType === 'amount') {
             calculatedDiscountAmount = Number(discountAmount) || 0;
-            actualDiscountPercentage = (calculatedDiscountAmount / priceWithGST) * 100;
+            // Prevent division by zero if priceWithGST is 0
+            if (priceWithGST > 0) {
+                actualDiscountPercentage = (calculatedDiscountAmount / priceWithGST) * 100;
+            } else {
+                actualDiscountPercentage = 0;
+            }
             setDiscount(isNaN(actualDiscountPercentage) || !isFinite(actualDiscountPercentage) ? "" : actualDiscountPercentage.toFixed(2));
         }
 
-        // Price after discount (applied on base price + GST)
+        // Price after discount (The final selling price to the customer)
         const ad = priceWithGST - calculatedDiscountAmount;
         setAfterDiscount(isNaN(ad) ? "" : ad.toFixed(2));
 
-        // Final amount after commission
-        const final = ad - commission;
+        // FINAL AMOUNT YOU GET (Currently same as afterDiscount, as commission is managed by admin)
+        // This is the amount the vendor *expects* to get *before* final admin commission deduction.
+        const final = ad; // Commission removed
         setFinalAmount(isNaN(final) ? "" : final.toFixed(2));
-    }, [mrp, discount, gstRate, priceType, commission, gstInputType, gstAmount, discountInputType, discountAmount, business]);
+    }, [mrp, discount, gstRate, priceType, gstInputType, gstAmount, discountInputType, discountAmount, business]);
 
 
     /* ---------------- IMAGE HANDLER WITH PREVIEW (Keeping for completeness) ---------------- */
     const handleImageUpload = (e) => {
-        // ... (existing image logic)
         const files = Array.from(e.target.files);
         setImages(files);
 
@@ -257,7 +262,6 @@ const addNewSubcategory = async () => {
     };
 
     const removeImage = (index) => {
-        // ... (existing image logic)
         const newImages = [...images];
         const newPreviews = [...imagePreviews];
 
@@ -301,7 +305,7 @@ const addNewSubcategory = async () => {
         setCurrentStep(prev => prev - 1);
     };
 
-    /* ---------------- SUBMIT HANDLER (Keeping for completeness) ---------------- */
+    /* ---------------- SUBMIT HANDLER (Commission field removed from payload) ---------------- */
     const handleSubmit = async () => {
         if (!category || !itemName) {
             alert("Please fill required fields (Category & Item Name).");
@@ -314,11 +318,11 @@ const addNewSubcategory = async () => {
         fd.append("vendorId", vendorId);
         fd.append("itemType", itemType);
         fd.append("category", category);
-        fd.append("subcategory", subcategory); // Send selected subcategory ID/Name
+        fd.append("subcategory", subcategory);
         fd.append("itemName", itemName);
 
         fd.append("gstRate", gstRate || "");
-        
+
         fd.append("description", description || "");
 
         fd.append("measuringUnit", itemType === "Service" ? "" : measuringUnit);
@@ -328,9 +332,9 @@ const addNewSubcategory = async () => {
         fd.append("asOnDate", itemType === "Service" ? "" : asOnDate);
 
         fd.append("mrp", mrp || "");
-        fd.append("discount", discount || ""); 
+        fd.append("discount", discount || "");
         fd.append("afterDiscount", afterDiscount || "");
-        fd.append("commission", commission || 0);
+        // REMOVED: fd.append("commission", commission || 0); // Commission field removed
         fd.append("finalAmount", finalAmount || "");
         fd.append("priceType", priceType);
 
@@ -476,23 +480,19 @@ const addNewSubcategory = async () => {
                                 <Label className="font-bold text-lg">Subcategory</Label>
                                 <div className="mt-3 space-y-4">
                                     {/* Existing Subcategories Selector */}
-                                    {subcategoriesLoading ? (
-                                        <SkeletonLoader />
-                                    ) : (
-                                        <Select value={subcategory} onValueChange={setSubcategory} disabled={!category || submitting}>
-                                            <SelectTrigger className="h-12">
-                                                <SelectValue placeholder="Select Subcategory (Optional)" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {subcategories.map((sub) => (
-                                                    // Assuming subcategory model includes an _id 
-                                                    <SelectItem key={sub._id} value={sub._id}> 
-                                                        {sub.name}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    )}
+                                    <Select value={subcategory} onValueChange={setSubcategory} disabled={!category || submitting}>
+                                        <SelectTrigger className="h-12">
+                                            <SelectValue placeholder="Select Subcategory (Optional)" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {subcategories.map((sub) => (
+                                                <SelectItem key={sub._id} value={sub._id}>
+                                                    {sub.name}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+
 
                                     {/* Add New Subcategory Form */}
                                     <div className="p-2 border-t mt-1">
@@ -505,9 +505,9 @@ const addNewSubcategory = async () => {
                                                 className="h-10"
                                                 disabled={submitting || addingSubcategory}
                                             />
-                                            <Button 
-                                                onClick={addNewSubcategory} 
-                                                className="h-10" 
+                                            <Button
+                                                onClick={addNewSubcategory}
+                                                className="h-10"
                                                 disabled={submitting || addingSubcategory || !category}
                                             >
                                                 {addingSubcategory ? <LoadingSpinner size="sm" /> : "+ Add"}
@@ -530,7 +530,7 @@ const addNewSubcategory = async () => {
                             />
                         </div>
 
-                        {/* 💰 FLEXIBLE GST INPUT (Percentage or Amount) */}
+                        {/* 💰 FLEXIBLE GST INPUT (Percentage or Amount) - Displayed here for consistency */}
                         {business?.gstApplicable && (
                             <div className="bg-card p-6 rounded-lg border">
                                 <Label className="font-bold text-lg">GST Rate/Amount *</Label>
@@ -766,7 +766,7 @@ const addNewSubcategory = async () => {
                     </div>
                 )}
 
-                {/* STEP 3: PRICE SECTION (Keeping for completeness) */}
+                {/* STEP 3: PRICE SECTION (UPDATED) */}
                 {currentStep === 3 && (
                     <div className="space-y-6">
                         <h2 className="text-2xl font-bold text-center mb-6">Price Details</h2>
@@ -840,7 +840,7 @@ const addNewSubcategory = async () => {
                                 />
                             </div>
 
-                            {/* 💰 FLEXIBLE GST INPUT (Percentage or Amount) */}
+                            {/* 💰 FLEXIBLE GST INPUT (Percentage or Amount) - Repeated in Step 3 for convenience */}
                             {business?.gstApplicable && (
                                 <div className="bg-card p-6 rounded-lg border">
                                     <Label className="font-bold text-lg">GST Rate/Amount *</Label>
@@ -882,7 +882,7 @@ const addNewSubcategory = async () => {
                                     <Label className="font-bold text-lg">GST Calculation</Label>
                                     <div className="mt-3 space-y-2">
                                         <div className="flex justify-between">
-                                            <span>Base Price:</span>
+                                            <span>Base Price (MRP):</span>
                                             <span>₹{Number(mrp).toFixed(2)}</span>
                                         </div>
                                         <div className="flex justify-between">
@@ -931,34 +931,28 @@ const addNewSubcategory = async () => {
                                 </p>
                             </div>
 
-                            {/* AFTER DISCOUNT */}
+                            {/* AFTER DISCOUNT / FINAL SALE PRICE */}
                             <div className="bg-card p-6 rounded-lg border">
-                                <Label className="font-bold text-lg">After Discount Sale Price</Label>
+                                <Label className="font-bold text-lg">Final Sale Price (Customer Pays)</Label>
                                 <Input
                                     disabled
                                     value={afterDiscount}
-                                    className="mt-3 h-12 bg-muted"
+                                    className="mt-3 h-12 bg-muted text-lg font-bold"
                                 />
                             </div>
 
-                            {/* COMMISSION */}
+                            {/* FINAL AMOUNT YOU GET (UPDATED LOGIC) */}
                             <div className="bg-card p-6 rounded-lg border">
-                                <Label className="font-bold text-lg">Apex Bee Commission</Label>
-                                <Input
-                                    disabled
-                                    value={commission}
-                                    className="mt-3 h-12 bg-muted"
-                                />
-                            </div>
-
-                            {/* FINAL AMOUNT */}
-                            <div className="bg-card p-6 rounded-lg border">
-                                <Label className="font-bold text-lg">Final You Get Amount</Label>
+                                <Label className="font-bold text-lg">Amount You Receive (Before Admin Commission)</Label>
                                 <Input
                                     disabled
                                     value={finalAmount}
-                                    className="mt-3 h-12 bg-muted"
+                                    className="mt-3 h-12 bg-muted text-lg font-bold text-green-600"
                                 />
+                                {/* IMPORTANT NOTE ADDED HERE */}
+                                <blockquote className="mt-4 text-sm text-muted-foreground border-l-4 pl-4 border-yellow-500 bg-yellow-50">
+                                    **Important Note:** The displayed **Amount You Receive** is before the final **Admin Commission** is applied. The Admin will review the product details and set the commission/final approval before the product goes live.
+                                </blockquote>
                             </div>
                         </div>
                     </div>
@@ -995,7 +989,7 @@ const addNewSubcategory = async () => {
                                     <span>Saving Product...</span>
                                 </div>
                             ) : (
-                                "SAVE PRODUCT"
+                                "SUBMIT FOR APPROVAL"
                             )}
                         </Button>
                     )}

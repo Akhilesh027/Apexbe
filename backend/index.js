@@ -900,7 +900,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
             category,
             subcategory, // This is the ID of the subdocument
             itemName,
-            
+
             gstRate,
             description,
 
@@ -913,7 +913,7 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
             mrp,
             discount,
             afterDiscount,
-            commission,
+            // REMOVED: commission is no longer submitted by the vendor
             finalAmount,
             priceType,
         } = req.body;
@@ -925,10 +925,10 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
             const parentCategory = await Category.findById(category).select('subcategories');
 
             if (!parentCategory) {
-                 return res.status(404).json({
+                return res.status(404).json({
                     success: false,
                     message: "Validation Error: Parent category not found.",
-                 });
+                });
             }
             
             // Checks if the subcategory ID exists within the embedded array
@@ -954,9 +954,15 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
         // =============================
         // 🔹 Cloudinary image URLs
         // =============================
-        // Assuming req.files contains the results from Cloudinary upload middleware
         const images = req.files?.map((f) => f.path) || []; 
 
+        // =========================================================================
+        // 🌟 UPDATED: Commission is set to 0 and Status is set to 'Pending'
+        // The final calculated commission will be applied by the admin later.
+        // =========================================================================
+        const COMMISSION_INITIAL = 0;
+        const PRODUCT_STATUS = 'Pending'; 
+        
         // =============================
         // 🔹 Create product document
         // =============================
@@ -965,8 +971,8 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
 
             // PRODUCT DETAILS
             itemType: itemType || "product",
-            category,        // ID of the main category
-            subcategory,     // ID of the subcategory (optional)
+            category,       // ID of the main category
+            subcategory,    // ID of the subcategory (optional)
             itemName,
             
             gstRate: Number(gstRate) || 0,
@@ -976,7 +982,6 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
 
             // STOCK DETAILS
             skuCode,
-            // Ensure fields that are only applicable to 'product' type are handled if 'service' is selected
             measuringUnit: itemType === "service" ? "" : measuringUnit, 
             hsnCode: itemType === "service" ? "" : hsnCode, 
             godown: itemType === "service" ? "" : godown, 
@@ -984,19 +989,25 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
             asOnDate: itemType === "service" ? "" : asOnDate,
 
             // PRICE DETAILS
-            userPrice: Number(mrp) || 0, // userPrice likely corresponds to mrp
+            userPrice: Number(mrp) || 0, // userPrice corresponds to mrp
             discount: Number(discount) || 0,
             afterDiscount: Number(afterDiscount) || 0,
-            commission: Number(commission) || 0,
-            finalAmount: Number(finalAmount) || 0,
+            
+            // Commission field is now hardcoded/set to 0 initially
+            commission: COMMISSION_INITIAL, 
+            
+            finalAmount: Number(finalAmount) || 0, // This is the amount before commission (from frontend)
             priceType,
+
+            // 🔹 NEW FIELD ADDED
+            status: PRODUCT_STATUS,
         });
 
         await product.save();
 
         return res.json({
             success: true,
-            message: "Product added successfully",
+            message: "Product submitted successfully for admin approval.",
             product,
         });
 
@@ -1019,6 +1030,90 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
         });
     }
 });
+app.post("/api/products/:id/:action", async (req, res) => {
+    try {
+        const { id, action } = req.params;
+        const { commission } = req.body; // Commission is sent in body only for 'approve' action
+
+        // 1. Validate the action parameter
+        if (!['approve', 'reject'].includes(action)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "Invalid action specified. Must be 'approve' or 'reject'." 
+            });
+        }
+
+        // 2. Find the product by ID
+        const product = await Products.findById(id);
+
+        if (!product) {
+            return res.status(404).json({ 
+                success: false, 
+                message: "Product not found." 
+            });
+        }
+        
+        // 3. Determine the update fields based on the action
+        let updateFields = {};
+
+        if (action === 'reject') {
+            updateFields.status = 'Rejected';
+            updateFields.commission = 0; // Reset commission on rejection
+            updateFields.finalAmount = product.afterDiscount; // If rejected, final amount is essentially the sale price (no commission deducted)
+
+        } else if (action === 'approve') {
+            const commissionRate = Number(commission);
+
+            // Validation for commission rate
+            if (isNaN(commissionRate) || commissionRate < 0) {
+                 return res.status(400).json({ 
+                    success: false, 
+                    message: "Valid non-negative commission rate is required for approval." 
+                });
+            }
+
+            // Calculate Final Vendor Amount after the Admin's set commission.
+            // Formula: Final Payout = AfterDiscount * (1 - Commission Rate / 100)
+            const finalSalePrice = product.afterDiscount || 0;
+            const commissionFactor = 1 - (commissionRate / 100);
+            const finalAmountAfterCommission = finalSalePrice * commissionFactor;
+            
+            updateFields.status = 'Approved';
+            updateFields.commission = commissionRate;
+            // Store the final calculated amount the vendor receives.
+            updateFields.finalAmount = parseFloat(finalAmountAfterCommission.toFixed(2));
+        }
+
+        // 4. Update the database record
+        const updatedProduct = await Products.findByIdAndUpdate(
+            id,
+            { $set: updateFields },
+            { new: true, runValidators: true } // 'new: true' returns the updated document
+        );
+
+        return res.json({
+            success: true,
+            message: `Product ${action}d successfully.`,
+            product: updatedProduct,
+        });
+
+    } catch (error) {
+        console.error(`Error processing ${req.params.action} product:`, error);
+        
+        if (error.name === 'CastError') {
+             return res.status(400).json({ 
+                success: false, 
+                message: "Invalid Product ID format." 
+            });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Server Error while updating product status.",
+            error: error.message,
+        });
+    }
+});
 app.get("/api/products", async (req, res) => {
   try {
     // Fetch products and populate vendor and category details
@@ -1033,31 +1128,44 @@ app.get("/api/products", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+// Assuming Category and Products models are correctly imported
+
 app.get("/api/products/:category", async (req, res) => {
-  try {
-    const categoryName = req.params.category;
+    try {
+        const categoryName = req.params.category;
 
-    // Find the category document by name
-    const foundCategory = await Category.findOne({ name: categoryName });
-    if (!foundCategory) {
-      return res.json([]); // No products if category doesn't exist
+        // 1. Find the category document by name
+        const foundCategory = await Category.findOne({ name: categoryName });
+        if (!foundCategory) {
+            // Return empty array if category doesn't exist
+            return res.json([]); 
+        }
+
+        // 2. Find products with this category ID AND status: 'Approved'
+        const products = await Products.find({ 
+            category: foundCategory._id,
+            status: 'Approved' // 👈 CRITICAL: Filter by Approved status
+        })
+        .populate("category", "name")
+        .populate("vendorId", "name"); // 👈 Recommended: Populate vendor name if needed
+
+        // 3. Add categoryName field for convenience
+        const productsWithCategoryName = products.map((p) => ({
+            ...p._doc,
+            categoryName: p.category?.name || "Unknown"
+        }));
+
+        res.json({
+            success: true,
+            products: productsWithCategoryName
+        });
+    } catch (err) {
+        console.error("Error fetching products by category:", err);
+        res.status(500).json({ 
+            success: false,
+            error: err.message 
+        });
     }
-
-    // Find products with this category ID
-    const products = await Products.find({ category: foundCategory._id })
-      .populate("category", "name"); // populate category name
-
-    // Add categoryName field for convenience
-    const productsWithCategoryName = products.map((p) => ({
-      ...p._doc,
-      categoryName: p.category?.name || "Unknown"
-    }));
-
-    res.json(productsWithCategoryName);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
 });
 app.get('/api/product/:id', async (req, res) => {
     try {

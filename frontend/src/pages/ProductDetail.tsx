@@ -100,7 +100,7 @@ const ProductDetail = () => {
             userId: user.id,
             productId: product._id,
             name: product.itemName,
-            price: product.afterDiscount,
+            price: product.finalAmount,
             image: product.images?.[0],
             quantity,
             selectedColor,
@@ -131,10 +131,10 @@ const ProductDetail = () => {
             return;
         }
 
-        const subtotal = product.afterDiscount * quantity;
+        const subtotal = product.finalAmount * quantity;
         const discountAmount =
-            product.salesPrice > product.afterDiscount
-                ? (product.salesPrice - product.afterDiscount) * quantity
+            product.userPrice > product.afterDiscount
+                ? (product.userPrice - product.afterDiscount) * quantity
                 : 0;
         const shipping = subtotal > 0 ? 50 : 0;
         const total = subtotal + shipping;
@@ -260,8 +260,8 @@ const ProductDetail = () => {
 
                         <div className="mb-6">
                             <div className="flex items-baseline gap-3">
-                                <span className="text-5xl font-bold text-navy">{formatCurrency(product.afterDiscount)}</span>
-                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.salesPrice)}</span>
+                                <span className="text-5xl font-bold text-navy">{formatCurrency(product.finalAmount)}</span>
+                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.userPrice)}</span>
                             </div>
                         </div>
 
