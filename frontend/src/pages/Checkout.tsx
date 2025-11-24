@@ -41,46 +41,19 @@ const Checkout = () => {
   const [walletBalance, setWalletBalance] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Cart and order details - IMPROVED WITH BETTER FALLBACKS
+  // Cart and order details
   const cartData = location.state || {};
-  
-  // Calculate order details with proper fallbacks
-  const calculateOrderDetails = () => {
-    const items = cartData.cartItems || cartData.items || [];
-    
-    // Calculate subtotal from items
-    const subtotal = items.reduce((total, item) => {
-      const price = item.price || item.finalAmount || item.salesPrice || item.afterDiscount || item.userPrice || 0;
-      const quantity = item.quantity || 1;
-      return total + (price * quantity);
-    }, 0);
-    
-    const discount = cartData.discount || cartData.totalDiscount || 0;
-    const shipping = cartData.shipping || cartData.shippingFee || 0;
-    
-    // Calculate total properly
-    const total = Math.max(0, subtotal - discount + shipping);
-    
-    return {
-      items,
-      subtotal,
-      discount,
-      shipping,
-      total
-    };
-  };
+  const [orderDetails, setOrderDetails] = useState({
+    items: cartData.cartItems || [],
+    subtotal: cartData.subtotal || 0,
+    discount: cartData.discount || 0,
+    shipping: cartData.shipping || 0,
+    total: cartData.total || 0,
+  });
 
-  const [orderDetails, setOrderDetails] = useState(calculateOrderDetails());
-
-  // Update order details when cartData changes
+  // Redirect if cart is empty
   useEffect(() => {
-    setOrderDetails(calculateOrderDetails());
-  }, [cartData]);
-
-  // Redirect if cart is empty - IMPROVED CHECK
-  useEffect(() => {
-    const items = cartData.cartItems || cartData.items || [];
-    if (items.length === 0) {
+    if (!cartData.cartItems || cartData.cartItems.length === 0) {
       toast({
         title: "Cart is empty",
         description: "Redirecting to cart...",
@@ -239,18 +212,17 @@ const Checkout = () => {
     try {
       const user = JSON.parse(localStorage.getItem("user"));
       const token = localStorage.getItem("token");
-      
-      // IMPROVED ITEM MAPPING WITH BETTER FALLBACKS
       const mappedItems = orderDetails.items.map(item => ({
-        productId: item._id || item.productId,
-        name: item.itemName || item.name,
-        price: item.price || item.finalAmount || item.salesPrice || 0,
-        quantity: item.quantity || 1,
-        image: item.images?.[0] || item.image || "/placeholder.png",
-        discount: item.discount || 0,
-        commission: item.commission || 0,
-        finalAmount: item.finalAmount || (item.afterDiscount || item.userPrice || item.price || 0) - (item.commission || 0),
-      }));
+  productId: item._id,
+  name: item.itemName,
+  price: item.price || item.finalAmount || 0,
+  quantity: item.quantity || 1,
+  image: item.images?.[0] || "/placeholder.png",
+  discount: item.discount || 0,
+  commission: item.commission || 0,
+  finalAmount: item.finalAmount || (item.afterDiscount || item.userPrice) - (item.commission || 0),
+}));
+
 
       const orderData = {
         userId: user.id,
@@ -264,16 +236,8 @@ const Checkout = () => {
               : `TXN_${Date.now()}`,
         },
         orderItems: mappedItems,
-        orderSummary: {
-          items: mappedItems,
-          subtotal: orderDetails.subtotal,
-          discount: orderDetails.discount,
-          shipping: orderDetails.shipping,
-          total: orderDetails.total,
-        },
+        orderSummary: orderDetails,
       };
-
-      console.log("Sending order data:", orderData); // Debug log
 
       const res = await fetch("https://api.apexbee.in/api/orders", {
         method: "POST",
@@ -283,10 +247,7 @@ const Checkout = () => {
         },
         body: JSON.stringify(orderData),
       });
-      
       const result = await res.json();
-      console.log("Order response:", result); // Debug log
-      
       if (!res.ok) throw new Error(result.message || "Order failed");
 
       // Deduct wallet
@@ -301,21 +262,14 @@ const Checkout = () => {
         });
       }
 
-      // IMPROVED NAVIGATION WITH FALLBACK DATA
-      navigate("/order-success", {
-        state: { 
-          order: result.order || {
-            ...orderData,
-            _id: `temp_${Date.now()}`,
-            orderNumber: `ORD-${Date.now()}`,
-            status: 'pending'
-          },
-          paymentMethod: selectedPayment,
-        },
-      });
+   navigate("/order-success", {
+  state: { 
+    order: result.order, // pass the whole order object
+    paymentMethod: selectedPayment,
+  },
+});
 
     } catch (err) {
-      console.error("Order error:", err);
       toast({
         title: "Order Failed",
         description: err.message || "Failed to place order",
@@ -468,22 +422,28 @@ const Checkout = () => {
               </RadioGroup>
             </div>
           </div>
-          
           {/* Right: Order Summary */}
           <div className="lg:col-span-1">
+            {" "}
             <div className="bg-muted/30 rounded-lg p-6 sticky top-4">
+              {" "}
               <div className="mb-6">
+                {" "}
                 <h3 className="font-semibold text-lg mb-4">
                   Product Details
-                </h3>
+                </h3>{" "}
                 <div className="space-y-4">
+                  {" "}
                   {orderDetails.items.map((item, index) => (
                     <div
                       key={item._id || item.productId || index}
                       className="bg-white rounded-lg border p-4"
                     >
+                      {" "}
                       <div className="flex gap-4">
+                        {" "}
                         <div className="w-20 h-20 bg-muted rounded-md flex-shrink-0 overflow-hidden">
+                          {" "}
                           <img
                             src={
                               item.images?.[0] ||
@@ -492,64 +452,62 @@ const Checkout = () => {
                             }
                             alt={item.itemName || item.name}
                             className="w-full h-full object-cover"
-                          />
-                        </div>
+                          />{" "}
+                        </div>{" "}
                         <div className="flex-1 min-w-0">
+                          {" "}
                           <h4 className="font-semibold text-sm mb-1 truncate">
                             {item.itemName || item.name}
-                          </h4>
+                          </h4>{" "}
                           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                            <span>Qty: {item.quantity || 1}</span>
+                            {" "}
+                            <span>Qty: {item.quantity || 1}</span>{" "}
                             {item.selectedColor && (
                               <span>Color: {item.selectedColor}</span>
-                            )}
-                            {item.size && <span>Size: {item.size}</span>}
-                          </div>
+                            )}{" "}
+                            {item.size && <span>Size: {item.size}</span>}{" "}
+                          </div>{" "}
                           <p className="font-semibold text-sm">
-                            ₹{((item.price || item.finalAmount || item.salesPrice || 0) * (item.quantity || 1)).toFixed(2)}
-                          </p>
-                        </div>
-                      </div>
+                                 <span>₹{((item.price || item.finalAmount || item.salesPrice) * (item.quantity || 1)).toFixed(2)}</span>
+
+                          </p>{" "}
+                        </div>{" "}
+                      </div>{" "}
                     </div>
-                  ))}
-                </div>
-              </div>
-              
-              {/* Order Summary */}
-              <div className="border-t border-gray-200 pt-4 space-y-2">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <span>₹{orderDetails.subtotal.toFixed(2)}</span>
-                </div>
+                  ))}{" "}
+                </div>{" "}
+              </div>{" "}
+              {/* Order Summary */}{" "}
+           {/* Order Summary */}
+<div className="border-t border-gray-200 pt-4 space-y-2">
+  <div className="flex justify-between">
+    <span>Subtotal</span>
+    <span>₹{orderDetails.subtotal.toFixed(2)}</span>
+  </div>
 
-                {orderDetails.discount > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Discount</span>
-                    <span>-₹{orderDetails.discount.toFixed(2)}</span>
-                  </div>
-                )}
+ 
+  <div className="flex justify-between">
+    <span>Shipping</span>
+    <span>₹{orderDetails.shipping.toFixed(2)}</span>
+  </div>
 
-                <div className="flex justify-between">
-                  <span>Shipping</span>
-                  <span>₹{orderDetails.shipping.toFixed(2)}</span>
-                </div>
-
-                <div className="flex justify-between font-semibold text-lg border-t border-gray-200 pt-2">
-                  <span>Total</span>
-                  <span>₹{orderDetails.total.toFixed(2)}</span>
-                </div>
-              </div>
+  <div className="flex justify-between font-semibold text-lg">
+    <span>Total</span>
+    <span>₹{orderDetails.total.toFixed(2)}</span>
+  </div>
+</div>
 
               <Button
                 className="w-full mt-6"
                 onClick={handlePlaceOrder}
                 disabled={isLoading}
               >
-                {isLoading ? "Processing..." : "Place Order"}
-              </Button>
-            </div>
-          </div>
-        </div>
+                {" "}
+                {isLoading ? "Processing..." : "Place Order"}{" "}
+              </Button>{" "}
+            </div>{" "}
+          </div>{" "}
+        </div>{" "}
       </div>
 
       {/* Address Dialog */}
