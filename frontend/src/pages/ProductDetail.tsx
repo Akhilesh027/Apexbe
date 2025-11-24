@@ -24,7 +24,8 @@ const initialProduct = {
     salesPrice: 0,
     afterDiscount: 0,
     discount: 0,
-    images: ["/placeholder.svg"],
+    // Note: Added more placeholders for demonstration
+    images: ["/placeholder.svg", "/placeholder-2.svg", "/placeholder-3.svg", "/placeholder-4.svg"], 
     rating: 4,
     vendorId: null,
     description: "Product details loading...",
@@ -39,6 +40,8 @@ const ProductDetail = () => {
     const [loading, setLoading] = useState(true);
     const [selectedColor, setSelectedColor] = useState("orange");
     const [quantity, setQuantity] = useState(1);
+    // 1. NEW STATE: To track the currently selected image
+    const [mainImageIndex, setMainImageIndex] = useState(0); 
 
     const colors = [
         { name: "orange", hex: "#ff8c42" },
@@ -59,6 +62,8 @@ const ProductDetail = () => {
                 if (res.ok || data) {
                     setProduct(data);
                     fetchSimilarProducts(data.categoryName, data._id);
+                    // Reset main image index on product change
+                    setMainImageIndex(0); 
                 } else {
                     setProduct(initialProduct);
                 }
@@ -178,17 +183,58 @@ const ProductDetail = () => {
             {/* Product Detail */}
             <section className="container mx-auto px-4 py-8">
                 <div className="grid md:grid-cols-2 gap-12">
-                    {/* Images & Colors */}
+                    {/* Images & Colors - MODIFIED */}
                     <div>
+                        {/* Main Image */}
                         <div className="bg-blue-light rounded-2xl overflow-hidden mb-4">
+                            {/* 2. UPDATED: Use mainImageIndex to display the selected image */}
                             <img
-                                src={product.images?.[0] || "/placeholder.svg"}
+                                src={product.images?.[mainImageIndex] || "/placeholder.svg"}
                                 alt={product.itemName}
                                 className="aspect-[3/4] w-full object-cover"
                             />
                         </div>
 
-                      
+                        {/* 3. NEW: Image Thumbnails */}
+                        <div className="flex gap-3 overflow-x-auto pb-2">
+                            {product.images?.map((image, index) => (
+                                <div
+                                    key={index}
+                                    className={`w-20 h-20 bg-blue-light rounded-lg overflow-hidden flex-shrink-0 cursor-pointer p-1 transition-all ${
+                                        index === mainImageIndex ? 'border-2 border-accent' : 'border border-gray-300'
+                                    }`}
+                                    // Set the clicked image as the main image
+                                    onClick={() => setMainImageIndex(index)}
+                                >
+                                    <img
+                                        src={image}
+                                        alt={`Thumbnail ${index + 1}`}
+                                        className="w-full h-full object-cover rounded-md"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* 4. NEW: Color Selection */}
+                        <div className="mt-8">
+                            <span className="text-sm font-semibold text-navy block mb-2">Color: {selectedColor}</span>
+                            <div className="flex gap-3">
+                                {colors.map((color) => (
+                                    <div
+                                        key={color.name}
+                                        className={`w-8 h-8 rounded-full border-2 cursor-pointer transition-all ${
+                                            selectedColor === color.name ? 'border-accent p-0.5' : 'border-gray-300 p-0.5'
+                                        }`}
+                                        onClick={() => setSelectedColor(color.name)}
+                                    >
+                                        <div
+                                            className="w-full h-full rounded-full"
+                                            style={{ backgroundColor: color.hex }}
+                                        ></div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
 
                     {/* Product Info */}
@@ -215,7 +261,7 @@ const ProductDetail = () => {
                         <div className="mb-6">
                             <div className="flex items-baseline gap-3">
                                 <span className="text-5xl font-bold text-navy">{formatCurrency(product.afterDiscount)}</span>
-                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.userPrice)}</span>
+                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.salesPrice)}</span>
                             </div>
                         </div>
 

@@ -44,15 +44,17 @@ const Navbar = () => {
 
         {/* RIGHT SIDE BUTTONS */}
         <div className="flex items-center gap-4">
+          <Link to='/orders'>
           <Button variant="ghost" className="text-primary-foreground hover:bg-primary/90">
             <ShoppingBag className="h-5 w-5 mr-2" />
-            My Orders
-          </Button>
+            new orders
+          </Button></Link>
 
+        <Link to='/orders'>
           <Button variant="ghost" className="text-primary-foreground hover:bg-primary/90">
             <ShoppingBag className="h-5 w-5 mr-2" />
-            Items in Bag
-          </Button>
+            pending orders
+          </Button></Link>
 
           <Link to="/profile">
             <Button variant="secondary" className="rounded-full">

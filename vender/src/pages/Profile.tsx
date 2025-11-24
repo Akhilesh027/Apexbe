@@ -4,22 +4,35 @@ import AppLayout from "@/components/AppLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 
 const Profile = () => {
-  const [user, setUser] = useState(null);
   const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [vendor, setVendor] = useState(null);
 
-  // Load user details from localStorage
+  // Load user and vendor data
   useEffect(() => {
-    const userData = localStorage.getItem("vendor");
-    if (userData) {
-      setUser(JSON.parse(userData));
+    // Dummy user
+    const dummyUser = {
+      name: "Akhilesh Reddy",
+      email: "akhilesh@example.com",
+      phone: "+91 9550379505",
+    };
+    setUser(dummyUser);
+
+    // Load Vendor Details from LocalStorage
+    const storedVendor = localStorage.getItem("vendor");
+    if (storedVendor) {
+      setVendor(JSON.parse(storedVendor));
     }
   }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("vendor");
+    localStorage.removeItem("vendorId");
+    localStorage.removeItem("businessLogo");
+    localStorage.removeItem("businessName");
     navigate("/login");
   };
 
@@ -42,14 +55,30 @@ const Profile = () => {
             <div className="flex items-center gap-4">
               <Avatar className="h-16 w-16">
                 <AvatarFallback className="bg-muted text-2xl">
-                  {user?.name ? user.name.charAt(0).toUpperCase() : "U"}
+                  {vendor?.name
+                    ? vendor.name.charAt(0).toUpperCase()
+                    : user?.name
+                    ? user.name.charAt(0).toUpperCase()
+                    : "U"}
                 </AvatarFallback>
               </Avatar>
 
               <div>
-                <h2 className="text-xl font-bold">{user?.name || "User Name"}</h2>
-                <p className="text-sm text-muted-foreground">{user?.email || ""}</p>
-                <Button variant="link" className="p-0 h-auto text-sm">Try Premium</Button>
+                <h2 className="text-xl font-bold">
+                  {vendor?.name || user?.name || "User Name"}
+                </h2>
+
+                <p className="text-sm text-muted-foreground">
+                  {vendor?.email || user?.email || ""}
+                </p>
+
+                <p className="text-sm">
+                  {vendor?.phoneNumber || user?.phone || ""}
+                </p>
+
+                <Button variant="link" className="p-0 h-auto text-sm">
+                  Try Premium
+                </Button>
               </div>
             </div>
 
@@ -68,10 +97,10 @@ const Profile = () => {
             </div>
           </div>
 
-          <div className="text-sm text-muted-foreground mb-6">
-            Address: {user?.address || "Not Added"}
-          </div>
+          {/* Vendor Details Section */}
+        
 
+          {/* Earnings Section */}
           <div className="grid grid-cols-3 gap-6">
             <div className="border rounded-lg p-4">
               <div className="text-sm mb-2">My Income</div>
@@ -98,7 +127,7 @@ const Profile = () => {
           </div>
         </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg-grid-cols-3 gap-6 mb-8">
           {accountOptions.map((option, index) => (
             <Link key={index} to={option.link}>
               <Card className="p-6 hover:shadow-lg transition-shadow h-full">

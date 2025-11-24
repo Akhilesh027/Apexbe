@@ -171,57 +171,71 @@ const Category = () => {
       </div>
 
       {/* Products Grid */}
-      <section className="container mx-auto px-4 py-8">
-        <h2 className="text-2xl font-bold text-navy mb-6">Featured {category.name} Products</h2>
+   {/* Products Grid */}
+<section className="container mx-auto px-4 py-8">
+  <h2 className="text-2xl font-bold text-navy mb-6">Featured {category.name} Products</h2>
 
-        {categoryProducts.length === 0 ? (
-          <div className="text-center py-10 text-muted-foreground">
-            No products available in this category yet.
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
-            {categoryProducts.map((product) => (
-              <Link to={`/product/${product._id}`} key={product._id} className="block">
-                <div className="bg-blue-light rounded-lg overflow-hidden h-full flex flex-col hover:shadow-lg transition-shadow">
-                  <div className="aspect-square bg-white/50">
-                    <img
-                      src={product.images?.[0] || "/placeholder-product.png"}
-                      alt={product.itemName || product.name}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="p-4 flex flex-col flex-grow">
-                    <h3 className="font-semibold text-navy mb-2 line-clamp-2">
-                      {product.itemName || product.name}
-                    </h3>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-lg font-bold text-navy">
-                        Rs. {product.finalAmount || product.price}
-                      </span>
-                      {product.userPrice && (
-                        <span className="text-sm text-muted-foreground line-through">
-                          Rs. {product.userPrice}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 mt-2">
-                      <div className="bg-accent text-white text-xs px-2 py-1 rounded">
-                        ⭐ {product.rating || 4.0}
-                      </div>
-                      <span className="text-xs text-muted-foreground">({product.reviews || 0})</span>
-                      {product.tag && (
-                        <div className="ml-auto bg-yellow-banner text-navy text-xs px-2 py-1 rounded font-semibold">
-                          {product.tag}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+  {categoryProducts.length === 0 ? (
+    <div className="text-center py-10 text-muted-foreground">
+      No products available in this category yet.
+    </div>
+  ) : (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
+      {categoryProducts.map((product) => (
+        <Link to={`/product/${product._id}`} key={product._id} className="block">
+          <div className="bg-blue-light rounded-lg overflow-hidden h-[400px] flex flex-col hover:shadow-lg transition-shadow">
+
+            {/* Fixed Image Height */}
+            <div className="h-[250px] bg-white/50 flex items-center justify-center">
+              <img
+                src={product.images?.[0] || "/placeholder-product.png"}
+                alt={product.itemName || product.name}
+                className="w-full h-full object-cover"
+              />
+            </div>
+
+            {/* Content Area */}
+            <div className="p-4 flex flex-col h-full">
+              <h3 className="font-semibold text-navy mb-2 line-clamp-2">
+                {product.itemName || product.name}
+              </h3>
+
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-lg font-bold text-navy">
+                    Rs. {product.finalAmount || product.price}
+                  </span>
+                  {product.userPrice && (
+                    <span className="text-sm text-muted-foreground line-through">
+                      Rs. {product.userPrice}
+                    </span>
+                  )}
                 </div>
-              </Link>
-            ))}
+
+                <div className="flex items-center gap-1 mt-2">
+                  <div className="bg-accent text-white text-xs px-2 py-1 rounded">
+                    ⭐ {product.rating || 4.0}
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    ({product.reviews || 0})
+                  </span>
+
+                  {product.tag && (
+                    <div className="ml-auto bg-yellow-banner text-navy text-xs px-2 py-1 rounded font-semibold">
+                      {product.tag}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
           </div>
-        )}
-      </section>
+        </Link>
+      ))}
+    </div>
+  )}
+</section>
+
 
       {/* Near By Stores */}
       <section className="container mx-auto px-4 py-12 mb-8">

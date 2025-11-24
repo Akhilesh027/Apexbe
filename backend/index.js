@@ -824,6 +824,56 @@ app.get("/api/business/get-business/:vendorId", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+app.patch(
+  "/api/business/update-business/:vendorId",
+  upload.single("logo"),
+  async (req, res) => {
+    try {
+      let updateData = { ...req.body };
+
+      // Convert businessTypes from JSON string → Array
+      if (req.body.businessTypes) {
+        try {
+          updateData.businessTypes = JSON.parse(req.body.businessTypes);
+        } catch (e) {
+          updateData.businessTypes = [];
+        }
+      }
+
+      // Attach logo if file uploaded
+      if (req.file) {
+        updateData.logo = req.file ? req.file.path : "";
+      }
+
+      const updatedBusiness = await Bussiness.findOneAndUpdate(
+        { vendorId: req.params.vendorId },
+        updateData,
+        { new: true }
+      );
+
+      if (!updatedBusiness) {
+        return res.status(404).json({
+          success: false,
+          message: "Business not found",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Business updated successfully",
+        business: updatedBusiness,
+      });
+    } catch (err) {
+      console.error("Update Error:", err);
+      return res.status(500).json({
+        success: false,
+        error: "Server Error",
+      });
+    }
+  }
+);
+
+
 // Generates SKU using vendor initials + product initials + random number
 const generateSKU = (vendorId, itemName) => {
   const vendorPart = vendorId
@@ -842,96 +892,133 @@ const generateSKU = (vendorId, itemName) => {
 const generateSlug = (text) =>
   text.toLowerCase().replace(/ /g, "-") + "-" + Date.now();
 
-
 app.post("/api/products/add-product", upload.array("images", 10), async (req, res) => {
-  try {
-    const {
-      vendorId,
-      itemType,
-      category,
-      subcategory,
-      itemName,
-    
-      gstRate,
-      description,
+    try {
+        const {
+            vendorId,
+            itemType,
+            category,
+            subcategory, // This is the ID of the subdocument
+            itemName,
+            
+            gstRate,
+            description,
 
-      measuringUnit,
-      hsnCode,
-      godown,
-      openStock,
-      asOnDate,
+            measuringUnit,
+            hsnCode,
+            godown,
+            openStock,
+            asOnDate,
 
-      mrp,
-      discount,
-      afterDiscount,
-      commission,
-      finalAmount,
-      priceType,
-    } = req.body;
+            mrp,
+            discount,
+            afterDiscount,
+            commission,
+            finalAmount,
+            priceType,
+        } = req.body;
 
-    // =============================
-    // 🔹 Auto-generated fields
-    // =============================
-    const skuCode = generateSKU(vendorId, itemName);
-    const slug = generateSlug(itemName);
+        // =============================
+        // 🔹 CRITICAL SUBCATEGORY VALIDATION
+        // =============================
+        if (subcategory) {
+            const parentCategory = await Category.findById(category).select('subcategories');
 
-    // =============================
-    // 🔹 Cloudinary image URLs
-    // =============================
-    const images = req.files?.map((f) => f.path) || [];
+            if (!parentCategory) {
+                 return res.status(404).json({
+                    success: false,
+                    message: "Validation Error: Parent category not found.",
+                 });
+            }
+            
+            // Checks if the subcategory ID exists within the embedded array
+            const subcategoryExists = parentCategory.subcategories.some(
+                // Use .toString() for accurate comparison with a string ID from req.body
+                sub => sub._id.toString() === subcategory
+            );
 
-    // =============================
-    // 🔹 Create product document
-    // =============================
-    const product = new Products({
-      vendorId,
+            if (!subcategoryExists) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Validation Error: Subcategory ID is invalid or does not belong to the selected category.",
+                });
+            }
+        }
+        
+        // =============================
+        // 🔹 Auto-generated fields
+        // =============================
+        const skuCode = generateSKU(vendorId, itemName);
+        const slug = generateSlug(itemName);
 
-      // PRODUCT DETAILS
-      itemType: itemType || "product",
-      category,
-      subcategory,
-      itemName,
-      
-      gstRate: Number(gstRate) || 0,
-      description,
-      images,
-      slug,
+        // =============================
+        // 🔹 Cloudinary image URLs
+        // =============================
+        // Assuming req.files contains the results from Cloudinary upload middleware
+        const images = req.files?.map((f) => f.path) || []; 
 
-      // STOCK DETAILS
-      skuCode,
-      measuringUnit,
-      hsnCode,
-      godown,
-      openStock: Number(openStock) || 0,
-      asOnDate,
+        // =============================
+        // 🔹 Create product document
+        // =============================
+        const product = new Products({
+            vendorId,
 
-      userPrice: Number(mrp) || 0,
-      discount: Number(discount) || 0,
-      afterDiscount: Number(afterDiscount) || 0,
-      commission: Number(commission) || 0,
-      finalAmount: Number(finalAmount) || 0,
-      priceType,
-    });
+            // PRODUCT DETAILS
+            itemType: itemType || "product",
+            category,        // ID of the main category
+            subcategory,     // ID of the subcategory (optional)
+            itemName,
+            
+            gstRate: Number(gstRate) || 0,
+            description,
+            images,
+            slug,
 
-    await product.save();
+            // STOCK DETAILS
+            skuCode,
+            // Ensure fields that are only applicable to 'product' type are handled if 'service' is selected
+            measuringUnit: itemType === "service" ? "" : measuringUnit, 
+            hsnCode: itemType === "service" ? "" : hsnCode, 
+            godown: itemType === "service" ? "" : godown, 
+            openStock: itemType === "service" ? 0 : (Number(openStock) || 0),
+            asOnDate: itemType === "service" ? "" : asOnDate,
 
-    return res.json({
-      success: true,
-      message: "Product added successfully",
-      product,
-    });
+            // PRICE DETAILS
+            userPrice: Number(mrp) || 0, // userPrice likely corresponds to mrp
+            discount: Number(discount) || 0,
+            afterDiscount: Number(afterDiscount) || 0,
+            commission: Number(commission) || 0,
+            finalAmount: Number(finalAmount) || 0,
+            priceType,
+        });
 
-  } catch (error) {
-    console.error("Error Adding Product:", error);
+        await product.save();
 
-    return res.status(500).json({
-      success: false,
-      message: "Server Error",
-      error: error.message,
-    });
-  }
+        return res.json({
+            success: true,
+            message: "Product added successfully",
+            product,
+        });
+
+    } catch (error) {
+        console.error("Error Adding Product:", error);
+
+        // Log specific validation errors if Mongoose throws them
+        if (error.name === 'ValidationError') {
+            return res.status(400).json({ 
+                success: false, 
+                message: "Mongoose Validation Failed", 
+                errors: error.errors 
+            });
+        }
+        
+        return res.status(500).json({
+            success: false,
+            message: "Server Error",
+            error: error.message,
+        });
+    }
 });
-
 app.get("/api/products", async (req, res) => {
   try {
     // Fetch products and populate vendor and category details
@@ -1945,34 +2032,107 @@ app.get("/api/subcategories/:id", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch subcategory" });
   }
 });
-app.get("/api/dashboard", async (req, res) => {
+app.post('/api/categories/:categoryId/subcategories', async (req, res) => {
+    try {
+        const { categoryId } = req.params;
+        const { name } = req.body; // Expecting { "name": "New Subcategory Name" }
+
+        if (!name) {
+            return res.status(400).json({ message: 'Subcategory name is required.' });
+        }
+
+        // 1. Check for duplicate subcategory name globally (optional but recommended)
+        const nameExists = await Category.findOne({
+            'subcategories.name': name 
+        });
+        if (nameExists) {
+            return res.status(409).json({ message: 'Subcategory name already exists.' });
+        }
+        
+        // 2. Add the new subcategory using $push
+        const updatedCategory = await Category.findByIdAndUpdate(
+            categoryId,
+            { 
+                $push: { 
+                    subcategories: { name: name } // Mongoose will automatically assign an _id
+                } 
+            },
+            { 
+                new: true, // Return the modified document
+                runValidators: true // Run schema validators on the subdocument
+            }
+        ).select('subcategories'); // Only return the subcategories array or the updated category
+
+        if (!updatedCategory) {
+            return res.status(404).json({ message: 'Category not found.' });
+        }
+        
+        // Find the ID of the new subcategory that Mongoose just created
+        const newSubcategory = updatedCategory.subcategories.find(sub => sub.name === name);
+
+        res.status(201).json({
+            message: 'Subcategory added successfully',
+            updatedCategory: updatedCategory, // Return the full updated category
+            newSubcategoryId: newSubcategory._id // Return the new ID for the frontend to select
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+app.get("/api/dashboard/:vendorId", async (req, res) => {
   try {
-    // Total orders
-    const totalOrders = await Order.countDocuments();
+    const { vendorId } = req.params;
 
-    // Canceled orders
-    const canceledOrders = await Order.countDocuments({ status: "canceled" });
+    // Fetch all orders containing items of this vendor
+    const orders = await Order.find({
+      "orderItems.vendorId": vendorId
+    });
 
-    // Completed orders
-    const completedOrders = await Order.countDocuments({ status: "completed" });
+    if (!orders || orders.length === 0) {
+      return res.json({
+        success: true,
+        stats: {
+          totalOrders: 0,
+          canceledOrders: 0,
+          completedOrders: 0,
+          returnedOrders: 0,
+          profit: 0,
+          loss: 0,
+        },
+      });
+    }
 
-    // Returned orders
-    const returnedOrders = await Order.countDocuments({ status: "returned" });
-
-    // Profit and Loss calculation (example)
-    const completed = await Order.find({ status: "completed" });
+    let totalOrders = 0;
+    let canceledOrders = 0;
+    let completedOrders = 0;
+    let returnedOrders = 0;
     let profit = 0;
-    completed.forEach((order) => {
-      profit += order.totalAmount - (order.cost || 0); // Assuming each order has `totalAmount` and `cost`
-    });
-
-    const canceled = await Order.find({ status: "canceled" });
     let loss = 0;
-    canceled.forEach((order) => {
-      loss += order.totalAmount; // Lost revenue
+
+    orders.forEach(order => {
+      const status = order.orderStatus?.currentStatus;
+
+      // Order counts
+      totalOrders++;
+
+      if (status === "canceled") canceledOrders++;
+      if (status === "completed" || status === "confirmed") completedOrders++;
+      if (status === "returned") returnedOrders++;
+
+      // Calculate profit/loss per item
+      order.orderItems.forEach(item => {
+        if (item.vendorId === vendorId) {
+          const amount = item.itemTotal || 0;
+
+          if (amount >= 0) profit += amount;
+          else loss += Math.abs(amount);
+        }
+      });
     });
 
-    res.json({
+    return res.json({
       success: true,
       stats: {
         totalOrders,
@@ -1981,11 +2141,12 @@ app.get("/api/dashboard", async (req, res) => {
         returnedOrders,
         profit,
         loss,
-      },
+      }
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to fetch dashboard data" });
+
+  } catch (error) {
+    console.error("Error fetching vendor stats:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 app.get("/api/admin/business", async (req, res) => {

@@ -485,11 +485,7 @@ const Checkout = () => {
     <span>₹{orderDetails.subtotal.toFixed(2)}</span>
   </div>
 
-  <div className="flex justify-between">
-    <span>Discount</span>
-    <span>- ₹{orderDetails.discount.toFixed(2)}</span>
-  </div>
-
+ 
   <div className="flex justify-between">
     <span>Shipping</span>
     <span>₹{orderDetails.shipping.toFixed(2)}</span>

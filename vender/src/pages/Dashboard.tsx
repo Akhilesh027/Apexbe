@@ -18,28 +18,36 @@ const Dashboard = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch("https://api.apexbee.in/api/dashboard"); // Replace with your API endpoint
-        const data = await res.json();
-
-        if (res.ok && data.success) {
-          setStats(data.stats);
-        } else {
-          toast.error(data.message || "Failed to fetch dashboard data");
-        }
-      } catch (err) {
-        console.error(err);
-        toast.error("Something went wrong while fetching dashboard stats");
-      } finally {
+useEffect(() => {
+  const fetchStats = async () => {
+    setLoading(true);
+    try {
+      const vendorId = localStorage.getItem("vendorId"); // Get vendorId from localStorage
+      if (!vendorId) {
+        toast.error("Vendor ID not found. Please login again.");
         setLoading(false);
+        return;
       }
-    };
 
-    fetchStats();
-  }, []);
+      const res = await fetch(`https://api.apexbee.in/api/dashboard/${vendorId}`); // Updated endpoint with vendorId
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setStats(data.stats);
+      } else {
+        toast.error(data.message || "Failed to fetch dashboard data");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Something went wrong while fetching dashboard stats");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  fetchStats();
+}, []);
+
 
   if (loading || !stats) {
     return (

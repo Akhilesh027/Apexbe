@@ -23,6 +23,7 @@ const Addproduct = () => {
     const [submitting, setSubmitting] = useState(false);
     const [categoriesLoading, setCategoriesLoading] = useState(false);
     const [subcategoriesLoading, setSubcategoriesLoading] = useState(false);
+    const [addingSubcategory, setAddingSubcategory] = useState(false); // NEW: State for adding a new subcategory
 
     // ITEM TYPE (Product / Service)
     const [itemType, setItemType] = useState("product");
@@ -32,14 +33,16 @@ const Addproduct = () => {
     const [priceType, setPriceType] = useState("product-wise");
 
     // Categories
-    const [categories, setCategories] = useState([]);
+    // Assuming categories will now hold the full category object including its subcategories array
+    const [categories, setCategories] = useState([]); 
     const [subcategories, setSubcategories] = useState([]);
     const [category, setCategory] = useState("");
     const [subcategory, setSubcategory] = useState("");
+    const [newSubcategory, setNewSubcategory] = useState(""); // NEW: Input for adding a new subcategory
 
     // PRODUCT DETAILS
     const [itemName, setItemName] = useState("");
-    const [gstRate, setGstRate] = useState(""); // Stores GST Percentage
+    const [gstRate, setGstRate] = useState(""); 
     const [description, setDescription] = useState("");
     const [images, setImages] = useState([]);
     const [imagePreviews, setImagePreviews] = useState([]);
@@ -59,17 +62,17 @@ const Addproduct = () => {
 
     // PRICE DETAILS
     const [mrp, setMrp] = useState("");
-    const [discount, setDiscount] = useState(""); // Stores Discount Percentage
+    const [discount, setDiscount] = useState(""); 
     const [afterDiscount, setAfterDiscount] = useState("");
     const [finalAmount, setFinalAmount] = useState("");
     const [commission] = useState(20);
 
     // 💰 NEW STATES for Flexible Pricing Calculations
-    const [gstAmount, setGstAmount] = useState(""); // Stores GST Fixed Amount (Calculated or Input)
-    const [discountAmount, setDiscountAmount] = useState(""); // Stores Discount Fixed Amount (Calculated or Input)
+    const [gstAmount, setGstAmount] = useState(""); 
+    const [discountAmount, setDiscountAmount] = useState(""); 
 
-    const [gstInputType, setGstInputType] = useState('percentage'); // 'percentage' or 'amount'
-    const [discountInputType, setDiscountInputType] = useState('percentage'); // 'percentage' or 'amount'
+    const [gstInputType, setGstInputType] = useState('percentage'); 
+    const [discountInputType, setDiscountInputType] = useState('percentage'); 
 
     /* ---------------- FETCH BUSINESS ---------------- */
     useEffect(() => {
@@ -102,31 +105,64 @@ const Addproduct = () => {
     useEffect(() => {
         setCategoriesLoading(true);
         axios
+            // Assuming this endpoint now returns the category object *with* its embedded subcategories array
             .get("https://api.apexbee.in/api/categories")
             .then((res) => setCategories(res.data.categories || []))
             .catch(console.error)
             .finally(() => setCategoriesLoading(false));
     }, []);
 
-    /* ---------------- FETCH SUBCATEGORIES ---------------- */
+    /* ---------------- POPULATE SUBCATEGORIES ON CATEGORY CHANGE ---------------- */
     useEffect(() => {
-        if (!category) {
+        setSubcategory(""); // Reset subcategory selection
+        const selectedCategory = categories.find(cat => cat._id === category);
+
+        if (selectedCategory && selectedCategory.subcategories) {
+            setSubcategories(selectedCategory.subcategories);
+        } else {
             setSubcategories([]);
-            setSubcategory("");
-            return;
         }
-        setSubcategoriesLoading(true);
-        axios
-            .get(`https://api.apexbee.in/api/subcategories/${category}`)
-            .then((res) => {
-                setSubcategories(res.data.subcategories || []);
-            })
-            .catch(console.error)
-            .finally(() => setSubcategoriesLoading(false));
-    }, [category]);
+    }, [category, categories]);
 
 
-    // 💰 NEW HANDLERS for Price Input Types
+    /* ---------------- NEW: ADD SUBCATEGORY HANDLER ---------------- */
+  // Inside the addNewSubcategory function in Addproduct.jsx
+
+const addNewSubcategory = async () => {
+    const subName = newSubcategory.trim();
+    if (!subName || !category) {
+        alert("Please select a category and enter a subcategory name.");
+        return;
+    }
+
+    setAddingSubcategory(true);
+    try {
+        const res = await axios.post(
+            // API call now uses the parent category ID in the URL
+            `https://api.apexbee.in/api/categories/${category}/subcategories`, 
+            { name: subName } // Send the new subcategory name in the body
+        );
+
+        // Update local state based on the response
+        setCategories(prevCategories => 
+            prevCategories.map(cat => 
+                cat._id === category ? res.data.updatedCategory : cat
+            )
+        );
+
+        // Set the newly created subcategory as selected
+        setSubcategory(res.data.newSubcategoryId); 
+
+        setNewSubcategory(""); 
+        alert(`${subName} added successfully to the category!`);
+
+    } catch (err) {
+        // ... error handling
+    } finally {
+        setAddingSubcategory(false);
+    }
+};
+    // 💰 NEW HANDLERS for Price Input Types (Keeping for completeness)
     const handleGstRateChange = (value) => {
         setGstInputType('percentage');
         setGstRate(value);
@@ -147,12 +183,12 @@ const Addproduct = () => {
         setDiscountAmount(e.target.value);
     };
 
-    /* ---------------- PRICE CALCULATIONS WITH GST ---------------- */
+    /* ---------------- PRICE CALCULATIONS WITH GST (Keeping for completeness) ---------------- */
     useEffect(() => {
+        // ... (existing price calculation logic)
         if (priceType === "order-wise") {
             setAfterDiscount("");
             setFinalAmount("");
-            // Don't reset gstRate/discount/mrp as they might be needed if priceType switches back
             return;
         }
 
@@ -180,7 +216,6 @@ const Addproduct = () => {
                 setGstRate(isNaN(actualGstRate) || !isFinite(actualGstRate) ? "" : actualGstRate.toFixed(2));
             }
         } else {
-            // Reset if GST is not applicable
             setGstRate("");
             setGstAmount("");
         }
@@ -211,21 +246,21 @@ const Addproduct = () => {
     }, [mrp, discount, gstRate, priceType, commission, gstInputType, gstAmount, discountInputType, discountAmount, business]);
 
 
-    /* ---------------- IMAGE HANDLER WITH PREVIEW ---------------- */
+    /* ---------------- IMAGE HANDLER WITH PREVIEW (Keeping for completeness) ---------------- */
     const handleImageUpload = (e) => {
+        // ... (existing image logic)
         const files = Array.from(e.target.files);
         setImages(files);
 
-        // Create preview URLs
         const previewUrls = files.map(file => URL.createObjectURL(file));
         setImagePreviews(previewUrls);
     };
 
     const removeImage = (index) => {
+        // ... (existing image logic)
         const newImages = [...images];
         const newPreviews = [...imagePreviews];
 
-        // Revoke object URL to prevent memory leaks
         URL.revokeObjectURL(newPreviews[index]);
 
         newImages.splice(index, 1);
@@ -235,7 +270,7 @@ const Addproduct = () => {
         setImagePreviews(newPreviews);
     };
 
-    /* ---------------- ADD GODOWN ---------------- */
+    /* ---------------- ADD GODOWN (Keeping for completeness) ---------------- */
     const addGodown = () => {
         const v = newGodown.trim();
         if (!v) return;
@@ -244,7 +279,7 @@ const Addproduct = () => {
         setNewGodown("");
     };
 
-    /* ---------------- ADD MEASURING UNIT ---------------- */
+    /* ---------------- ADD MEASURING UNIT (Keeping for completeness) ---------------- */
     const addMeasureUnit = () => {
         const v = customUnitInput.trim();
         if (!v) return;
@@ -253,7 +288,7 @@ const Addproduct = () => {
         setCustomUnitInput("");
     };
 
-    /* ---------------- STEP NAVIGATION ---------------- */
+    /* ---------------- STEP NAVIGATION (Keeping for completeness) ---------------- */
     const nextStep = () => {
         if (currentStep === 1 && (!category || !itemName)) {
             alert("Please fill required fields (Category & Item Name).");
@@ -266,7 +301,7 @@ const Addproduct = () => {
         setCurrentStep(prev => prev - 1);
     };
 
-    /* ---------------- SUBMIT HANDLER ---------------- */
+    /* ---------------- SUBMIT HANDLER (Keeping for completeness) ---------------- */
     const handleSubmit = async () => {
         if (!category || !itemName) {
             alert("Please fill required fields (Category & Item Name).");
@@ -279,15 +314,12 @@ const Addproduct = () => {
         fd.append("vendorId", vendorId);
         fd.append("itemType", itemType);
         fd.append("category", category);
-        fd.append("subcategory", subcategory);
+        fd.append("subcategory", subcategory); // Send selected subcategory ID/Name
         fd.append("itemName", itemName);
 
-        // Send the percentage rate to the backend, which is always calculated/maintained
-        fd.append("gstRate", gstRate || ""); 
+        fd.append("gstRate", gstRate || "");
         
         fd.append("description", description || "");
-
-        /* ❌ DON'T SEND SKU — Backend will generate automatically */
 
         fd.append("measuringUnit", itemType === "Service" ? "" : measuringUnit);
         fd.append("hsnCode", itemType === "Service" ? "" : hsnCode);
@@ -296,7 +328,7 @@ const Addproduct = () => {
         fd.append("asOnDate", itemType === "Service" ? "" : asOnDate);
 
         fd.append("mrp", mrp || "");
-        fd.append("discount", discount || ""); // Send the discount percentage
+        fd.append("discount", discount || ""); 
         fd.append("afterDiscount", afterDiscount || "");
         fd.append("commission", commission || 0);
         fd.append("finalAmount", finalAmount || "");
@@ -321,7 +353,7 @@ const Addproduct = () => {
         }
     };
 
-    /* ---------------- LOADING COMPONENTS ---------------- */
+    /* ---------------- LOADING COMPONENTS (Keeping for completeness) ---------------- */
     const LoadingSpinner = ({ size = "default" }) => (
         <div className={`flex items-center justify-center ${
             size === "sm" ? "py-1" : "py-4"
@@ -339,7 +371,7 @@ const Addproduct = () => {
         </div>
     );
 
-    /* ---------------- STEP INDICATOR ---------------- */
+    /* ---------------- STEP INDICATOR (Keeping for completeness) ---------------- */
     const StepIndicator = () => (
         <div className="flex justify-center mb-8">
             <div className="flex items-center">
@@ -438,7 +470,53 @@ const Addproduct = () => {
                             )}
                         </div>
 
-                        {/* SUBCATEGORY - OMITTED for brevity/original intent, but can be re-added if needed */}
+                        {/* NEW: SUBCATEGORY */}
+                        {category && (
+                            <div className="bg-card p-6 rounded-lg border">
+                                <Label className="font-bold text-lg">Subcategory</Label>
+                                <div className="mt-3 space-y-4">
+                                    {/* Existing Subcategories Selector */}
+                                    {subcategoriesLoading ? (
+                                        <SkeletonLoader />
+                                    ) : (
+                                        <Select value={subcategory} onValueChange={setSubcategory} disabled={!category || submitting}>
+                                            <SelectTrigger className="h-12">
+                                                <SelectValue placeholder="Select Subcategory (Optional)" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {subcategories.map((sub) => (
+                                                    // Assuming subcategory model includes an _id 
+                                                    <SelectItem key={sub._id} value={sub._id}> 
+                                                        {sub.name}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    )}
+
+                                    {/* Add New Subcategory Form */}
+                                    <div className="p-2 border-t mt-1">
+                                        <Label className="font-semibold text-sm block mb-2">Add New Subcategory</Label>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                placeholder="Enter new subcategory name"
+                                                value={newSubcategory}
+                                                onChange={(e) => setNewSubcategory(e.target.value)}
+                                                className="h-10"
+                                                disabled={submitting || addingSubcategory}
+                                            />
+                                            <Button 
+                                                onClick={addNewSubcategory} 
+                                                className="h-10" 
+                                                disabled={submitting || addingSubcategory || !category}
+                                            >
+                                                {addingSubcategory ? <LoadingSpinner size="sm" /> : "+ Add"}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         {/* ITEM NAME */}
                         <div className="bg-card p-6 rounded-lg border">
@@ -558,7 +636,7 @@ const Addproduct = () => {
                     </div>
                 )}
 
-                {/* STEP 2: STOCK SECTION */}
+                {/* STEP 2: STOCK SECTION (Keeping for completeness) */}
                 {currentStep === 2 && itemType === "product" && (
                     <div className="space-y-6">
                         <h2 className="text-2xl font-bold text-center mb-6">Stock Details</h2>
@@ -688,7 +766,7 @@ const Addproduct = () => {
                     </div>
                 )}
 
-                {/* STEP 3: PRICE SECTION */}
+                {/* STEP 3: PRICE SECTION (Keeping for completeness) */}
                 {currentStep === 3 && (
                     <div className="space-y-6">
                         <h2 className="text-2xl font-bold text-center mb-6">Price Details</h2>
