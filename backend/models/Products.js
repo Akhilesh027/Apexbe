@@ -92,7 +92,7 @@ const productSchema = new mongoose.Schema(
         // 🌟 NEW FIELD: Product approval status
         status: {
             type: String,
-            enum: ['Pending', 'Approved', 'Rejected', 'Draft'],
+            enum: ['Pending', 'Approved','Vendor Confirmed','Vendor Rejected','Admin Approved','Admin Rejected', 'Rejected', 'Draft'],
             default: 'Pending', // New products start as Pending
             required: true
         },

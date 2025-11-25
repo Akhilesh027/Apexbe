@@ -1033,87 +1033,141 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
 app.post("/api/products/:id/:action", async (req, res) => {
     try {
         const { id, action } = req.params;
-        const { commission } = req.body; // Commission is sent in body only for 'approve' action
+        const { commission } = req.body;
 
-        // 1. Validate the action parameter
+        // Validate action
         if (!['approve', 'reject'].includes(action)) {
-            return res.status(400).json({ 
-                success: false, 
-                message: "Invalid action specified. Must be 'approve' or 'reject'." 
+            return res.status(400).json({
+                success: false,
+                message: "Invalid action specified. Must be 'approve' or 'reject'."
             });
         }
 
-        // 2. Find the product by ID
+        // Find product
         const product = await Products.findById(id);
 
         if (!product) {
-            return res.status(404).json({ 
-                success: false, 
-                message: "Product not found." 
+            return res.status(404).json({
+                success: false,
+                message: "Product not found."
             });
         }
-        
-        // 3. Determine the update fields based on the action
+
         let updateFields = {};
 
-        if (action === 'reject') {
-            updateFields.status = 'Rejected';
-            updateFields.commission = 0; // Reset commission on rejection
-            updateFields.finalAmount = product.afterDiscount; // If rejected, final amount is essentially the sale price (no commission deducted)
+        // ---------- REJECT ----------
+        if (action === "reject") {
+            updateFields.status = "Admin Rejected";
+            updateFields.commission = 0;
+            updateFields.finalAmount = product.afterDiscount;
+        }
 
-        } else if (action === 'approve') {
+        // ---------- APPROVE ----------
+        if (action === "approve") {
             const commissionRate = Number(commission);
 
-            // Validation for commission rate
             if (isNaN(commissionRate) || commissionRate < 0) {
-                 return res.status(400).json({ 
-                    success: false, 
-                    message: "Valid non-negative commission rate is required for approval." 
+                return res.status(400).json({
+                    success: false,
+                    message: "Valid non-negative commission rate is required for approval."
                 });
             }
 
-            // Calculate Final Vendor Amount after the Admin's set commission.
-            // Formula: Final Payout = AfterDiscount * (1 - Commission Rate / 100)
+            // Final vendor payout calculation
             const finalSalePrice = product.afterDiscount || 0;
-            const commissionFactor = 1 - (commissionRate / 100);
-            const finalAmountAfterCommission = finalSalePrice * commissionFactor;
-            
-            updateFields.status = 'Approved';
+            const finalAmountAfterCommission =
+                finalSalePrice * (1 - commissionRate / 100);
+
+            updateFields.status = "Admin Approved";    // 🔥 UPDATED STATUS
             updateFields.commission = commissionRate;
-            // Store the final calculated amount the vendor receives.
             updateFields.finalAmount = parseFloat(finalAmountAfterCommission.toFixed(2));
         }
 
-        // 4. Update the database record
+        // Update DB
         const updatedProduct = await Products.findByIdAndUpdate(
             id,
             { $set: updateFields },
-            { new: true, runValidators: true } // 'new: true' returns the updated document
+            { new: true, runValidators: true }
         );
 
         return res.json({
             success: true,
-            message: `Product ${action}d successfully.`,
-            product: updatedProduct,
+            message: `Product ${action === "approve" ? "approved" : "rejected"} successfully.`,
+            product: updatedProduct
         });
 
     } catch (error) {
         console.error(`Error processing ${req.params.action} product:`, error);
-        
-        if (error.name === 'CastError') {
-             return res.status(400).json({ 
-                success: false, 
-                message: "Invalid Product ID format." 
+
+        if (error.name === "CastError") {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid Product ID format."
             });
         }
 
         return res.status(500).json({
             success: false,
             message: "Server Error while updating product status.",
-            error: error.message,
+            error: error.message
         });
     }
 });
+// OLD ROUTE (Vendor Confirm) -> NOW UPDATED TO DIRECT APPROVAL
+app.post("/api/products/vendor/confirm/:id", async (req, res) => {
+  try {
+    const product = await Products.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    // DIRECT APPROVAL (no vendor confirmation)
+    product.status = "Approved";
+    await product.save();
+
+    return res.json({
+      success: true,
+      message: "Product approved successfully",
+      product,
+    });
+
+  } catch (error) {
+    console.error("Approval Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+});
+
+app.post("/api/products/vendor/reject/:id", async (req, res) => {
+  try {
+    const product = await Products.findById(req.params.id);
+
+    if (!product)
+      return res.status(404).json({ success: false, message: "Product not found" });
+
+    product.status = "Vendor Rejected";
+    await product.save();
+
+    return res.json({
+      success: true,
+      message: "Product rejected by vendor",
+      product
+    });
+
+  } catch (error) {
+    console.error("Vendor Reject Error:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+});
+
+
 app.get("/api/products", async (req, res) => {
   try {
     // Fetch products and populate vendor and category details
@@ -2499,7 +2553,6 @@ app.post("/api/products/:id/reject", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-// GET all orders
 app.get("/api/admin/orders", async (req, res) => {
    try {
     const orders = await Order.find()
