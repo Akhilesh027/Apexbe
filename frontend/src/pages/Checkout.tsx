@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import Navbar from "@/components/Navbar";
 import { useToast } from "@/hooks/use-toast";
-
+import upi from '../Web images/Web images/upi.jpg'
 const Checkout = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -62,7 +62,7 @@ const Checkout = () => {
   // UPI Configuration
   const upiConfig = {
     upiId: "9177176969-2@ybl",
-    qrCodeUrl: "/qr-code.png", // Replace with your actual QR code image path
+    qrCodeUrl: upi, // Replace with your actual QR code image path
     merchantName: "ApexBee Store",
     amount: orderDetails.total
   };
