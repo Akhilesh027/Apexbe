@@ -144,7 +144,7 @@ const OrderSuccess = () => {
                   <div>
                     <p className="font-medium">Payment Method</p>
                     <p className="text-muted-foreground capitalize">{orderDetails.paymentMethod}</p>
-                    <p className="text-xs text-green-600">Payment Successful</p>
+                  
                   </div>
                 </div>
               </div>

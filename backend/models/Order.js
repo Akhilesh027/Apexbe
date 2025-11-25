@@ -48,14 +48,70 @@ const orderItemSchema = new mongoose.Schema({
 const orderStatusSchema = new mongoose.Schema({
   status: {
     type: String,
-    enum: ['pending', 'confirmed', 'PROCESSING', 'shipped', 'delivered', 'cancelled', 'refunded'],
+    enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'payment_pending', 'payment_verified', 'payment_failed'],
     default: 'pending'
   },
   timestamp: {
     type: Date,
     default: Date.now
   },
-  description: String
+  description: String,
+  updatedBy: {
+    type: String,
+    enum: ['system', 'admin', 'user', 'vendor'],
+    default: 'system'
+  }
+});
+
+// UPI Payment Details Schema
+const upiPaymentSchema = new mongoose.Schema({
+  upiId: {
+    type: String,
+    required: true
+  },
+  screenshot: {
+    type: String, // URL or base64 string
+    required: true
+  },
+  transactionId: {
+    type: String,
+    required: true
+  },
+  verified: {
+    type: Boolean,
+    default: false
+  },
+  verifiedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  verifiedAt: Date,
+  uploadedAt: {
+    type: Date,
+    default: Date.now
+  },
+  verificationNotes: String
+});
+
+// Payment Proof Schema
+const paymentProofSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ['upi_screenshot', 'bank_transfer', 'other'],
+    default: 'upi_screenshot'
+  },
+  url: {
+    type: String,
+    required: true
+  },
+  transactionReference: {
+    type: String,
+    required: true
+  },
+  upiId: String,
+  fileName: String,
+  fileSize: Number,
+  mimeType: String
 });
 
 const orderSchema = new mongoose.Schema({
@@ -113,16 +169,16 @@ const orderSchema = new mongoose.Schema({
     }
   },
 
-  // Payment Information
+  // Enhanced Payment Information
   paymentDetails: {
     method: {
       type: String,
-      enum: ['upi', 'card', 'wallet', 'scan', 'cod'],
+      enum: ['upi', 'card', 'wallet', 'scan', 'cod', 'bank_transfer'],
       required: true
     },
     status: {
       type: String,
-      enum: ['pending', 'completed', 'failed', 'refunded'],
+      enum: ['pending', 'completed', 'failed', 'refunded', 'pending_verification', 'verified', 'rejected'],
       default: 'pending'
     },
     amount: {
@@ -130,7 +186,19 @@ const orderSchema = new mongoose.Schema({
       required: true
     },
     transactionId: String,
-    paymentDate: Date
+    paymentDate: Date,
+    
+    // UPI Specific Details
+    upiDetails: upiPaymentSchema,
+    
+    // Payment Proof (for UPI, bank transfer, etc.)
+    paymentProof: paymentProofSchema,
+    
+    // Additional Payment Metadata
+    gatewayResponse: Object,
+    refundAmount: Number,
+    refundReason: String,
+    refundDate: Date
   },
 
   // Order Items
@@ -161,6 +229,10 @@ const orderSchema = new mongoose.Schema({
     total: {
       type: Number,
       required: true
+    },
+    grandTotal: {
+      type: Number,
+      required: true
     }
   },
 
@@ -168,7 +240,7 @@ const orderSchema = new mongoose.Schema({
   orderStatus: {
     currentStatus: {
       type: String,
-      enum: ['pending', 'confirmed', 'PROCESSING', 'shipped', 'delivered', 'cancelled', 'refunded'],
+      enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'payment_pending', 'payment_verified'],
       default: 'pending'
     },
     timeline: [orderStatusSchema]
@@ -183,18 +255,66 @@ const orderSchema = new mongoose.Schema({
     },
     trackingNumber: String,
     carrier: String,
-    actualDeliveryDate: Date
+    actualDeliveryDate: Date,
+    deliveryProof: String, // Image URL for delivery proof
+    deliveredBy: String // Delivery person name/id
   },
+
+  // Vendor Information
+  vendorOrders: [{
+    vendorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Vendor'
+    },
+    items: [{
+      productId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Products'
+      },
+      quantity: Number,
+      price: Number,
+      status: {
+        type: String,
+        enum: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'],
+        default: 'pending'
+      }
+    }],
+    totalAmount: Number
+  }],
+
+  // Admin Notes
+  adminNotes: [{
+    note: String,
+    addedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    addedAt: {
+      type: Date,
+      default: Date.now
+    },
+    noteType: {
+      type: String,
+      enum: ['general', 'payment', 'shipping', 'customer', 'vendor'],
+      default: 'general'
+    }
+  }],
+
+  // Customer Communication
+  customerNotes: String,
+  internalNotes: String,
 
   // Metadata
   metadata: {
     source: {
       type: String,
-      enum: ['cart', 'buy_now'],
+      enum: ['cart', 'buy_now', 'subscription'],
       default: 'cart'
     },
     ipAddress: String,
-    userAgent: String
+    userAgent: String,
+    deviceType: String,
+    appVersion: String
   },
 
   // Timestamps
@@ -205,7 +325,9 @@ const orderSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
-  }
+  },
+  cancelledAt: Date,
+  deliveredAt: Date
 });
 
 // Helper method for status descriptions
@@ -217,7 +339,10 @@ orderSchema.methods.getStatusDescription = function(status) {
     'shipped': 'Order has been shipped',
     'delivered': 'Order has been delivered',
     'cancelled': 'Order has been cancelled',
-    'refunded': 'Order has been refunded'
+    'refunded': 'Order has been refunded',
+    'payment_pending': 'Payment is pending verification',
+    'payment_verified': 'Payment has been verified successfully',
+    'payment_failed': 'Payment verification failed'
   };
   return descriptions[status] || 'Order status updated';
 };
@@ -240,20 +365,29 @@ orderSchema.pre('save', async function(next) {
       
       let sequence = 1;
       if (latestOrder && latestOrder.orderNumber) {
-        const orderNumberParts = latestOrder.orderNumber.split('-');
-        if (orderNumberParts.length === 3) {
-          const lastSequence = parseInt(orderNumberParts[2]);
-          if (!isNaN(lastSequence)) {
-            sequence = lastSequence + 1;
-          }
+        const lastSequence = parseInt(latestOrder.orderNumber.split('-').pop());
+        if (!isNaN(lastSequence)) {
+          sequence = lastSequence + 1;
         }
       }
       
-      this.orderNumber = `ORD-${year}${month}${day}-${String(sequence).padStart(4, '0')}`;
+      this.orderNumber = `APX-${year}${month}${day}-${String(sequence).padStart(4, '0')}`;
       console.log('Generated order number:', this.orderNumber);
     }
     
     this.updatedAt = Date.now();
+    
+    // Auto-set payment status based on method
+    if (this.isNew) {
+      if (this.paymentDetails.method === 'cod') {
+        this.paymentDetails.status = 'completed';
+        this.orderStatus.currentStatus = 'confirmed';
+      } else if (this.paymentDetails.method === 'upi') {
+        this.paymentDetails.status = 'pending_verification';
+        this.orderStatus.currentStatus = 'payment_pending';
+      }
+    }
+    
     next();
   } catch (error) {
     console.error('Error generating order number:', error);
@@ -269,14 +403,114 @@ orderSchema.pre('save', function(next) {
       this.orderStatus.timeline = [];
     }
     
-    this.orderStatus.timeline.push({
-      status: this.orderStatus.currentStatus,
-      timestamp: new Date(),
-      description: this.getStatusDescription(this.orderStatus.currentStatus)
-    });
+    // Only add if the status is different from the last one
+    const lastStatus = this.orderStatus.timeline.length > 0 
+      ? this.orderStatus.timeline[this.orderStatus.timeline.length - 1].status 
+      : null;
+    
+    if (lastStatus !== this.orderStatus.currentStatus) {
+      this.orderStatus.timeline.push({
+        status: this.orderStatus.currentStatus,
+        timestamp: new Date(),
+        description: this.getStatusDescription(this.orderStatus.currentStatus),
+        updatedBy: 'system'
+      });
+    }
   }
+  
+  // Update payment status timeline
+  if (this.isModified('paymentDetails.status') && this.paymentDetails) {
+    if (!this.orderStatus.timeline) {
+      this.orderStatus.timeline = [];
+    }
+    
+    const paymentStatusMap = {
+      'pending_verification': 'payment_pending',
+      'verified': 'payment_verified',
+      'rejected': 'payment_failed'
+    };
+    
+    const correspondingStatus = paymentStatusMap[this.paymentDetails.status];
+    if (correspondingStatus && this.orderStatus.currentStatus !== correspondingStatus) {
+      this.orderStatus.currentStatus = correspondingStatus;
+      this.orderStatus.timeline.push({
+        status: correspondingStatus,
+        timestamp: new Date(),
+        description: this.getStatusDescription(correspondingStatus),
+        updatedBy: 'system'
+      });
+    }
+  }
+  
   next();
 });
+
+// Virtual for formatted order date
+orderSchema.virtual('formattedDate').get(function() {
+  return this.createdAt.toLocaleDateString('en-IN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+});
+
+// Virtual for total items count
+orderSchema.virtual('totalItems').get(function() {
+  return this.orderItems.reduce((total, item) => total + item.quantity, 0);
+});
+
+// Indexes for better performance
+orderSchema.index({ userId: 1, createdAt: -1 });
+orderSchema.index({ orderNumber: 1 });
+orderSchema.index({ 'paymentDetails.status': 1 });
+orderSchema.index({ 'orderStatus.currentStatus': 1 });
+orderSchema.index({ createdAt: -1 });
+orderSchema.index({ 'vendorOrders.vendorId': 1 });
+
+// Static method to find orders by payment status
+orderSchema.statics.findByPaymentStatus = function(status) {
+  return this.find({ 'paymentDetails.status': status });
+};
+
+// Static method to find orders requiring payment verification
+orderSchema.statics.findPendingVerification = function() {
+  return this.find({ 
+    'paymentDetails.method': 'upi',
+    'paymentDetails.status': 'pending_verification'
+  });
+};
+
+// Instance method to verify UPI payment
+orderSchema.methods.verifyUPIPayment = function(adminId, notes = '') {
+  if (this.paymentDetails.method !== 'upi') {
+    throw new Error('This order does not have UPI payment');
+  }
+  
+  if (!this.paymentDetails.upiDetails) {
+    throw new Error('No UPI details found for this order');
+  }
+  
+  this.paymentDetails.status = 'verified';
+  this.paymentDetails.upiDetails.verified = true;
+  this.paymentDetails.upiDetails.verifiedBy = adminId;
+  this.paymentDetails.upiDetails.verifiedAt = new Date();
+  this.paymentDetails.upiDetails.verificationNotes = notes;
+  this.paymentDetails.paymentDate = new Date();
+  
+  return this.save();
+};
+
+// Instance method to reject UPI payment
+orderSchema.methods.rejectUPIPayment = function(adminId, notes = '') {
+  if (this.paymentDetails.method !== 'upi') {
+    throw new Error('This order does not have UPI payment');
+  }
+  
+  this.paymentDetails.status = 'rejected';
+  this.paymentDetails.upiDetails.verificationNotes = notes;
+  
+  return this.save();
+};
 
 const Order = mongoose.model('Order', orderSchema);
 

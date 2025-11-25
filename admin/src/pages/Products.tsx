@@ -43,7 +43,8 @@ const Products = () => {
         action: "approve" | "reject" | null;
     }>({ open: false, action: null });
     
-    const [newCommission, setNewCommission] = useState<number | string>("");
+    const [commissionPercentage, setCommissionPercentage] = useState<number | string>("");
+    const [commissionAmount, setCommissionAmount] = useState<number | string>("");
 
     // Fetch products from backend
     useEffect(() => {
@@ -59,12 +60,18 @@ const Products = () => {
         fetchProducts();
     }, []);
 
-    // Effect to reset commission input when a new product is selected
+    // Effect to reset commission inputs when a new product is selected
     useEffect(() => {
         if (selectedProduct) {
-            setNewCommission(selectedProduct.commission || 0);
+            setCommissionPercentage(selectedProduct.commission || 0);
+            // Calculate commission amount based on percentage
+            const afterDiscount = selectedProduct.afterDiscount || 0;
+            const commission = selectedProduct.commission || 0;
+            const calculatedAmount = (afterDiscount * commission) / 100;
+            setCommissionAmount(calculatedAmount.toFixed(2));
         } else {
-            setNewCommission("");
+            setCommissionPercentage("");
+            setCommissionAmount("");
         }
     }, [selectedProduct]);
 
@@ -92,12 +99,51 @@ const Products = () => {
         setActionDialog({ open: true, action });
     };
 
+    // Calculate commission percentage from amount
+    const calculatePercentageFromAmount = (amount: number, basePrice: number): number => {
+        if (!basePrice || basePrice === 0) return 0;
+        return (amount / basePrice) * 100;
+    };
+
+    // Calculate commission amount from percentage
+    const calculateAmountFromPercentage = (percentage: number, basePrice: number): number => {
+        return (basePrice * percentage) / 100;
+    };
+
+    // Handle commission percentage change
+    const handleCommissionPercentageChange = (value: string) => {
+        const percentage = value === "" ? "" : Number(value);
+        setCommissionPercentage(percentage);
+        
+        if (selectedProduct && percentage !== "" && !isNaN(Number(percentage))) {
+            const afterDiscount = selectedProduct.afterDiscount || 0;
+            const calculatedAmount = calculateAmountFromPercentage(Number(percentage), afterDiscount);
+            setCommissionAmount(calculatedAmount.toFixed(2));
+        } else if (value === "") {
+            setCommissionAmount("");
+        }
+    };
+
+    // Handle commission amount change
+    const handleCommissionAmountChange = (value: string) => {
+        const amount = value === "" ? "" : Number(value);
+        setCommissionAmount(amount);
+        
+        if (selectedProduct && amount !== "" && !isNaN(Number(amount))) {
+            const afterDiscount = selectedProduct.afterDiscount || 0;
+            const calculatedPercentage = calculatePercentageFromAmount(Number(amount), afterDiscount);
+            setCommissionPercentage(calculatedPercentage.toFixed(2));
+        } else if (value === "") {
+            setCommissionPercentage("");
+        }
+    };
+
     // Handles both 'Approve with Commission' and 'Reject'
     const confirmAction = async () => {
         if (!selectedProduct || !actionDialog.action) return;
 
         const action = actionDialog.action;
-        const commissionValue = action === "approve" ? Number(newCommission) : 0;
+        const commissionValue = action === "approve" ? Number(commissionPercentage) : 0;
         
         if (action === "approve" && (isNaN(commissionValue) || commissionValue < 0)) {
             toast.error("Please enter a valid non-negative commission value.");
@@ -112,7 +158,6 @@ const Products = () => {
             });
 
             // Calculate the final amount the vendor receives (for display purposes)
-            // Final = AfterDiscount * (1 - Commission/100)
             const finalVendorAmount = (selectedProduct.afterDiscount || 0) * (1 - (commissionValue / 100));
 
             // Update locally
@@ -137,14 +182,15 @@ const Products = () => {
         } finally {
             setActionDialog({ open: false, action: null });
             setSelectedProduct(null);
-            setNewCommission("");
+            setCommissionPercentage("");
+            setCommissionAmount("");
         }
     };
 
     // Calculate final vendor amount dynamically for the Details Dialog
-    const calculateFinalVendorAmount = (product: Product, commission: number | string) => {
+    const calculateFinalVendorAmount = (product: Product, commissionPercent: number | string) => {
         const finalDiscountedPrice = product.afterDiscount || 0;
-        const commissionRate = Number(commission) || 0;
+        const commissionRate = Number(commissionPercent) || 0;
 
         if (finalDiscountedPrice === 0) {
             return "0.00";
@@ -156,7 +202,6 @@ const Products = () => {
         
         return finalAmount.toFixed(2);
     };
-
 
     const columns = [
         { header: "Product Name", accessor: (item: Product) => item.itemName },
@@ -203,7 +248,7 @@ const Products = () => {
                     )}
                 </div>
             ),
-            className: "text-right w-[150px]", // Set a fixed width for the action column
+            className: "text-right w-[150px]",
         },
     ];
 
@@ -281,28 +326,63 @@ const Products = () => {
                                 
                                 {/* COMMISSION INPUT AND APPROVAL */}
                                 {selectedProduct.status?.toLowerCase() === 'pending' && (
-                                    <div className="p-4 border rounded-lg bg-card shadow-lg space-y-3">
-                                        <Label htmlFor="commission-rate" className="font-extrabold text-base block text-primary">Set Commission Rate (%)</Label>
+                                    <div className="p-4 border rounded-lg bg-card shadow-lg space-y-4">
+                                        <Label className="font-extrabold text-base block text-primary">Set Commission</Label>
                                         
-                                        <div className="flex flex-col sm:flex-row gap-2 items-center">
-                                            <Input
-                                                id="commission-rate"
-                                                type="number"
-                                                placeholder="Enter %"
-                                                value={newCommission}
-                                                onChange={(e) => setNewCommission(e.target.value)}
-                                                className="h-10 text-lg flex-1"
-                                                min="0"
-                                            />
-                                            <span className="text-xl font-bold hidden sm:block">%</span>
+                                        {/* Commission Inputs in One Row */}
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {/* Commission Amount Input */}
+                                            <div className="space-y-2">
+                                                <Label htmlFor="commission-amount" className="font-medium text-sm">
+                                                    Amount (₹)
+                                                </Label>
+                                                <div className="flex items-center gap-1">
+                                                    <Input
+                                                        id="commission-amount"
+                                                        type="number"
+                                                        placeholder="0.00"
+                                                        value={commissionAmount}
+                                                        onChange={(e) => handleCommissionAmountChange(e.target.value)}
+                                                        className="h-9 text-sm"
+                                                        min="0"
+                                                        step="0.01"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Commission Percentage Input */}
+                                            <div className="space-y-2">
+                                                <Label htmlFor="commission-percentage" className="font-medium text-sm">
+                                                    Percentage (%)
+                                                </Label>
+                                                <div className="flex items-center gap-1">
+                                                    <Input
+                                                        id="commission-percentage"
+                                                        type="number"
+                                                        placeholder="0.00"
+                                                        value={commissionPercentage}
+                                                        onChange={(e) => handleCommissionPercentageChange(e.target.value)}
+                                                        className="h-9 text-sm"
+                                                        min="0"
+                                                        max="100"
+                                                        step="0.01"
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                         
                                         {/* Dynamic Commission Calculation Preview */}
-                                        <div className="pt-2 border-t">
-                                            <Label className="font-semibold block mb-1">Final Vendor Payout (After {Number(newCommission) || 0}% Commission):</Label>
-                                            <p className="text-green-600 font-extrabold text-2xl">
-                                                ₹{calculateFinalVendorAmount(selectedProduct, newCommission)}
-                                            </p>
+                                        <div className="pt-3 border-t space-y-2">
+                                            <div className="flex justify-between text-sm">
+                                                <span className="font-medium">Commission:</span>
+                                                <span className="font-bold">{Number(commissionPercentage) || 0}% (₹{Number(commissionAmount)?.toFixed(2) || "0.00"})</span>
+                                            </div>
+                                            <div className="pt-2 border-t">
+                                                <Label className="font-semibold block mb-1 text-sm">Final Vendor Payout:</Label>
+                                                <p className="text-green-600 font-extrabold text-xl">
+                                                    ₹{calculateFinalVendorAmount(selectedProduct, commissionPercentage)}
+                                                </p>
+                                            </div>
                                         </div>
 
                                         <div className="flex justify-between gap-2 pt-3 border-t">
@@ -316,10 +396,9 @@ const Products = () => {
                                             <Button 
                                                 className="bg-green-600 hover:bg-green-700 flex-1"
                                                 onClick={() => {
-                                                    // Immediately trigger the confirmAction logic for approval
                                                     setActionDialog({ open: true, action: "approve" });
                                                 }}
-                                                disabled={isNaN(Number(newCommission)) || Number(newCommission) < 0}
+                                                disabled={isNaN(Number(commissionPercentage)) || Number(commissionPercentage) < 0}
                                             >
                                                 <CheckCircle className="h-4 w-4 mr-1" /> Approve
                                             </Button>
@@ -355,9 +434,14 @@ const Products = () => {
                         <DialogDescription>
                             Are you absolutely sure you want to **{actionDialog.action}** this product?
                             {actionDialog.action === "approve" && selectedProduct && (
-                                <p className="mt-2 font-semibold text-yellow-600">
-                                    Commission will be finalized at: **{Number(newCommission) || 0}%**
-                                </p>
+                                <div className="mt-2 space-y-1">
+                                    <p className="font-semibold text-yellow-600">
+                                        Commission will be finalized at: <strong>{Number(commissionPercentage) || 0}%</strong>
+                                    </p>
+                                    <p className="text-sm text-muted-foreground">
+                                        Commission Amount: <strong>₹{Number(commissionAmount)?.toFixed(2) || "0.00"}</strong>
+                                    </p>
+                                </div>
                             )}
                         </DialogDescription>
                     </DialogHeader>

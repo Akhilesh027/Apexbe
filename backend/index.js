@@ -1655,11 +1655,15 @@ app.post("/api/orders", auth, async (req, res) => {
       paymentDetails,
       orderItems: rawItems,
       orderSummary: frontendSummary,
-      metadata
+      metadata,
+      paymentProof // New field for UPI payment proof
     } = req.body;
 
     console.log("Received order data:", {
       userId,
+      paymentMethod: paymentDetails?.method,
+      paymentStatus: paymentDetails?.status,
+      hasPaymentProof: !!paymentProof,
       rawItems: rawItems?.map(item => ({
         name: item.name,
         price: item.price,
@@ -1753,10 +1757,83 @@ app.post("/api/orders", auth, async (req, res) => {
       discount: frontendSummary?.discount || 0,
       shipping: frontendSummary?.shipping || 0,
       tax: frontendSummary?.tax || 0,
-      total: frontendSummary?.total || (subtotal + (frontendSummary?.shipping || 0))
+      total: frontendSummary?.total || (subtotal + (frontendSummary?.shipping || 0)),
+      grandTotal: frontendSummary?.total || (subtotal + (frontendSummary?.shipping || 0))
     };
 
     console.log("Final order summary:", orderSummary);
+
+    // **ENHANCED PAYMENT HANDLING**
+    let paymentStatus = "pending";
+    let orderStatus = "pending";
+    let upiDetails = null;
+    let paymentProofData = null;
+
+    // Handle different payment methods
+    switch (paymentDetails?.method) {
+      case "cod":
+        paymentStatus = "completed";
+        orderStatus = "confirmed";
+        break;
+        
+      case "wallet":
+        paymentStatus = "completed";
+        orderStatus = "confirmed";
+        break;
+        
+      case "upi":
+        // For UPI, require payment proof and set to pending verification
+        if (!paymentProof || !paymentDetails?.transactionId) {
+          return res.status(400).json({
+            success: false,
+            message: "UPI payment requires screenshot and transaction ID"
+          });
+        }
+        
+        paymentStatus = "pending_verification";
+        orderStatus = "payment_pending";
+        
+        // Create UPI details object
+        upiDetails = {
+          upiId: paymentDetails.upiId || "9177176969-2@ybl",
+          screenshot: paymentProof.url || paymentProof.screenshot || paymentProof,
+          transactionId: paymentDetails.transactionId,
+          verified: false,
+          uploadedAt: new Date()
+        };
+        
+        // Create payment proof object
+        paymentProofData = {
+          type: paymentProof.type || 'upi_screenshot',
+          url: paymentProof.url || paymentProof.screenshot || paymentProof,
+          transactionReference: paymentDetails.transactionId,
+          upiId: paymentDetails.upiId || "9177176969-2@ybl",
+          fileName: paymentProof.fileName || `payment_proof_${Date.now()}`,
+          fileSize: paymentProof.fileSize,
+          mimeType: paymentProof.mimeType || 'image/jpeg'
+        };
+        break;
+        
+      case "card":
+        paymentStatus = "completed";
+        orderStatus = "confirmed";
+        break;
+        
+      default:
+        paymentStatus = "pending";
+        orderStatus = "pending";
+    }
+
+    // Create enhanced payment details object
+    const enhancedPaymentDetails = {
+      method: paymentDetails?.method || "cod",
+      status: paymentStatus,
+      amount: orderSummary.total,
+      transactionId: paymentDetails?.transactionId,
+      paymentDate: paymentStatus === "completed" ? new Date() : null,
+      upiDetails: upiDetails,
+      paymentProof: paymentProofData
+    };
 
     // Create order
     const orderData = {
@@ -1768,21 +1845,16 @@ app.post("/api/orders", auth, async (req, res) => {
         phone: shippingAddress.phone
       },
       shippingAddress,
-      paymentDetails: {
-        method: paymentDetails?.method || "cod",
-        status: paymentDetails?.method === "cod" ? "pending" : "completed",
-        amount: orderSummary.total,
-        transactionId: paymentDetails?.transactionId,
-        paymentDate: paymentDetails?.method === "cod" ? null : new Date()
-      },
+      paymentDetails: enhancedPaymentDetails,
       orderItems,
       orderSummary,
       orderStatus: {
-        currentStatus: "confirmed",
+        currentStatus: orderStatus,
         timeline: [{
-          status: "confirmed",
+          status: orderStatus,
           timestamp: new Date(),
-          description: "Order confirmed and payment processing"
+          description: getStatusDescription(orderStatus),
+          updatedBy: 'system'
         }]
       },
       deliveryDetails: {
@@ -1792,23 +1864,31 @@ app.post("/api/orders", auth, async (req, res) => {
       metadata: {
         ...metadata,
         isFirstOrder,
-        source: 'cart'
+        source: 'cart',
+        requiresPaymentVerification: paymentDetails?.method === 'upi'
       }
     };
 
     const order = new Order(orderData);
     await order.save();
 
-    // Decrement product stock
-    for (const item of orderItems) {
-      await Products.findByIdAndUpdate(
-        item.productId, 
-        { $inc: { openStock: -item.quantity } }
-      );
+    console.log(`Order created with status: ${orderStatus}, Payment: ${paymentStatus}`);
+
+    // **STOCK MANAGEMENT - Only decrement for confirmed orders**
+    if (orderStatus === "confirmed" || paymentStatus === "completed") {
+      for (const item of orderItems) {
+        await Products.findByIdAndUpdate(
+          item.productId, 
+          { $inc: { openStock: -item.quantity } }
+        );
+      }
+      console.log("Stock decremented for confirmed order");
+    } else {
+      console.log("Stock NOT decremented - order pending payment verification");
     }
 
-    // Deduct wallet if used
-    if (paymentDetails?.method === "wallet") {
+    // **WALLET DEDUCTION - Only for completed payments**
+    if (paymentDetails?.method === "wallet" && paymentStatus === "completed") {
       try {
         const walletRes = await fetch(`https://api.apexbee.in/api/user/wallet/deduct/${userId}`, {
           method: "POST",
@@ -1824,15 +1904,18 @@ app.post("/api/orders", auth, async (req, res) => {
         
         if (!walletRes.ok) {
           console.warn("Wallet deduction failed but order was placed");
+          // Optionally update order status to reflect wallet issue
+        } else {
+          console.log("Wallet deduction successful");
         }
       } catch (walletError) {
         console.error("Wallet deduction error:", walletError);
       }
     }
 
-    // Referral reward for first order
+    // **REFERRAL REWARD - Only for completed payments**
     let referralResult = null;
-    if (isFirstOrder) {
+    if (isFirstOrder && (paymentStatus === "completed" || paymentDetails?.method === "cod")) {
       try {
         referralResult = await completeReferral(userId, orderSummary.total);
         if (referralResult) {
@@ -1840,17 +1923,33 @@ app.post("/api/orders", auth, async (req, res) => {
           order.metadata.referralId = referralResult._id;
           order.metadata.rewardAmount = referralResult.rewardAmount;
           await order.save();
+          console.log("Referral reward processed");
         }
       } catch (err) {
         console.error("Error completing referral:", err);
       }
     }
 
+    // **SEND NOTIFICATIONS**
+    try {
+      // Notify admin about pending UPI verification
+      if (paymentDetails?.method === "upi") {
+        await notifyAdminForUPIVerification(order);
+      }
+      
+      // Send order confirmation to user
+      await sendOrderConfirmation(order, req.user);
+    } catch (notificationError) {
+      console.error("Notification error:", notificationError);
+      // Don't fail the order if notifications fail
+    }
+
     res.status(201).json({
       success: true,
-      message: "Order created successfully",
+      message: getOrderSuccessMessage(paymentDetails?.method, paymentStatus),
       order,
-      referral: isFirstOrder
+      requiresVerification: paymentDetails?.method === 'upi',
+      referral: isFirstOrder && (paymentStatus === "completed" || paymentDetails?.method === "cod")
         ? { 
             completed: !!referralResult, 
             message: referralResult ? "Referral reward credited!" : "No referral found" 
@@ -1867,6 +1966,33 @@ app.post("/api/orders", auth, async (req, res) => {
     });
   }
 });
+
+// Helper function for status descriptions
+function getStatusDescription(status) {
+  const descriptions = {
+    'pending': 'Order received and being processed',
+    'confirmed': 'Order confirmed and payment verified',
+    'processing': 'Order is being prepared for shipment',
+    'shipped': 'Order has been shipped',
+    'delivered': 'Order has been delivered',
+    'cancelled': 'Order has been cancelled',
+    'refunded': 'Order has been refunded',
+    'payment_pending': 'UPI payment pending verification',
+    'payment_verified': 'Payment has been verified successfully'
+  };
+  return descriptions[status] || 'Order status updated';
+}
+
+// Helper function for success messages
+function getOrderSuccessMessage(paymentMethod, paymentStatus) {
+  if (paymentMethod === 'upi' && paymentStatus === 'pending_verification') {
+    return "Order placed successfully! Payment verification pending. We'll notify you once verified.";
+  }
+  return "Order created successfully";
+}
+
+
+
 
 app.get("/api/orders/vendor/:vendorId", async (req, res) => {
   const { vendorId } = req.params;
@@ -2042,7 +2168,280 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     });
   }
 });
+// PUT /api/orders/:id/verify-payment - Verify UPI payment
+app.put("/api/orders/:id/verify-payment", auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, notes } = req.body;
+    const adminId = req.user._id;
 
+    // Check if user is admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can verify payments"
+      });
+    }
+
+    // Validate action
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid action. Must be 'approve' or 'reject'"
+      });
+    }
+
+    // Find order
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found"
+      });
+    }
+
+    // Check if payment method is UPI
+    if (order.paymentDetails.method !== 'upi') {
+      return res.status(400).json({
+        success: false,
+        message: "This order does not have UPI payment"
+      });
+    }
+
+    // Check if payment is pending verification
+    if (order.paymentDetails.status !== 'pending_verification') {
+      return res.status(400).json({
+        success: false,
+        message: "Payment is not pending verification"
+      });
+    }
+
+    // Update payment status based on action
+    if (action === 'approve') {
+      // Approve payment
+      order.paymentDetails.status = 'verified';
+      order.paymentDetails.upiDetails.verified = true;
+      order.paymentDetails.upiDetails.verifiedBy = adminId;
+      order.paymentDetails.upiDetails.verifiedAt = new Date();
+      order.paymentDetails.upiDetails.verificationNotes = notes || 'Payment verified successfully';
+      order.paymentDetails.paymentDate = new Date();
+      
+      // Update order status
+      order.orderStatus.currentStatus = 'confirmed';
+      
+      // Add to timeline
+      order.orderStatus.timeline.push({
+        status: 'payment_verified',
+        timestamp: new Date(),
+        description: 'UPI payment verified and approved',
+        updatedBy: 'admin'
+      });
+
+      // Decrement stock since payment is now verified
+      for (const item of order.orderItems) {
+        await Products.findByIdAndUpdate(
+          item.productId,
+          { $inc: { openStock: -item.quantity } }
+        );
+      }
+
+      // Send approval notification to customer
+      await sendPaymentApprovalNotification(order, req.user);
+
+    } else if (action === 'reject') {
+      // Reject payment
+      if (!notes || notes.trim() === '') {
+        return res.status(400).json({
+          success: false,
+          message: "Rejection notes are required"
+        });
+      }
+
+      order.paymentDetails.status = 'rejected';
+      order.paymentDetails.upiDetails.verified = false;
+      order.paymentDetails.upiDetails.verificationNotes = notes;
+      
+      // Update order status
+      order.orderStatus.currentStatus = 'cancelled';
+      
+      // Add to timeline
+      order.orderStatus.timeline.push({
+        status: 'payment_failed',
+        timestamp: new Date(),
+        description: 'UPI payment rejected: ' + notes,
+        updatedBy: 'admin'
+      });
+
+      // Send rejection notification to customer
+      await sendPaymentRejectionNotification(order, notes, req.user);
+    }
+
+    await order.save();
+
+    res.json({
+      success: true,
+      message: `Payment ${action}d successfully`,
+      order: order
+    });
+
+  } catch (error) {
+    console.error("Error verifying payment:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while verifying payment",
+      error: error.message
+    });
+  }
+});
+// PUT /api/orders/:id/status - Update order status
+app.put("/api/orders/:id/status", auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const userId = req.user._id;
+
+    // Validate status
+    const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status. Must be one of: " + validStatuses.join(', ')
+      });
+    }
+
+    // Find order
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found"
+      });
+    }
+
+    // Check if user is authorized (vendor can only update their own orders)
+    const isVendorOrder = order.orderItems.some(item => 
+      item.vendorId && item.vendorId.toString() === userId.toString()
+    );
+    
+    if (!isVendorOrder && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update this order"
+      });
+    }
+
+    // Update order status
+    order.orderStatus.currentStatus = status;
+    
+    // Add to timeline
+    if (!order.orderStatus.timeline) {
+      order.orderStatus.timeline = [];
+    }
+    
+    order.orderStatus.timeline.push({
+      status: status,
+      timestamp: new Date(),
+      description: getStatusDescription(status),
+      updatedBy: req.user.role === 'admin' ? 'admin' : 'vendor'
+    });
+
+    // Set delivery date if status is delivered
+    if (status === 'delivered') {
+      order.deliveryDetails.actualDeliveryDate = new Date();
+      order.deliveredAt = new Date();
+    }
+
+    // Set cancelled date if status is cancelled
+    if (status === 'cancelled') {
+      order.cancelledAt = new Date();
+      
+      // Restore stock if order is cancelled
+      if (order.orderItems && order.orderItems.length > 0) {
+        for (const item of order.orderItems) {
+          await Products.findByIdAndUpdate(
+            item.productId,
+            { $inc: { openStock: item.quantity } }
+          );
+        }
+      }
+    }
+
+    await order.save();
+
+    // Send notification to customer
+    try {
+      await sendOrderStatusUpdateNotification(order, status, req.user);
+    } catch (notificationError) {
+      console.error("Notification error:", notificationError);
+    }
+
+    res.json({
+      success: true,
+      message: `Order status updated to ${status}`,
+      order: order
+    });
+
+  } catch (error) {
+    console.error("Error updating order status:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while updating order status",
+      error: error.message
+    });
+  }
+});
+
+
+// Notification functions
+async function sendOrderStatusUpdateNotification(order, newStatus, user) {
+  try {
+    // Implement your notification logic here
+    // This could be email, push notification, SMS, etc.
+    console.log(`Order status update: Order #${order.orderNumber} status changed to ${newStatus} by ${user.name}`);
+    
+    // Example email implementation
+    // await sendEmail({
+    //   to: order.userDetails.email,
+    //   subject: `Order Status Update - #${order.orderNumber}`,
+    //   template: 'order-status-update',
+    //   data: { order, newStatus, user }
+    // });
+  } catch (error) {
+    console.error("Error sending status notification:", error);
+  }
+}
+
+async function sendPaymentApprovalNotification(order, admin) {
+  try {
+    console.log(`Payment approved: Order #${order.orderNumber} payment approved by ${admin.name}`);
+    
+    // Example implementation
+    // await sendEmail({
+    //   to: order.userDetails.email,
+    //   subject: `Payment Approved - Order #${order.orderNumber}`,
+    //   template: 'payment-approved',
+    //   data: { order, admin }
+    // });
+  } catch (error) {
+    console.error("Error sending approval notification:", error);
+  }
+}
+
+async function sendPaymentRejectionNotification(order, rejectionNotes, admin) {
+  try {
+    console.log(`Payment rejected: Order #${order.orderNumber} payment rejected by ${admin.name}`);
+    
+    // Example implementation
+    // await sendEmail({
+    //   to: order.userDetails.email,
+    //   subject: `Payment Rejected - Order #${order.orderNumber}`,
+    //   template: 'payment-rejected',
+    //   data: { order, rejectionNotes, admin }
+    // });
+  } catch (error) {
+    console.error("Error sending rejection notification:", error);
+  }
+}
 // PUT /api/orders/:orderId/payment - Update payment status
 app.put('/api/orders/:orderId/payment', async (req, res) => {
   try {

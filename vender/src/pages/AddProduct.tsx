@@ -31,6 +31,9 @@ const Addproduct = () => {
     // PRICE TYPE (product-wise / order-wise)
     const [priceType, setPriceType] = useState("product-wise");
 
+    // MRP TYPE (with-gst / without-gst)
+    const [mrpType, setMrpType] = useState("without-gst");
+
     // Categories
     const [categories, setCategories] = useState([]);
     const [subcategories, setSubcategories] = useState([]);
@@ -67,10 +70,6 @@ const Addproduct = () => {
     // 💰 UPDATED STATES for Flexible Pricing Calculations
     const [gstAmount, setGstAmount] = useState("");
     const [discountAmount, setDiscountAmount] = useState("");
-
-    // Input type states
-    const [gstInputType, setGstInputType] = useState('percentage');
-    const [discountInputType, setDiscountInputType] = useState('percentage');
 
     /* ---------------- FETCH BUSINESS ---------------- */
     useEffect(() => {
@@ -159,11 +158,11 @@ const Addproduct = () => {
         const numValue = Number(value) || 0;
         setGstRate(value);
         
-        if (priceType !== "order-wise" && mrp && numValue > 0) {
+        if (priceType !== "order-wise" && mrp && numValue > 0 && mrpType === "without-gst") {
             const basePrice = Number(mrp);
             const calculatedGstAmount = (basePrice * numValue) / 100;
             setGstAmount(calculatedGstAmount.toFixed(2));
-        } else {
+        } else if (mrpType === "with-gst") {
             setGstAmount("");
         }
     };
@@ -172,11 +171,11 @@ const Addproduct = () => {
         const numValue = Number(value) || 0;
         setGstAmount(value);
         
-        if (priceType !== "order-wise" && mrp && numValue > 0) {
+        if (priceType !== "order-wise" && mrp && numValue > 0 && mrpType === "without-gst") {
             const basePrice = Number(mrp);
             const calculatedGstRate = (numValue / basePrice) * 100;
             setGstRate(calculatedGstRate.toFixed(2));
-        } else {
+        } else if (mrpType === "with-gst") {
             setGstRate("");
         }
     };
@@ -188,11 +187,17 @@ const Addproduct = () => {
         
         if (priceType !== "order-wise" && mrp && numValue > 0) {
             const basePrice = Number(mrp);
-            const gstAmt = Number(gstAmount) || 0;
-            const priceWithGST = basePrice + gstAmt;
+            let priceWithGST = basePrice;
+            
+            // If MRP is without GST, add GST to calculate discount
+            if (mrpType === "without-gst" && business?.gstApplicable) {
+                const gstAmt = Number(gstAmount) || 0;
+                priceWithGST = basePrice + gstAmt;
+            }
+            
             const calculatedDiscountAmount = (priceWithGST * numValue) / 100;
             setDiscountAmount(calculatedDiscountAmount.toFixed(2));
-        } else {
+        } else if (value === "") {
             setDiscountAmount("");
         }
     };
@@ -203,11 +208,17 @@ const Addproduct = () => {
         
         if (priceType !== "order-wise" && mrp && numValue > 0) {
             const basePrice = Number(mrp);
-            const gstAmt = Number(gstAmount) || 0;
-            const priceWithGST = basePrice + gstAmt;
+            let priceWithGST = basePrice;
+            
+            // If MRP is without GST, add GST to calculate discount
+            if (mrpType === "without-gst" && business?.gstApplicable) {
+                const gstAmt = Number(gstAmount) || 0;
+                priceWithGST = basePrice + gstAmt;
+            }
+            
             const calculatedDiscountRate = (numValue / priceWithGST) * 100;
             setDiscount(calculatedDiscountRate.toFixed(2));
-        } else {
+        } else if (value === "") {
             setDiscount("");
         }
     };
@@ -227,21 +238,17 @@ const Addproduct = () => {
             return;
         }
 
-        // Calculate GST amount if not already set
-        let actualGstAmount = Number(gstAmount) || 0;
-        if (business?.gstApplicable && gstInputType === 'percentage' && gstRate) {
-            actualGstAmount = (basePrice * Number(gstRate)) / 100;
-            setGstAmount(actualGstAmount.toFixed(2));
+        let actualGstAmount = 0;
+        let priceWithGST = basePrice;
+
+        // Calculate GST only if MRP is without GST
+        if (mrpType === "without-gst" && business?.gstApplicable) {
+            actualGstAmount = Number(gstAmount) || 0;
+            priceWithGST = basePrice + actualGstAmount;
         }
 
-        const priceWithGST = basePrice + actualGstAmount;
-
-        // Calculate discount amount if not already set
+        // Calculate discount amount
         let actualDiscountAmount = Number(discountAmount) || 0;
-        if (discountInputType === 'percentage' && discount) {
-            actualDiscountAmount = (priceWithGST * Number(discount)) / 100;
-            setDiscountAmount(actualDiscountAmount.toFixed(2));
-        }
 
         // Price after discount
         const ad = priceWithGST - actualDiscountAmount;
@@ -250,7 +257,7 @@ const Addproduct = () => {
         // Final amount (before admin commission)
         setFinalAmount(ad > 0 ? ad.toFixed(2) : "0.00");
 
-    }, [mrp, discount, gstRate, priceType, gstInputType, gstAmount, discountInputType, discountAmount, business]);
+    }, [mrp, discount, gstRate, priceType, gstAmount, discountAmount, business, mrpType]);
 
     /* ---------------- RESET CALCULATIONS WHEN MRP CHANGES ---------------- */
     useEffect(() => {
@@ -265,16 +272,19 @@ const Addproduct = () => {
             return;
         }
 
-        // Recalculate GST if in percentage mode
-        if (business?.gstApplicable && gstInputType === 'percentage' && gstRate) {
+        // Recalculate GST if MRP is without GST
+        if (mrpType === "without-gst" && business?.gstApplicable && gstRate) {
             const calculatedGstAmount = (basePrice * Number(gstRate)) / 100;
             setGstAmount(calculatedGstAmount.toFixed(2));
         }
 
-        // Recalculate discount if in percentage mode
-        if (discountInputType === 'percentage' && discount) {
-            const gstAmt = Number(gstAmount) || 0;
-            const priceWithGST = basePrice + gstAmt;
+        // Recalculate discount if percentage is set
+        if (discount) {
+            let priceWithGST = basePrice;
+            if (mrpType === "without-gst" && business?.gstApplicable) {
+                const gstAmt = Number(gstAmount) || 0;
+                priceWithGST = basePrice + gstAmt;
+            }
             const calculatedDiscountAmount = (priceWithGST * Number(discount)) / 100;
             setDiscountAmount(calculatedDiscountAmount.toFixed(2));
         }
@@ -361,6 +371,7 @@ const Addproduct = () => {
         fd.append("afterDiscount", afterDiscount || "");
         fd.append("finalAmount", finalAmount || "");
         fd.append("priceType", priceType);
+        fd.append("mrpType", mrpType);
 
         images.forEach((img) => fd.append("images", img));
 
@@ -550,45 +561,6 @@ const Addproduct = () => {
                                 disabled={submitting}
                             />
                         </div>
-
-                        {/* GST INPUT - STEP 1 */}
-                        {business?.gstApplicable && (
-                            <div className="bg-card p-6 rounded-lg border">
-                                <Label className="font-bold text-lg">GST Rate/Amount *</Label>
-                                
-                                {/* Percentage Input */}
-                                <div className="mt-3">
-                                    <Label className="text-sm font-medium mb-2 block">GST Percentage (%)</Label>
-                                    <Input
-                                        value={gstRate}
-                                        onChange={(e) => handleGstRateChange(e.target.value)}
-                                        className="h-12 mb-3"
-                                        placeholder="Enter GST percentage"
-                                        type="number"
-                                        disabled={submitting || priceType === "order-wise"}
-                                    />
-                                </div>
-
-                                {/* Amount Input */}
-                                <div>
-                                    <Label className="text-sm font-medium mb-2 block">GST Amount (₹)</Label>
-                                    <Input
-                                        value={gstAmount}
-                                        onChange={(e) => handleGstAmountChange(e.target.value)}
-                                        className="h-12"
-                                        placeholder="Enter GST amount"
-                                        type="number"
-                                        disabled={submitting || priceType === "order-wise"}
-                                    />
-                                </div>
-
-                                <p className="text-sm text-muted-foreground mt-2">
-                                    {gstRate && gstAmount ? 
-                                        `GST: ${gstRate}% = ₹${gstAmount}` : 
-                                        "Enter either percentage or amount to calculate the other"}
-                                </p>
-                            </div>
-                        )}
 
                         {/* DESCRIPTION */}
                         <div className="bg-card p-6 rounded-lg border">
@@ -849,21 +821,58 @@ const Addproduct = () => {
 
                         {/* PRICE FIELDS */}
                         <div className="space-y-6">
-                            {/* MRP */}
+                            {/* MRP WITH TYPE SELECTION */}
                             <div className="bg-card p-6 rounded-lg border">
-                                <Label className="font-bold text-lg">Maximum Retail Price (MRP) *</Label>
+                                <Label className="font-bold text-lg">
+                                    {mrpType === "with-gst" ? "Product Price (MRP with GST)" : "Product Price (MRP without GST)"} *
+                                </Label>
+                                
+                                {/* MRP Type Selection */}
+                                <div className="mt-3 mb-4">
+                                    <Label className="text-sm font-medium mb-2 block">Select MRP Type</Label>
+                                    <div className="flex gap-4">
+                                        <label className="flex items-center gap-2">
+                                            <input
+                                                type="radio"
+                                                value="without-gst"
+                                                checked={mrpType === "without-gst"}
+                                                onChange={() => setMrpType("without-gst")}
+                                                className="w-4 h-4"
+                                                disabled={submitting || priceType === "order-wise"}
+                                            />
+                                            <span>Without GST</span>
+                                        </label>
+                                        <label className="flex items-center gap-2">
+                                            <input
+                                                type="radio"
+                                                value="with-gst"
+                                                checked={mrpType === "with-gst"}
+                                                onChange={() => setMrpType("with-gst")}
+                                                className="w-4 h-4"
+                                                disabled={submitting || priceType === "order-wise"}
+                                            />
+                                            <span>With GST</span>
+                                        </label>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground mt-2">
+                                        {mrpType === "without-gst" 
+                                            ? "GST will be calculated and added to the base price"
+                                            : "GST is already included in the price"}
+                                    </p>
+                                </div>
+
                                 <Input
                                     disabled={priceType === "order-wise" || submitting}
                                     value={mrp}
                                     onChange={(e) => setMrp(e.target.value)}
-                                    className="mt-3 h-12"
+                                    className="h-12"
                                     placeholder="0.00"
                                     type="number"
                                 />
                             </div>
 
-                            {/* GST INPUT - STEP 3 */}
-                            {business?.gstApplicable && (
+                            {/* GST INPUT - ONLY SHOW IF APPLICABLE AND MRP IS WITHOUT GST */}
+                            {business?.gstApplicable && mrpType === "without-gst" && (
                                 <div className="bg-card p-6 rounded-lg border">
                                     <Label className="font-bold text-lg">GST Rate/Amount *</Label>
                                     
@@ -902,12 +911,12 @@ const Addproduct = () => {
                             )}
 
                             {/* GST CALCULATION DISPLAY */}
-                            {business?.gstApplicable && mrp && (
+                            {business?.gstApplicable && mrp && mrpType === "without-gst" && (
                                 <div className="bg-card p-6 rounded-lg border">
                                     <Label className="font-bold text-lg">GST Calculation</Label>
                                     <div className="mt-3 space-y-2">
                                         <div className="flex justify-between">
-                                            <span>Base Price (MRP):</span>
+                                            <span>Base Price (MRP without GST):</span>
                                             <span>₹{Number(mrp).toFixed(2)}</span>
                                         </div>
                                         <div className="flex justify-between">
@@ -922,32 +931,32 @@ const Addproduct = () => {
                                 </div>
                             )}
 
-                            {/* DISCOUNT INPUT */}
+                            {/* DISCOUNT SECTION */}
                             <div className="bg-card p-6 rounded-lg border">
                                 <Label className="font-bold text-lg">Discount</Label>
                                 
-                                {/* Percentage Input */}
-                                <div className="mt-3">
-                                    <Label className="text-sm font-medium mb-2 block">Discount Percentage (%)</Label>
-                                    <Input
-                                        disabled={priceType === "order-wise" || submitting}
-                                        value={discount}
-                                        onChange={(e) => handleDiscountChange(e.target.value)}
-                                        className="h-12 mb-3"
-                                        placeholder="Enter discount percentage"
-                                        type="number"
-                                    />
-                                </div>
-
                                 {/* Amount Input */}
-                                <div>
+                                <div className="mt-3">
                                     <Label className="text-sm font-medium mb-2 block">Discount Amount (₹)</Label>
                                     <Input
                                         disabled={priceType === "order-wise" || submitting}
                                         value={discountAmount}
                                         onChange={(e) => handleDiscountAmountChange(e.target.value)}
-                                        className="h-12"
+                                        className="h-12 mb-3"
                                         placeholder="Enter discount amount"
+                                        type="number"
+                                    />
+                                </div>
+
+                                {/* Percentage Input */}
+                                <div>
+                                    <Label className="text-sm font-medium mb-2 block">Discount Percentage (%)</Label>
+                                    <Input
+                                        disabled={priceType === "order-wise" || submitting}
+                                        value={discount}
+                                        onChange={(e) => handleDiscountChange(e.target.value)}
+                                        className="h-12"
+                                        placeholder="Enter discount percentage"
                                         type="number"
                                     />
                                 </div>

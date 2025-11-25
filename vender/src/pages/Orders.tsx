@@ -62,7 +62,7 @@ const Orders = () => {
             ) : (
               orders.map((order) => {
                 const customer = order.userDetails;
-                const totalAmount = order.orderSummary?.total || 0;
+const totalAmount = Math.round(order.orderSummary?.total || 0);
                 const paymentStatus = order.paymentDetails?.status || "Pending";
                 const orderStatus = order.orderStatus?.currentStatus || "Pending";
                 const itemsCount = order.orderSummary?.itemsCount || order.orderItems.length;
