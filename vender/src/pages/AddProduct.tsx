@@ -22,7 +22,6 @@ const Addproduct = () => {
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [categoriesLoading, setCategoriesLoading] = useState(false);
-    // const [subcategoriesLoading, setSubcategoriesLoading] = useState(false); // REMOVED: Not used
     const [addingSubcategory, setAddingSubcategory] = useState(false);
 
     // ITEM TYPE (Product / Service)
@@ -64,12 +63,12 @@ const Addproduct = () => {
     const [discount, setDiscount] = useState("");
     const [afterDiscount, setAfterDiscount] = useState("");
     const [finalAmount, setFinalAmount] = useState("");
-    // REMOVED: const [commission] = useState(20);
 
-    // 💰 NEW STATES for Flexible Pricing Calculations
+    // 💰 UPDATED STATES for Flexible Pricing Calculations
     const [gstAmount, setGstAmount] = useState("");
     const [discountAmount, setDiscountAmount] = useState("");
 
+    // Input type states
     const [gstInputType, setGstInputType] = useState('percentage');
     const [discountInputType, setDiscountInputType] = useState('percentage');
 
@@ -92,7 +91,7 @@ const Addproduct = () => {
         load();
     }, [vendorId]);
 
-    /* ---------------- SKU PREVIEW (Frontend only) ---------------- */
+    /* ---------------- SKU PREVIEW ---------------- */
     const previewSKU = () => {
         if (!vendorId || !itemName) return "";
         const vendorPart = vendorId.slice(-3).toUpperCase();
@@ -122,8 +121,7 @@ const Addproduct = () => {
         }
     }, [category, categories]);
 
-
-    /* ---------------- NEW: ADD SUBCATEGORY HANDLER ---------------- */
+    /* ---------------- ADD SUBCATEGORY HANDLER ---------------- */
     const addNewSubcategory = async () => {
         const subName = newSubcategory.trim();
         if (!subName || !category) {
@@ -134,21 +132,17 @@ const Addproduct = () => {
         setAddingSubcategory(true);
         try {
             const res = await axios.post(
-                // API call now uses the parent category ID in the URL
                 `https://api.apexbee.in/api/categories/${category}/subcategories`,
-                { name: subName } // Send the new subcategory name in the body
+                { name: subName }
             );
 
-            // Update local state based on the response
             setCategories(prevCategories =>
                 prevCategories.map(cat =>
                     cat._id === category ? res.data.updatedCategory : cat
                 )
             );
 
-            // Set the newly created subcategory as selected
             setSubcategory(res.data.newSubcategoryId);
-
             setNewSubcategory("");
             alert(`${subName} added successfully to the category!`);
 
@@ -160,28 +154,65 @@ const Addproduct = () => {
         }
     };
 
-    // 💰 NEW HANDLERS for Price Input Types (Keeping for completeness)
+    /* ---------------- UPDATED: GST HANDLERS ---------------- */
     const handleGstRateChange = (value) => {
-        setGstInputType('percentage');
+        const numValue = Number(value) || 0;
         setGstRate(value);
+        
+        if (priceType !== "order-wise" && mrp && numValue > 0) {
+            const basePrice = Number(mrp);
+            const calculatedGstAmount = (basePrice * numValue) / 100;
+            setGstAmount(calculatedGstAmount.toFixed(2));
+        } else {
+            setGstAmount("");
+        }
     };
 
-    const handleGstAmountChange = (e) => {
-        setGstInputType('amount');
-        setGstAmount(e.target.value);
+    const handleGstAmountChange = (value) => {
+        const numValue = Number(value) || 0;
+        setGstAmount(value);
+        
+        if (priceType !== "order-wise" && mrp && numValue > 0) {
+            const basePrice = Number(mrp);
+            const calculatedGstRate = (numValue / basePrice) * 100;
+            setGstRate(calculatedGstRate.toFixed(2));
+        } else {
+            setGstRate("");
+        }
     };
 
-    const handleDiscountChange = (e) => {
-        setDiscountInputType('percentage');
-        setDiscount(e.target.value);
+    /* ---------------- UPDATED: DISCOUNT HANDLERS ---------------- */
+    const handleDiscountChange = (value) => {
+        const numValue = Number(value) || 0;
+        setDiscount(value);
+        
+        if (priceType !== "order-wise" && mrp && numValue > 0) {
+            const basePrice = Number(mrp);
+            const gstAmt = Number(gstAmount) || 0;
+            const priceWithGST = basePrice + gstAmt;
+            const calculatedDiscountAmount = (priceWithGST * numValue) / 100;
+            setDiscountAmount(calculatedDiscountAmount.toFixed(2));
+        } else {
+            setDiscountAmount("");
+        }
     };
 
-    const handleDiscountAmountChange = (e) => {
-        setDiscountInputType('amount');
-        setDiscountAmount(e.target.value);
+    const handleDiscountAmountChange = (value) => {
+        const numValue = Number(value) || 0;
+        setDiscountAmount(value);
+        
+        if (priceType !== "order-wise" && mrp && numValue > 0) {
+            const basePrice = Number(mrp);
+            const gstAmt = Number(gstAmount) || 0;
+            const priceWithGST = basePrice + gstAmt;
+            const calculatedDiscountRate = (numValue / priceWithGST) * 100;
+            setDiscount(calculatedDiscountRate.toFixed(2));
+        } else {
+            setDiscount("");
+        }
     };
 
-    /* ---------------- UPDATED: PRICE CALCULATIONS (MRP, GST, Discount) ---------------- */
+    /* ---------------- UPDATED: PRICE CALCULATIONS ---------------- */
     useEffect(() => {
         if (priceType === "order-wise") {
             setAfterDiscount("");
@@ -193,66 +224,64 @@ const Addproduct = () => {
         if (!basePrice) {
             setAfterDiscount("");
             setFinalAmount("");
-            setGstAmount("");
-            setDiscountAmount("");
             return;
         }
 
-        // --- 1. DETERMINE GST (Rate/Percentage vs. Amount) ---
-        let actualGstRate = 0;
-        let calculatedGstAmount = 0;
-
-        if (business?.gstApplicable) {
-            if (gstInputType === 'percentage') {
-                actualGstRate = Number(gstRate) || 0;
-                calculatedGstAmount = (basePrice * actualGstRate) / 100;
-                setGstAmount(calculatedGstAmount.toFixed(2));
-            } else if (gstInputType === 'amount') {
-                calculatedGstAmount = Number(gstAmount) || 0;
-                actualGstRate = (calculatedGstAmount / basePrice) * 100;
-                setGstRate(isNaN(actualGstRate) || !isFinite(actualGstRate) ? "" : actualGstRate.toFixed(2));
-            }
-        } else {
-            // If GST is not applicable, clear fields and set amount/rate to zero
-            setGstRate("");
-            setGstAmount("");
-            calculatedGstAmount = 0; // Ensure the variable used below is zero
+        // Calculate GST amount if not already set
+        let actualGstAmount = Number(gstAmount) || 0;
+        if (business?.gstApplicable && gstInputType === 'percentage' && gstRate) {
+            actualGstAmount = (basePrice * Number(gstRate)) / 100;
+            setGstAmount(actualGstAmount.toFixed(2));
         }
 
-        const priceWithGST = basePrice + calculatedGstAmount;
+        const priceWithGST = basePrice + actualGstAmount;
 
-        // --- 2. DETERMINE DISCOUNT (Percentage vs. Amount) ---
-        let actualDiscountPercentage = 0;
-        let calculatedDiscountAmount = 0;
-
-        // Discount is applied on (Base Price + GST)
-        if (discountInputType === 'percentage') {
-            actualDiscountPercentage = Number(discount) || 0;
-            calculatedDiscountAmount = (priceWithGST * actualDiscountPercentage) / 100;
-            setDiscountAmount(calculatedDiscountAmount.toFixed(2));
-        } else if (discountInputType === 'amount') {
-            calculatedDiscountAmount = Number(discountAmount) || 0;
-            // Prevent division by zero if priceWithGST is 0
-            if (priceWithGST > 0) {
-                actualDiscountPercentage = (calculatedDiscountAmount / priceWithGST) * 100;
-            } else {
-                actualDiscountPercentage = 0;
-            }
-            setDiscount(isNaN(actualDiscountPercentage) || !isFinite(actualDiscountPercentage) ? "" : actualDiscountPercentage.toFixed(2));
+        // Calculate discount amount if not already set
+        let actualDiscountAmount = Number(discountAmount) || 0;
+        if (discountInputType === 'percentage' && discount) {
+            actualDiscountAmount = (priceWithGST * Number(discount)) / 100;
+            setDiscountAmount(actualDiscountAmount.toFixed(2));
         }
 
-        // Price after discount (The final selling price to the customer)
-        const ad = priceWithGST - calculatedDiscountAmount;
-        setAfterDiscount(isNaN(ad) ? "" : ad.toFixed(2));
+        // Price after discount
+        const ad = priceWithGST - actualDiscountAmount;
+        setAfterDiscount(ad > 0 ? ad.toFixed(2) : "0.00");
 
-        // FINAL AMOUNT YOU GET (Currently same as afterDiscount, as commission is managed by admin)
-        // This is the amount the vendor *expects* to get *before* final admin commission deduction.
-        const final = ad; // Commission removed
-        setFinalAmount(isNaN(final) ? "" : final.toFixed(2));
+        // Final amount (before admin commission)
+        setFinalAmount(ad > 0 ? ad.toFixed(2) : "0.00");
+
     }, [mrp, discount, gstRate, priceType, gstInputType, gstAmount, discountInputType, discountAmount, business]);
 
+    /* ---------------- RESET CALCULATIONS WHEN MRP CHANGES ---------------- */
+    useEffect(() => {
+        if (priceType === "order-wise") return;
+        
+        const basePrice = Number(mrp) || 0;
+        if (!basePrice) {
+            setGstAmount("");
+            setDiscountAmount("");
+            setAfterDiscount("");
+            setFinalAmount("");
+            return;
+        }
 
-    /* ---------------- IMAGE HANDLER WITH PREVIEW (Keeping for completeness) ---------------- */
+        // Recalculate GST if in percentage mode
+        if (business?.gstApplicable && gstInputType === 'percentage' && gstRate) {
+            const calculatedGstAmount = (basePrice * Number(gstRate)) / 100;
+            setGstAmount(calculatedGstAmount.toFixed(2));
+        }
+
+        // Recalculate discount if in percentage mode
+        if (discountInputType === 'percentage' && discount) {
+            const gstAmt = Number(gstAmount) || 0;
+            const priceWithGST = basePrice + gstAmt;
+            const calculatedDiscountAmount = (priceWithGST * Number(discount)) / 100;
+            setDiscountAmount(calculatedDiscountAmount.toFixed(2));
+        }
+
+    }, [mrp]);
+
+    /* ---------------- IMAGE HANDLER ---------------- */
     const handleImageUpload = (e) => {
         const files = Array.from(e.target.files);
         setImages(files);
@@ -274,7 +303,7 @@ const Addproduct = () => {
         setImagePreviews(newPreviews);
     };
 
-    /* ---------------- ADD GODOWN (Keeping for completeness) ---------------- */
+    /* ---------------- ADD GODOWN ---------------- */
     const addGodown = () => {
         const v = newGodown.trim();
         if (!v) return;
@@ -283,7 +312,7 @@ const Addproduct = () => {
         setNewGodown("");
     };
 
-    /* ---------------- ADD MEASURING UNIT (Keeping for completeness) ---------------- */
+    /* ---------------- ADD MEASURING UNIT ---------------- */
     const addMeasureUnit = () => {
         const v = customUnitInput.trim();
         if (!v) return;
@@ -292,7 +321,7 @@ const Addproduct = () => {
         setCustomUnitInput("");
     };
 
-    /* ---------------- STEP NAVIGATION (Keeping for completeness) ---------------- */
+    /* ---------------- STEP NAVIGATION ---------------- */
     const nextStep = () => {
         if (currentStep === 1 && (!category || !itemName)) {
             alert("Please fill required fields (Category & Item Name).");
@@ -305,7 +334,7 @@ const Addproduct = () => {
         setCurrentStep(prev => prev - 1);
     };
 
-    /* ---------------- SUBMIT HANDLER (Commission field removed from payload) ---------------- */
+    /* ---------------- SUBMIT HANDLER ---------------- */
     const handleSubmit = async () => {
         if (!category || !itemName) {
             alert("Please fill required fields (Category & Item Name).");
@@ -320,21 +349,16 @@ const Addproduct = () => {
         fd.append("category", category);
         fd.append("subcategory", subcategory);
         fd.append("itemName", itemName);
-
         fd.append("gstRate", gstRate || "");
-
         fd.append("description", description || "");
-
         fd.append("measuringUnit", itemType === "Service" ? "" : measuringUnit);
         fd.append("hsnCode", itemType === "Service" ? "" : hsnCode);
         fd.append("godown", itemType === "Service" ? "" : godown);
         fd.append("openStock", itemType === "Service" ? 0 : openStock);
         fd.append("asOnDate", itemType === "Service" ? "" : asOnDate);
-
         fd.append("mrp", mrp || "");
         fd.append("discount", discount || "");
         fd.append("afterDiscount", afterDiscount || "");
-        // REMOVED: fd.append("commission", commission || 0); // Commission field removed
         fd.append("finalAmount", finalAmount || "");
         fd.append("priceType", priceType);
 
@@ -357,7 +381,7 @@ const Addproduct = () => {
         }
     };
 
-    /* ---------------- LOADING COMPONENTS (Keeping for completeness) ---------------- */
+    /* ---------------- LOADING COMPONENTS ---------------- */
     const LoadingSpinner = ({ size = "default" }) => (
         <div className={`flex items-center justify-center ${
             size === "sm" ? "py-1" : "py-4"
@@ -375,7 +399,7 @@ const Addproduct = () => {
         </div>
     );
 
-    /* ---------------- STEP INDICATOR (Keeping for completeness) ---------------- */
+    /* ---------------- STEP INDICATOR ---------------- */
     const StepIndicator = () => (
         <div className="flex justify-center mb-8">
             <div className="flex items-center">
@@ -403,7 +427,6 @@ const Addproduct = () => {
         </div>
     );
 
-    /* ---------------- UI ---------------- */
     return (
         <AppLayout>
             <div className="max-w-5xl mx-auto px-5 pb-10">
@@ -474,12 +497,11 @@ const Addproduct = () => {
                             )}
                         </div>
 
-                        {/* NEW: SUBCATEGORY */}
+                        {/* SUBCATEGORY */}
                         {category && (
                             <div className="bg-card p-6 rounded-lg border">
                                 <Label className="font-bold text-lg">Subcategory</Label>
                                 <div className="mt-3 space-y-4">
-                                    {/* Existing Subcategories Selector */}
                                     <Select value={subcategory} onValueChange={setSubcategory} disabled={!category || submitting}>
                                         <SelectTrigger className="h-12">
                                             <SelectValue placeholder="Select Subcategory (Optional)" />
@@ -492,7 +514,6 @@ const Addproduct = () => {
                                             ))}
                                         </SelectContent>
                                     </Select>
-
 
                                     {/* Add New Subcategory Form */}
                                     <div className="p-2 border-t mt-1">
@@ -530,38 +551,41 @@ const Addproduct = () => {
                             />
                         </div>
 
-                        {/* 💰 FLEXIBLE GST INPUT (Percentage or Amount) - Displayed here for consistency */}
+                        {/* GST INPUT - STEP 1 */}
                         {business?.gstApplicable && (
                             <div className="bg-card p-6 rounded-lg border">
                                 <Label className="font-bold text-lg">GST Rate/Amount *</Label>
-                                <div className="flex gap-3 items-center mt-3">
-                                    {/* Input Field (Swaps between % and ₹ input) */}
-                                    <div className="flex-1">
-                                        <Input
-                                            value={gstInputType === 'percentage' ? gstRate : gstAmount}
-                                            onChange={gstInputType === 'percentage' ? (e) => handleGstRateChange(e.target.value) : handleGstAmountChange}
-                                            className="h-12"
-                                            placeholder={gstInputType === 'percentage' ? "GST %" : "GST Amount (₹)"}
-                                            type="number"
-                                            disabled={submitting || priceType === "order-wise"}
-                                        />
-                                    </div>
-
-                                    {/* Toggle Button */}
-                                    <Button
-                                        onClick={() => setGstInputType(gstInputType === 'percentage' ? 'amount' : 'percentage')}
-                                        variant="secondary"
-                                        className="h-12"
+                                
+                                {/* Percentage Input */}
+                                <div className="mt-3">
+                                    <Label className="text-sm font-medium mb-2 block">GST Percentage (%)</Label>
+                                    <Input
+                                        value={gstRate}
+                                        onChange={(e) => handleGstRateChange(e.target.value)}
+                                        className="h-12 mb-3"
+                                        placeholder="Enter GST percentage"
+                                        type="number"
                                         disabled={submitting || priceType === "order-wise"}
-                                    >
-                                        {gstInputType === 'percentage' ? 'Use Amt' : 'Use %'}
-                                    </Button>
+                                    />
                                 </div>
+
+                                {/* Amount Input */}
+                                <div>
+                                    <Label className="text-sm font-medium mb-2 block">GST Amount (₹)</Label>
+                                    <Input
+                                        value={gstAmount}
+                                        onChange={(e) => handleGstAmountChange(e.target.value)}
+                                        className="h-12"
+                                        placeholder="Enter GST amount"
+                                        type="number"
+                                        disabled={submitting || priceType === "order-wise"}
+                                    />
+                                </div>
+
                                 <p className="text-sm text-muted-foreground mt-2">
-                                    Current GST:
-                                    **{gstInputType === 'percentage'
-                                        ? `₹${(Number(gstAmount) || 0).toFixed(2)} (${(Number(gstRate) || 0).toFixed(2)}%)`
-                                        : `${(Number(gstRate) || 0).toFixed(2)}% (₹${(Number(gstAmount) || 0).toFixed(2)})`}**
+                                    {gstRate && gstAmount ? 
+                                        `GST: ${gstRate}% = ₹${gstAmount}` : 
+                                        "Enter either percentage or amount to calculate the other"}
                                 </p>
                             </div>
                         )}
@@ -581,8 +605,6 @@ const Addproduct = () => {
                         {/* IMAGES WITH PREVIEW */}
                         <div className="bg-card p-6 rounded-lg border">
                             <Label className="font-bold text-lg">Upload Images</Label>
-
-                            {/* File Input with Custom Styling */}
                             <div className="mt-4 border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
                                 <input
                                     type="file"
@@ -636,7 +658,7 @@ const Addproduct = () => {
                     </div>
                 )}
 
-                {/* STEP 2: STOCK SECTION (Keeping for completeness) */}
+                {/* STEP 2: STOCK SECTION */}
                 {currentStep === 2 && itemType === "product" && (
                     <div className="space-y-6">
                         <h2 className="text-2xl font-bold text-center mb-6">Stock Details</h2>
@@ -840,38 +862,41 @@ const Addproduct = () => {
                                 />
                             </div>
 
-                            {/* 💰 FLEXIBLE GST INPUT (Percentage or Amount) - Repeated in Step 3 for convenience */}
+                            {/* GST INPUT - STEP 3 */}
                             {business?.gstApplicable && (
                                 <div className="bg-card p-6 rounded-lg border">
                                     <Label className="font-bold text-lg">GST Rate/Amount *</Label>
-                                    <div className="flex gap-3 items-center mt-3">
-                                        {/* Input Field (Swaps between % and ₹ input) */}
-                                        <div className="flex-1">
-                                            <Input
-                                                value={gstInputType === 'percentage' ? gstRate : gstAmount}
-                                                onChange={gstInputType === 'percentage' ? (e) => handleGstRateChange(e.target.value) : handleGstAmountChange}
-                                                className="h-12"
-                                                placeholder={gstInputType === 'percentage' ? "GST %" : "GST Amount (₹)"}
-                                                type="number"
-                                                disabled={submitting || priceType === "order-wise"}
-                                            />
-                                        </div>
-
-                                        {/* Toggle Button */}
-                                        <Button
-                                            onClick={() => setGstInputType(gstInputType === 'percentage' ? 'amount' : 'percentage')}
-                                            variant="secondary"
-                                            className="h-12"
+                                    
+                                    {/* Percentage Input */}
+                                    <div className="mt-3">
+                                        <Label className="text-sm font-medium mb-2 block">GST Percentage (%)</Label>
+                                        <Input
+                                            value={gstRate}
+                                            onChange={(e) => handleGstRateChange(e.target.value)}
+                                            className="h-12 mb-3"
+                                            placeholder="Enter GST percentage"
+                                            type="number"
                                             disabled={submitting || priceType === "order-wise"}
-                                        >
-                                            {gstInputType === 'percentage' ? 'Use Amt' : 'Use %'}
-                                        </Button>
+                                        />
                                     </div>
+
+                                    {/* Amount Input */}
+                                    <div>
+                                        <Label className="text-sm font-medium mb-2 block">GST Amount (₹)</Label>
+                                        <Input
+                                            value={gstAmount}
+                                            onChange={(e) => handleGstAmountChange(e.target.value)}
+                                            className="h-12"
+                                            placeholder="Enter GST amount"
+                                            type="number"
+                                            disabled={submitting || priceType === "order-wise"}
+                                        />
+                                    </div>
+
                                     <p className="text-sm text-muted-foreground mt-2">
-                                        Current GST:
-                                        **{gstInputType === 'percentage'
-                                            ? `₹${(Number(gstAmount) || 0).toFixed(2)} (${(Number(gstRate) || 0).toFixed(2)}%)`
-                                            : `${(Number(gstRate) || 0).toFixed(2)}% (₹${(Number(gstAmount) || 0).toFixed(2)})`}**
+                                        {gstRate && gstAmount ? 
+                                            `GST: ${gstRate}% = ₹${gstAmount}` : 
+                                            "Enter either percentage or amount to calculate the other"}
                                     </p>
                                 </div>
                             )}
@@ -897,37 +922,40 @@ const Addproduct = () => {
                                 </div>
                             )}
 
-                            {/* 💰 FLEXIBLE DISCOUNT INPUT (Percentage or Amount) */}
+                            {/* DISCOUNT INPUT */}
                             <div className="bg-card p-6 rounded-lg border">
                                 <Label className="font-bold text-lg">Discount</Label>
-                                <div className="flex gap-3 items-center mt-3">
-                                    {/* Input Field (Swaps between % and ₹ input) */}
-                                    <div className="flex-1">
-                                        <Input
-                                            disabled={priceType === "order-wise" || submitting}
-                                            value={discountInputType === 'percentage' ? discount : discountAmount}
-                                            onChange={discountInputType === 'percentage' ? handleDiscountChange : handleDiscountAmountChange}
-                                            className="h-12"
-                                            placeholder={discountInputType === 'percentage' ? "Discount %" : "Discount Amount (₹)"}
-                                            type="number"
-                                        />
-                                    </div>
-
-                                    {/* Toggle Button */}
-                                    <Button
-                                        onClick={() => setDiscountInputType(discountInputType === 'percentage' ? 'amount' : 'percentage')}
-                                        variant="secondary"
-                                        className="h-12"
+                                
+                                {/* Percentage Input */}
+                                <div className="mt-3">
+                                    <Label className="text-sm font-medium mb-2 block">Discount Percentage (%)</Label>
+                                    <Input
                                         disabled={priceType === "order-wise" || submitting}
-                                    >
-                                        {discountInputType === 'percentage' ? 'Use Amt' : 'Use %'}
-                                    </Button>
+                                        value={discount}
+                                        onChange={(e) => handleDiscountChange(e.target.value)}
+                                        className="h-12 mb-3"
+                                        placeholder="Enter discount percentage"
+                                        type="number"
+                                    />
                                 </div>
+
+                                {/* Amount Input */}
+                                <div>
+                                    <Label className="text-sm font-medium mb-2 block">Discount Amount (₹)</Label>
+                                    <Input
+                                        disabled={priceType === "order-wise" || submitting}
+                                        value={discountAmount}
+                                        onChange={(e) => handleDiscountAmountChange(e.target.value)}
+                                        className="h-12"
+                                        placeholder="Enter discount amount"
+                                        type="number"
+                                    />
+                                </div>
+
                                 <p className="text-sm text-muted-foreground mt-2">
-                                    Current Discount:
-                                    **{discountInputType === 'percentage'
-                                        ? `₹${(Number(discountAmount) || 0).toFixed(2)} (${(Number(discount) || 0).toFixed(2)}%)`
-                                        : `${(Number(discount) || 0).toFixed(2)}% (₹${(Number(discountAmount) || 0).toFixed(2)})`}**
+                                    {discount && discountAmount ? 
+                                        `Discount: ${discount}% = ₹${discountAmount}` : 
+                                        "Enter either percentage or amount to calculate the other"}
                                 </p>
                             </div>
 
@@ -941,7 +969,7 @@ const Addproduct = () => {
                                 />
                             </div>
 
-                            {/* FINAL AMOUNT YOU GET (UPDATED LOGIC) */}
+                            {/* FINAL AMOUNT YOU GET */}
                             <div className="bg-card p-6 rounded-lg border">
                                 <Label className="font-bold text-lg">Amount You Receive (Before Admin Commission)</Label>
                                 <Input
@@ -949,7 +977,6 @@ const Addproduct = () => {
                                     value={finalAmount}
                                     className="mt-3 h-12 bg-muted text-lg font-bold text-green-600"
                                 />
-                                {/* IMPORTANT NOTE ADDED HERE */}
                                 <blockquote className="mt-4 text-sm text-muted-foreground border-l-4 pl-4 border-yellow-500 bg-yellow-50">
                                     **Important Note:** The displayed **Amount You Receive** is before the final **Admin Commission** is applied. The Admin will review the product details and set the commission/final approval before the product goes live.
                                 </blockquote>

@@ -293,7 +293,7 @@ const Category = () => {
                                             <div className="flex items-baseline gap-2">
                                                 {/* Final Amount is the price after commission */}
                                                 <span className="text-lg font-bold text-navy">
-                                                    Rs. {product.finalAmount?.toFixed(2) || 'N/A'} 
+                                                    Rs. {product.afterDiscount?.toFixed(2) || 'N/A'} 
                                                 </span>
                                                 {product.userPrice && (
                                                     <span className="text-sm text-muted-foreground line-through">

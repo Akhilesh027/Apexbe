@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { Plus, Edit, Check } from "lucide-react";
+import { Plus, Edit } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -197,12 +197,19 @@ const Checkout = () => {
       return;
     }
 
-    if (selectedPayment === "wallet" && walletBalance < orderDetails.total) {
+    // Calculate totals from cart items
+    const calculatedSubtotal = orderDetails.items.reduce((acc, item) => {
+      const price = item.price || item.afterDiscount || 0;
+      const quantity = item.quantity || 1;
+      return acc + (price * quantity);
+    }, 0);
+
+    const calculatedTotal = calculatedSubtotal + (orderDetails.shipping || 0) - (orderDetails.discount || 0);
+
+    if (selectedPayment === "wallet" && walletBalance < calculatedTotal) {
       toast({
         title: "Insufficient Wallet",
-        description: `Wallet balance ₹${walletBalance.toFixed(
-          2
-        )} is not enough`,
+        description: `Wallet balance ₹${walletBalance.toFixed(2)} is not enough`,
         variant: "destructive",
       });
       return;
@@ -212,33 +219,84 @@ const Checkout = () => {
     try {
       const user = JSON.parse(localStorage.getItem("user"));
       const token = localStorage.getItem("token");
-      const mappedItems = orderDetails.items.map(item => ({
-  productId: item._id,
-  name: item.itemName,
-  price: item.price || item.finalAmount || 0,
-  quantity: item.quantity || 1,
-  image: item.images?.[0] || "/placeholder.png",
-  discount: item.discount || 0,
-  commission: item.commission || 0,
-  finalAmount: item.finalAmount || (item.afterDiscount || item.userPrice) - (item.commission || 0),
-}));
 
+      if (!user || !token) {
+        toast({
+          title: "Login required",
+          description: "Please login again",
+          variant: "destructive",
+        });
+        navigate("/login");
+        return;
+      }
 
+      // **FIXED: Proper item mapping with correct prices**
+      const mappedItems = orderDetails.items.map((item) => {
+        // Get the correct price - this is critical
+        const price = item.price !== undefined 
+          ? item.price 
+          : item.afterDiscount !== undefined 
+          ? item.afterDiscount 
+          : 0;
+
+        const quantity = item.quantity || 1;
+
+        return {
+          productId: item.productId || item._id || item.id,
+          name: item.itemName || item.name || "Unnamed Product",
+          price: Number(price), // Ensure it's a number
+          quantity: Number(quantity),
+          image: item.images?.[0] || item.image || "/placeholder.png",
+          // Include additional properties if available
+          color: item.selectedColor || item.color || 'default',
+          size: item.size || 'One Size'
+        };
+      });
+
+      // **FIXED: Use consistent totals**
+      const finalSubtotal = mappedItems.reduce(
+        (acc, item) => acc + (item.price * item.quantity),
+        0
+      );
+
+      const finalTotal = Math.max(0, finalSubtotal + (orderDetails.shipping || 0) - (orderDetails.discount || 0));
+
+      // **FIXED: Proper order data structure that matches backend expectations**
       const orderData = {
         userId: user.id,
         shippingAddress: selectedAddress,
+        
         paymentDetails: {
           method: selectedPayment,
-          amount: orderDetails.total,
-          transactionId:
-            selectedPayment === "wallet"
-              ? `WALLET_${Date.now()}`
-              : `TXN_${Date.now()}`,
+          amount: finalTotal,
+          status: "pending",
+          transactionId: selectedPayment === "wallet" 
+            ? `WALLET_${Date.now()}` 
+            : `TXN_${Date.now()}`,
         },
+
         orderItems: mappedItems,
-        orderSummary: orderDetails,
+
+        orderSummary: {
+          itemsCount: mappedItems.reduce((acc, item) => acc + item.quantity, 0),
+          subtotal: finalSubtotal,
+          shipping: orderDetails.shipping || 0,
+          discount: orderDetails.discount || 0,
+          total: finalTotal,
+          tax: 0,
+        },
+
+        userDetails: {
+          userId: user.id,
+          name: user.name || user.username,
+          email: user.email,
+          phone: selectedAddress.phone
+        }
       };
 
+      console.log("Sending order data to backend:", orderData);
+
+      // Save Order
       const res = await fetch("https://api.apexbee.in/api/orders", {
         method: "POST",
         headers: {
@@ -247,32 +305,36 @@ const Checkout = () => {
         },
         body: JSON.stringify(orderData),
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.message || "Order failed");
 
-      // Deduct wallet
-      if (selectedPayment === "wallet") {
-        await fetch(`https://api.apexbee.in/api/user/wallet/deduct/${user.id}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ amount: orderDetails.total }),
-        });
+      const result = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(result.message || result.error || "Order failed");
       }
 
-   navigate("/order-success", {
-  state: { 
-    order: result.order, // pass the whole order object
-    paymentMethod: selectedPayment,
-  },
-});
+      // Clear cart after successful order
+      localStorage.removeItem("cart");
+
+      // Navigate to success page
+      navigate("/order-success", {
+        state: {
+          order: result.order,
+          paymentMethod: selectedPayment,
+          orderId: result.order?._id || result.order?.orderNumber,
+        },
+      });
+
+      toast({
+        title: "Order Placed!",
+        description: "Your order has been placed successfully",
+        variant: "default",
+      });
 
     } catch (err) {
+      console.error("Order error:", err);
       toast({
         title: "Order Failed",
-        description: err.message || "Failed to place order",
+        description: err.message || "Failed to place order. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -422,92 +484,95 @@ const Checkout = () => {
               </RadioGroup>
             </div>
           </div>
+
           {/* Right: Order Summary */}
           <div className="lg:col-span-1">
-            {" "}
             <div className="bg-muted/30 rounded-lg p-6 sticky top-4">
-              {" "}
               <div className="mb-6">
-                {" "}
-                <h3 className="font-semibold text-lg mb-4">
-                  Product Details
-                </h3>{" "}
+                <h3 className="font-semibold text-lg mb-4">Product Details</h3>
                 <div className="space-y-4">
-                  {" "}
-                  {orderDetails.items.map((item, index) => (
-                    <div
-                      key={item._id || item.productId || index}
-                      className="bg-white rounded-lg border p-4"
-                    >
-                      {" "}
-                      <div className="flex gap-4">
-                        {" "}
-                        <div className="w-20 h-20 bg-muted rounded-md flex-shrink-0 overflow-hidden">
-                          {" "}
-                          <img
-                            src={
-                              item.images?.[0] ||
-                              item.image ||
-                              "/placeholder.png"
-                            }
-                            alt={item.itemName || item.name}
-                            className="w-full h-full object-cover"
-                          />{" "}
-                        </div>{" "}
-                        <div className="flex-1 min-w-0">
-                          {" "}
-                          <h4 className="font-semibold text-sm mb-1 truncate">
-                            {item.itemName || item.name}
-                          </h4>{" "}
-                          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                            {" "}
-                            <span>Qty: {item.quantity || 1}</span>{" "}
-                            {item.selectedColor && (
-                              <span>Color: {item.selectedColor}</span>
-                            )}{" "}
-                            {item.size && <span>Size: {item.size}</span>}{" "}
-                          </div>{" "}
-                          <p className="font-semibold text-sm">
-                                 <span>₹{((item.price || item.finalAmount || item.salesPrice) * (item.quantity || 1)).toFixed(2)}</span>
+                  {orderDetails.items.map((item, index) => {
+                    const price = item.price || item.afterDiscount || 0;
+                    const quantity = item.quantity || 1;
+                    const itemTotal = price * quantity;
 
-                          </p>{" "}
-                        </div>{" "}
-                      </div>{" "}
-                    </div>
-                  ))}{" "}
-                </div>{" "}
-              </div>{" "}
-              {/* Order Summary */}{" "}
-           {/* Order Summary */}
-<div className="border-t border-gray-200 pt-4 space-y-2">
-  <div className="flex justify-between">
-    <span>Subtotal</span>
-    <span>₹{orderDetails.subtotal.toFixed(2)}</span>
-  </div>
+                    return (
+                      <div
+                        key={item._id || item.productId || index}
+                        className="bg-white rounded-lg border p-4"
+                      >
+                        <div className="flex gap-4">
+                          <div className="w-20 h-20 bg-muted rounded-md flex-shrink-0 overflow-hidden">
+                            <img
+                              src={
+                                item.images?.[0] ||
+                                item.image ||
+                                "/placeholder.png"
+                              }
+                              alt={item.itemName || item.name}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-sm mb-1 truncate">
+                              {item.itemName || item.name}
+                            </h4>
+                            <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                              <span>Qty: {quantity}</span>
+                              {item.selectedColor && (
+                                <span>Color: {item.selectedColor}</span>
+                              )}
+                              {item.size && <span>Size: {item.size}</span>}
+                            </div>
+                            <p className="font-semibold text-sm">
+                              ₹{itemTotal.toFixed(2)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              ₹{price.toFixed(2)} each
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
- 
-  <div className="flex justify-between">
-    <span>Shipping</span>
-    <span>₹{orderDetails.shipping.toFixed(2)}</span>
-  </div>
+              {/* Order Summary */}
+              <div className="border-t border-gray-200 pt-4 space-y-2">
+                <div className="flex justify-between">
+                  <span>Subtotal</span>
+                  <span>₹{orderDetails.subtotal.toFixed(2)}</span>
+                </div>
 
-  <div className="flex justify-between font-semibold text-lg">
-    <span>Total</span>
-    <span>₹{orderDetails.total.toFixed(2)}</span>
-  </div>
-</div>
+                {orderDetails.discount > 0 && (
+                  <div className="flex justify-between text-green-600">
+                    <span>Discount</span>
+                    <span>-₹{orderDetails.discount.toFixed(2)}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-between">
+                  <span>Shipping</span>
+                  <span>₹{orderDetails.shipping.toFixed(2)}</span>
+                </div>
+
+                <div className="flex justify-between font-semibold text-lg border-t pt-2">
+                  <span>Total</span>
+                  <span>₹{orderDetails.total.toFixed(2)}</span>
+                </div>
+              </div>
 
               <Button
                 className="w-full mt-6"
                 onClick={handlePlaceOrder}
                 disabled={isLoading}
               >
-                {" "}
-                {isLoading ? "Processing..." : "Place Order"}{" "}
-              </Button>{" "}
-            </div>{" "}
-          </div>{" "}
-        </div>{" "}
+                {isLoading ? "Processing..." : "Place Order"}
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Address Dialog */}

@@ -129,7 +129,7 @@ const ProductDetail = () => {
             userId: user.id,
             productId: product._id,
             name: product.itemName,
-            price: product.finalAmount,
+            price: product.afterDiscount,
             image: product.images?.[0],
             quantity,
             selectedColor,
@@ -158,7 +158,7 @@ const ProductDetail = () => {
             return;
         }
 
-        const subtotal = product.finalAmount * quantity;
+        const subtotal = product.afterDiscount * quantity;
         const discountAmount =
             product.userPrice > product.afterDiscount
                 ? (product.userPrice - product.afterDiscount) * quantity
@@ -236,7 +236,7 @@ const ProductDetail = () => {
                         <h1 className="text-3xl font-bold text-navy mb-4">{product.itemName}</h1>
 
                         <div className="mb-6">
-                            <span className="text-5xl font-bold text-navy">{formatCurrency(product.finalAmount)}</span>
+                            <span className="text-5xl font-bold text-navy">{formatCurrency(product.afterDiscount)}</span>
                             <span className="text-xl line-through text-gray-500 ml-2">
                                 {formatCurrency(product.userPrice)}
                             </span>

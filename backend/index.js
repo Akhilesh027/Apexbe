@@ -1654,9 +1654,20 @@ app.post("/api/orders", auth, async (req, res) => {
       shippingAddress,
       paymentDetails,
       orderItems: rawItems,
-      metadata,
-      frontendSummary
+      orderSummary: frontendSummary,
+      metadata
     } = req.body;
+
+    console.log("Received order data:", {
+      userId,
+      rawItems: rawItems?.map(item => ({
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        productId: item.productId
+      })),
+      frontendSummary
+    });
 
     // Validate required fields
     if (!userId || !shippingAddress || !rawItems || rawItems.length === 0) {
@@ -1678,51 +1689,74 @@ app.post("/api/orders", auth, async (req, res) => {
     let totalDiscount = 0;
 
     for (const item of rawItems) {
-      const productId = item._id || item.productId;
+      const productId = item.productId || item._id;
+      
+      if (!productId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Product ID missing for item: ${item.name}` 
+        });
+      }
+
       const product = await Products.findById(productId);
       if (!product) {
-        return res.status(400).json({ success: false, message: `Product "${item.itemName || item.name}" not found` });
+        return res.status(400).json({ 
+          success: false, 
+          message: `Product "${item.name}" not found` 
+        });
       }
 
-      const quantity = item.quantity ?? 1;
-      const price = item.userPrice ?? product.salesPrice ?? 0;
-      const discount = item.discount ?? 0;
-      const afterDiscount = item.afterDiscount ?? price - discount;
-      const commission = item.commission ?? 0;
-      const finalAmount = item.finalAmount ?? afterDiscount - commission;
-      const itemTotal = afterDiscount * quantity;
+      const quantity = Number(item.quantity) || 1;
+      
+      // **CRITICAL FIX: Use the price sent from frontend, not recalculate**
+      const price = Number(item.price) || 0;
+      
+      if (price <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid price for product "${item.name}"`
+        });
+      }
 
+      // Calculate item totals based on frontend price
+      const itemTotal = price * quantity;
+      
+      // Check stock
       if (product.openStock < quantity) {
-        return res.status(400).json({ success: false, message: `Insufficient stock for "${item.itemName || item.name}"` });
+        return res.status(400).json({ 
+          success: false, 
+          message: `Insufficient stock for "${item.name}". Available: ${product.openStock}, Requested: ${quantity}` 
+        });
       }
 
-      subtotal += price * quantity;
-      totalDiscount += discount * quantity;
+      subtotal += itemTotal;
 
       orderItems.push({
         productId: product._id,
-        name: item.itemName ?? item.name ?? product.name,
-        price,
-        quantity,
-        discount,
-        afterDiscount,
-        commission,
-        finalAmount,
-        itemTotal,
-        originalPrice: product.salesPrice ?? price,
-        image: item.images?.[0] || product.images?.[0] || "https://via.placeholder.com/150",
-        vendorId: product.vendorId
+        name: item.name || product.name,
+        price: price, // Use the price from frontend
+        quantity: quantity,
+        originalPrice: product.salesPrice || price,
+        image: item.image || product.images?.[0] || "https://via.placeholder.com/150",
+        vendorId: product.vendorId,
+        itemTotal: itemTotal,
+        // Include color/size if available
+        color: item.color || 'default',
+        size: item.size || 'One Size'
       });
     }
 
-    // Construct order summary
+    // **CRITICAL FIX: Use frontend summary OR calculate consistently**
     const orderSummary = {
-      itemsCount: orderItems.length,
-      subtotal,
-      discount: totalDiscount,
-      shipping: frontendSummary?.shipping ?? 0,
-      total: orderItems.reduce((acc, i) => acc + i.itemTotal, 0) + (frontendSummary?.shipping ?? 0)
+      itemsCount: orderItems.reduce((acc, item) => acc + item.quantity, 0),
+      subtotal: frontendSummary?.subtotal || subtotal,
+      discount: frontendSummary?.discount || 0,
+      shipping: frontendSummary?.shipping || 0,
+      tax: frontendSummary?.tax || 0,
+      total: frontendSummary?.total || (subtotal + (frontendSummary?.shipping || 0))
     };
+
+    console.log("Final order summary:", orderSummary);
 
     // Create order
     const orderData = {
@@ -1735,8 +1769,11 @@ app.post("/api/orders", auth, async (req, res) => {
       },
       shippingAddress,
       paymentDetails: {
-        ...paymentDetails,
-        status: paymentDetails?.method === "cod" ? "pending" : "completed"
+        method: paymentDetails?.method || "cod",
+        status: paymentDetails?.method === "cod" ? "pending" : "completed",
+        amount: orderSummary.total,
+        transactionId: paymentDetails?.transactionId,
+        paymentDate: paymentDetails?.method === "cod" ? null : new Date()
       },
       orderItems,
       orderSummary,
@@ -1754,7 +1791,8 @@ app.post("/api/orders", auth, async (req, res) => {
       },
       metadata: {
         ...metadata,
-        isFirstOrder
+        isFirstOrder,
+        source: 'cart'
       }
     };
 
@@ -1763,21 +1801,36 @@ app.post("/api/orders", auth, async (req, res) => {
 
     // Decrement product stock
     for (const item of orderItems) {
-      await Products.findByIdAndUpdate(item.productId, { $inc: { openStock: -item.quantity } });
+      await Products.findByIdAndUpdate(
+        item.productId, 
+        { $inc: { openStock: -item.quantity } }
+      );
     }
 
     // Deduct wallet if used
     if (paymentDetails?.method === "wallet") {
-      const walletAmount = orderSummary.total;
-      await fetch(`https://api.apexbee.in/api/user/wallet/deduct/${userId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${req.headers.authorization?.split(" ")[1]}` },
-        body: JSON.stringify({ amount: walletAmount })
-      });
+      try {
+        const walletRes = await fetch(`https://api.apexbee.in/api/user/wallet/deduct/${userId}`, {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json", 
+            Authorization: `Bearer ${req.headers.authorization?.split(" ")[1]}` 
+          },
+          body: JSON.stringify({ 
+            amount: orderSummary.total,
+            orderId: order._id 
+          })
+        });
+        
+        if (!walletRes.ok) {
+          console.warn("Wallet deduction failed but order was placed");
+        }
+      } catch (walletError) {
+        console.error("Wallet deduction error:", walletError);
+      }
     }
-  
 
-    // Referral reward
+    // Referral reward for first order
     let referralResult = null;
     if (isFirstOrder) {
       try {
@@ -1798,13 +1851,20 @@ app.post("/api/orders", auth, async (req, res) => {
       message: "Order created successfully",
       order,
       referral: isFirstOrder
-        ? { completed: !!referralResult, message: referralResult ? "Referral reward credited!" : "No referral found" }
+        ? { 
+            completed: !!referralResult, 
+            message: referralResult ? "Referral reward credited!" : "No referral found" 
+          }
         : null
     });
 
   } catch (error) {
     console.error("Error creating order:", error);
-    res.status(500).json({ success: false, message: "Server error while creating order" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error while creating order",
+      error: error.message 
+    });
   }
 });
 
