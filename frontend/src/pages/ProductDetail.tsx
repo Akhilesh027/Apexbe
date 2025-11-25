@@ -159,10 +159,7 @@ const ProductDetail = () => {
         }
 
         const subtotal = product.afterDiscount * quantity;
-        const discountAmount =
-            product.userPrice > product.afterDiscount
-                ? (product.userPrice - product.afterDiscount) * quantity
-                : 0;
+        const discountAmount = 0;
         const shipping = subtotal > 0 ? 50 : 0;
         const total = subtotal + shipping;
 

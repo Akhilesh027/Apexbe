@@ -59,6 +59,26 @@ const ProductDetails = () => {
     if (id) fetchProduct();
   }, [id]);
 
+  // Calculate commission amount based on percentage
+  const calculateCommissionAmount = (product: Product) => {
+    // If commission is already in amount format, return it
+    // Otherwise calculate commission amount from sales price
+    if (product.commission <= 100) { // Assuming percentage is between 0-100
+      return (product.salesPrice * product.commission) / 100;
+    }
+    return product.commission;
+  };
+
+  // Get commission percentage
+  const getCommissionPercentage = (product: Product) => {
+    // If commission is already a percentage, return it
+    // Otherwise calculate percentage from amount
+    if (product.commission <= 100) {
+      return product.commission;
+    }
+    return (product.commission / product.salesPrice) * 100;
+  };
+
   if (!product) {
     return (
       <AppLayout>
@@ -68,6 +88,9 @@ const ProductDetails = () => {
       </AppLayout>
     );
   }
+
+  const commissionPercentage = getCommissionPercentage(product);
+  const commissionAmount = product.afterDiscount - product.finalAmount ;
 
   return (
     <AppLayout>
@@ -176,9 +199,14 @@ const ProductDetails = () => {
                   <span className="text-muted-foreground">After Discount:</span>
                   <span className="font-medium">₹{product.afterDiscount}</span>
                 </div>
+                {/* Updated Commission Section */}
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Commission:</span>
-                  <span className="font-medium">₹{product.commission}</span>
+                  <span className="font-medium">{commissionPercentage}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Commission Amount:</span>
+                  <span className="font-medium">₹{commissionAmount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Final Amount:</span>
