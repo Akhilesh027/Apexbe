@@ -35,8 +35,9 @@ const Footer = () => {
               alt="Apexbee Logo"
               className="h-50 mb-4 rounded-lg"
             />
+          
             <p className="text-sm text-white/70">
-              Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonu
+              ApexBee.in — India's growing marketplace where vendors and buyers connect for trusted shopping experiences.
             </p>
           </div>
 
