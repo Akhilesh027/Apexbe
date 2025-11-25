@@ -4,7 +4,7 @@ import CategoryIcon from "@/components/CategoryIcon";
 import BrandCard from "@/components/BrandCard";
 import { Button } from "@/components/ui/button";
 import { Link, useParams } from "react-router-dom";
-import { useEffect, useState, useMemo } from "react"; // Added useMemo for filtering
+import { useEffect, useState, useMemo } from "react"; 
 import axios from "axios";
 
 // Define a type for a product object to improve type safety
@@ -25,6 +25,30 @@ interface Subcategory {
     name: string;
 }
 
+// 🌟 NEW: Coming Soon Animation Component
+// This component displays an engaging message when no products are found.
+const ComingSoonAnimation = ({ isSubcategory }: { isSubcategory: boolean }) => (
+    <div className="flex flex-col items-center justify-center py-20 bg-blue-light/50 rounded-xl shadow-inner border border-blue-light transition-all duration-500 hover:shadow-xl">
+        {/* Animated Icon: animate-bounce is a standard Tailwind utility for a pulsing/bouncing effect */}
+        <div className="mb-6 animate-bounce transition-all duration-1000">
+            <span className="text-6xl" role="img" aria-label="Hourglass">⏳</span> 
+        </div>
+        <h3 className="text-3xl font-extrabold text-navy mb-3">
+            Products Coming Soon!
+        </h3>
+        <p className="text-lg text-muted-foreground text-center max-w-md px-4">
+            We're busy stocking the best items for this {isSubcategory ? 'subcategory' : 'category'}. Check back shortly for amazing deals!
+        </p>
+        <div className="mt-6">
+            {/* The Link component is imported from 'react-router-dom' */}
+            <Link to="/" className="inline-flex items-center justify-center whitespace-nowrap rounded-lg text-sm font-medium transition-colors h-10 px-6 py-2 bg-primary text-white hover:bg-primary/90 shadow-md hover:shadow-lg">
+                Explore Other Categories
+            </Link>
+        </div>
+    </div>
+);
+
+
 const Category = () => {
     const { categoryName } = useParams();
     const [category, setCategory] = useState<any>(null);
@@ -33,7 +57,7 @@ const Category = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // 🌟 NEW STATE: Tracks the currently selected subcategory ID for filtering
+    // Tracks the currently selected subcategory ID for filtering
     const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<string | null>(null);
 
     // Category icon mapping (Kept as is)
@@ -86,7 +110,7 @@ const Category = () => {
                 const productsData = productsRes.data;
 
                 if (!productsData.success) {
-                     throw new Error(productsData.error || "Failed to fetch products.");
+                    throw new Error(productsData.error || "Failed to fetch products.");
                 }
 
                 setAllProducts(productsData.products || []);
@@ -107,7 +131,7 @@ const Category = () => {
     }, [categoryName]);
 
 
-    // 🌟 MEMOIZED FILTERING LOGIC 🌟
+    // MEMOIZED FILTERING LOGIC
     // Filters allProducts based on the selectedSubcategoryId state
     const filteredProducts = useMemo(() => {
         if (!selectedSubcategoryId) {
@@ -184,7 +208,7 @@ const Category = () => {
                 </div>
             </div>
 
-            {/* 🌟 UPDATED: Subcategories as Filter Tabs 🌟 */}
+            {/* Subcategories as Filter Tabs */}
             <section className="container mx-auto px-4 py-8">
                 <h2 className="text-2xl font-bold text-navy mb-6">{category.name} Categories</h2>
                 <div className="flex gap-4 overflow-x-auto pb-4">
@@ -235,16 +259,15 @@ const Category = () => {
                 </div>
             </div>
 
-            {/* 🌟 UPDATED: Products Grid showing FILTERED PRODUCTS 🌟 */}
+            {/* UPDATED: Products Grid showing FILTERED PRODUCTS */}
             <section className="container mx-auto px-4 py-8">
                 <h2 className="text-2xl font-bold text-navy mb-6">
                     {selectedSubcategoryId ? subcategories.find(s => s._id === selectedSubcategoryId)?.name : "Featured"} Products
                 </h2>
 
+                {/* 🌟 Conditional rendering for the Coming Soon animation 🌟 */}
                 {filteredProducts.length === 0 ? (
-                    <div className="text-center py-10 text-muted-foreground">
-                        No products available in this {selectedSubcategoryId ? 'subcategory' : 'category'} yet.
-                    </div>
+                    <ComingSoonAnimation isSubcategory={!!selectedSubcategoryId} />
                 ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
                         {filteredProducts.map((product) => (

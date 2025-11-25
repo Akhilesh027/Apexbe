@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom"; 
-import { Star } from "lucide-react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { Star, Share2 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,6 @@ const formatCurrency = (amount) => {
     }).format(value);
 };
 
-// Placeholder product
 const initialProduct = {
     _id: null,
     itemName: "Loading Product...",
@@ -24,8 +23,7 @@ const initialProduct = {
     salesPrice: 0,
     afterDiscount: 0,
     discount: 0,
-    // Note: Added more placeholders for demonstration
-    images: ["/placeholder.svg", "/placeholder-2.svg", "/placeholder-3.svg", "/placeholder-4.svg"], 
+    images: ["/placeholder.svg"],
     rating: 4,
     vendorId: null,
     description: "Product details loading...",
@@ -40,8 +38,9 @@ const ProductDetail = () => {
     const [loading, setLoading] = useState(true);
     const [selectedColor, setSelectedColor] = useState("orange");
     const [quantity, setQuantity] = useState(1);
-    // 1. NEW STATE: To track the currently selected image
-    const [mainImageIndex, setMainImageIndex] = useState(0); 
+    const [mainImageIndex, setMainImageIndex] = useState(0);
+
+    const [showShare, setShowShare] = useState(false); // NEW
 
     const colors = [
         { name: "orange", hex: "#ff8c42" },
@@ -50,7 +49,6 @@ const ProductDetail = () => {
         { name: "cyan", hex: "#06b6d4" },
     ];
 
-    // Fetch product and similar products
     useEffect(() => {
         if (!id) return;
 
@@ -62,14 +60,10 @@ const ProductDetail = () => {
                 if (res.ok || data) {
                     setProduct(data);
                     fetchSimilarProducts(data.categoryName, data._id);
-                    // Reset main image index on product change
-                    setMainImageIndex(0); 
-                } else {
-                    setProduct(initialProduct);
+                    setMainImageIndex(0);
                 }
             } catch (error) {
                 console.error("Network error:", error);
-                setProduct(initialProduct);
             } finally {
                 setLoading(false);
             }
@@ -81,15 +75,50 @@ const ProductDetail = () => {
                     `https://api.apexbee.in/api/products?category=${categoryName}&excludeId=${currentId}&limit=4`
                 );
                 const data = await res.json();
-                setSimilarProducts(data.products || data || []);
+                setSimilarProducts(data.products || []);
             } catch (error) {
                 console.error("Error fetching similar products:", error);
-                setSimilarProducts([]);
             }
         };
 
         fetchProductDetails();
     }, [id]);
+
+    // 📌 SHARE HANDLER
+    const handleShare = async () => {
+        const url = window.location.href;
+
+        if (navigator.share) {
+            try {
+                await navigator.share({
+                    title: product.itemName,
+                    text: "Check out this product on ApexBee!",
+                    url,
+                });
+            } catch (err) {
+                console.log("Share cancelled");
+            }
+        } else {
+            setShowShare(true);
+        }
+    };
+
+    const copyLink = () => {
+        navigator.clipboard.writeText(window.location.href);
+        alert("Link copied to clipboard!");
+    };
+
+    const whatsappShare = () => {
+        window.open(`https://wa.me/?text=Check this product: ${window.location.href}`);
+    };
+
+    const facebookShare = () => {
+        window.open(`https://www.facebook.com/sharer/sharer.php?u=${window.location.href}`);
+    };
+
+    const twitterShare = () => {
+        window.open(`https://twitter.com/intent/tweet?url=${window.location.href}&text=Check this product`);
+    };
 
     // Add to Cart
     const handleAddToCart = async () => {
@@ -117,12 +146,10 @@ const ProductDetail = () => {
             if (!res.ok) return alert(data.error || "Failed to add to cart.");
             alert("Added to cart successfully!");
         } catch (error) {
-            console.error("Add to cart error:", error);
             alert("Server error");
         }
     };
 
-    // Buy Now
     const handleBuyNow = () => {
         const user = JSON.parse(localStorage.getItem("user"));
         if (!user) {
@@ -153,8 +180,8 @@ const ProductDetail = () => {
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-background">
-                <p className="text-xl font-medium text-primary">Loading Product Details...</p>
+            <div className="min-h-screen flex items-center justify-center">
+                <p className="text-xl text-primary">Loading Product Details...</p>
             </div>
         );
     }
@@ -162,134 +189,118 @@ const ProductDetail = () => {
     const currentRating = Math.round(product.rating || 4);
 
     return (
-        <div className="min-h-screen bg-background">
+        <div className="min-h-screen">
             <Navbar />
 
-            {/* Breadcrumb */}
-            <div className="container mx-auto px-4 py-4">
-                <div className="text-sm text-muted-foreground">
-                    <Link to="/" className="hover:underline">Home</Link> /{" "}
-                    <Link to={`/category/${product.categoryName}`} className="hover:underline">{product.categoryName}</Link> / {product.itemName}
-                </div>
-            </div>
-
-            {/* Cashback Banner */}
-            <div className="container mx-auto px-4 mb-8">
-                <div className="bg-yellow-banner text-navy text-center py-3 rounded-lg font-semibold">
-                    Earn 10% Cashback on Every App Order
-                </div>
-            </div>
-
-            {/* Product Detail */}
+            {/* Product Section */}
             <section className="container mx-auto px-4 py-8">
                 <div className="grid md:grid-cols-2 gap-12">
-                    {/* Images & Colors - MODIFIED */}
+
+                    {/* LEFT SIDE IMAGES */}
                     <div>
-                        {/* Main Image */}
                         <div className="bg-blue-light rounded-2xl overflow-hidden mb-4">
-                            {/* 2. UPDATED: Use mainImageIndex to display the selected image */}
                             <img
-                                src={product.images?.[mainImageIndex] || "/placeholder.svg"}
-                                alt={product.itemName}
+                                src={product.images?.[mainImageIndex]}
                                 className="aspect-[3/4] w-full object-cover"
                             />
                         </div>
 
-                        {/* 3. NEW: Image Thumbnails */}
-                        <div className="flex gap-3 overflow-x-auto pb-2">
-                            {product.images?.map((image, index) => (
+                        <div className="flex gap-3 overflow-x-auto">
+                            {product.images?.map((img, index) => (
                                 <div
                                     key={index}
-                                    className={`w-20 h-20 bg-blue-light rounded-lg overflow-hidden flex-shrink-0 cursor-pointer p-1 transition-all ${
-                                        index === mainImageIndex ? 'border-2 border-accent' : 'border border-gray-300'
-                                    }`}
-                                    // Set the clicked image as the main image
                                     onClick={() => setMainImageIndex(index)}
+                                    className={`w-20 h-20 rounded-lg cursor-pointer p-1 border 
+                                        ${index === mainImageIndex ? "border-accent" : "border-gray-300"}`}
                                 >
-                                    <img
-                                        src={image}
-                                        alt={`Thumbnail ${index + 1}`}
-                                        className="w-full h-full object-cover rounded-md"
-                                    />
+                                    <img src={img} className="w-full h-full object-cover rounded-lg" />
                                 </div>
                             ))}
                         </div>
-
-                        {/* 4. NEW: Color Selection */}
-                        <div className="mt-8">
-                            <span className="text-sm font-semibold text-navy block mb-2">Color: {selectedColor}</span>
-                            <div className="flex gap-3">
-                                {colors.map((color) => (
-                                    <div
-                                        key={color.name}
-                                        className={`w-8 h-8 rounded-full border-2 cursor-pointer transition-all ${
-                                            selectedColor === color.name ? 'border-accent p-0.5' : 'border-gray-300 p-0.5'
-                                        }`}
-                                        onClick={() => setSelectedColor(color.name)}
-                                    >
-                                        <div
-                                            className="w-full h-full rounded-full"
-                                            style={{ backgroundColor: color.hex }}
-                                        ></div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
                     </div>
 
-                    {/* Product Info */}
+                    {/* RIGHT PRODUCT DETAILS */}
                     <div>
                         <div className="flex items-center gap-2 mb-2">
                             {[...Array(5)].map((_, i) => (
-                                <Star key={i} className={`h-4 w-4 ${i < currentRating ? 'fill-accent text-accent' : 'text-gray-300'}`} />
+                                <Star key={i} className={`h-4 w-4 ${i < currentRating ? "fill-accent text-accent" : "text-gray-300"}`} />
                             ))}
                             <span className="text-sm text-muted-foreground">(Write a review)</span>
+
+                            {/* SHARE ICON */}
+                            <button onClick={handleShare} className="ml-auto text-accent flex items-center gap-1">
+                                <Share2 size={18} /> Share
+                            </button>
                         </div>
 
-                        <h1 className="text-3xl font-bold text-navy mb-4">
-                            {product.itemName}
-                            <span className="text-base font-normal text-muted-foreground block">
-                                ({product.skuCode}_{selectedColor}_Onesize)
-                            </span>
-                        </h1>
-
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="bg-accent text-white px-3 py-1 rounded text-sm font-semibold">Limited Offer</div>
-                            <span className="text-lg font-bold text-accent">{product.discount || 0}% Off</span>
-                        </div>
+                        <h1 className="text-3xl font-bold text-navy mb-4">{product.itemName}</h1>
 
                         <div className="mb-6">
-                            <div className="flex items-baseline gap-3">
-                                <span className="text-5xl font-bold text-navy">{formatCurrency(product.finalAmount)}</span>
-                                <span className="text-xl text-muted-foreground line-through">MRP: {formatCurrency(product.userPrice)}</span>
-                            </div>
+                            <span className="text-5xl font-bold text-navy">{formatCurrency(product.finalAmount)}</span>
+                            <span className="text-xl line-through text-gray-500 ml-2">
+                                {formatCurrency(product.userPrice)}
+                            </span>
                         </div>
 
                         {/* Quantity */}
                         <div className="mb-6 flex items-center gap-4">
-                            <span className="text-sm font-semibold text-navy">Quantity:</span>
+                            Quantity:
                             <div className="flex items-center border rounded-lg overflow-hidden">
-                                <Button onClick={() => setQuantity(q => Math.max(1, q - 1))} className="h-8 w-8 p-0 bg-gray-100 text-navy hover:bg-gray-200">-</Button>
-                                <span className="w-8 text-center text-sm font-semibold">{quantity}</span>
-                                <Button onClick={() => setQuantity(q => q + 1)} className="h-8 w-8 p-0 bg-gray-100 text-navy hover:bg-gray-200">+</Button>
+                                <Button onClick={() => setQuantity(q => Math.max(1, q - 1))}>-</Button>
+                                <span className="px-4">{quantity}</span>
+                                <Button onClick={() => setQuantity(q => q + 1)}>+</Button>
                             </div>
                         </div>
 
-                        {/* Action Buttons */}
-                        <div className="flex gap-4 mb-8">
-                            <Button onClick={handleAddToCart} className="flex-1 bg-accent hover:bg-accent/90 text-white">Add to Cart</Button>
-                            <Button onClick={handleBuyNow} className="flex-1 bg-navy hover:bg-navy/90 text-white">Buy Now</Button>
+                        {/* ACTION BUTTONS */}
+                        <div className="flex gap-4">
+                            <Button onClick={handleAddToCart} className="flex-1 bg-accent text-white">
+                                Add to Cart
+                            </Button>
+                            <Button onClick={handleBuyNow} className="flex-1 bg-navy text-white">
+                                Buy Now
+                            </Button>
                         </div>
 
-                        {/* Product Details */}
-                        <div className="bg-secondary p-6 rounded-lg">
-                            <h3 className="font-bold text-navy mb-3">Product Details</h3>
-                            <p className="text-sm text-muted-foreground mb-2">{product.description || "Description not available."}</p>
-                            <button className="text-sm text-accent mt-2 hover:underline">See more ↓</button>
+                        {/* DESCRIPTION */}
+                        <div className="bg-gray-100 p-6 rounded-lg mt-6">
+                            <h3 className="font-bold mb-2">Product Details</h3>
+                            <p className="text-sm">{product.description}</p>
                         </div>
                     </div>
                 </div>
             </section>
+
+            {/* -------- SHARE POPUP -------- */}
+            {showShare && (
+                <div className="fixed inset-0 bg-black/30 flex items-end justify-center">
+                    <div className="bg-white w-full p-6 rounded-t-2xl shadow-lg">
+                        <h2 className="font-bold text-lg mb-3 text-center">Share Product</h2>
+
+                        <div className="flex flex-col gap-3">
+                            <Button onClick={copyLink} className="bg-gray-100 text-navy">
+                                Copy Link
+                            </Button>
+                            <Button onClick={whatsappShare} className="bg-green-500 text-white">
+                                WhatsApp
+                            </Button>
+                            <Button onClick={facebookShare} className="bg-blue-600 text-white">
+                                Facebook
+                            </Button>
+                            <Button onClick={twitterShare} className="bg-black text-white">
+                                Twitter
+                            </Button>
+                        </div>
+
+                        <Button
+                            onClick={() => setShowShare(false)}
+                            className="w-full mt-4 bg-red-500 text-white"
+                        >
+                            Close
+                        </Button>
+                    </div>
+                </div>
+            )}
 
             <Footer />
         </div>

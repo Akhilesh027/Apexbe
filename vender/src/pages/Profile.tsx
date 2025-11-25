@@ -96,35 +96,6 @@ const Profile = () => {
               </Button>
             </div>
           </div>
-
-          {/* Vendor Details Section */}
-        
-
-          {/* Earnings Section */}
-          <div className="grid grid-cols-3 gap-6">
-            <div className="border rounded-lg p-4">
-              <div className="text-sm mb-2">My Income</div>
-              <div className="text-2xl font-bold border-2 border-accent text-accent inline-block px-4 py-2">
-                Rs. 234
-              </div>
-            </div>
-
-            <div className="border rounded-lg p-4">
-              <div className="text-sm mb-2">Referral Earnings</div>
-              <div className="text-2xl font-bold bg-accent text-accent-foreground inline-block px-4 py-2">
-                Rs. 768
-              </div>
-            </div>
-
-            <div className="border rounded-lg p-4 bg-primary text-primary-foreground">
-              <div className="text-3xl font-bold">25%</div>
-              <div className="text-sm">On Vendor / Wholesaler Registration Fee</div>
-              <div className="bg-accent text-accent-foreground px-2 py-1 text-xs inline-block mt-2">
-                Super Vendor
-              </div>
-              <div className="text-xs mt-1">10% On AB income</div>
-            </div>
-          </div>
         </Card>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg-grid-cols-3 gap-6 mb-8">

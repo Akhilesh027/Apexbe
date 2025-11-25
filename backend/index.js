@@ -292,7 +292,7 @@ const processReferral = async (referredUserId, referralCode) => {
       referredUser: referredUserId,
       referralCode,
       status: 'pending',
-      rewardAmount: 100
+      rewardAmount: 50
     });
 
     // Update referred user's record
@@ -1137,36 +1137,40 @@ app.get("/api/products/:category", async (req, res) => {
         // 1. Find the category document by name
         const foundCategory = await Category.findOne({ name: categoryName });
         if (!foundCategory) {
-            // Return empty array if category doesn't exist
-            return res.json([]); 
+            return res.json({
+                success: true,
+                products: []
+            });
         }
 
-        // 2. Find products with this category ID AND status: 'Approved'
+        // 2. Fetch only Approved products
         const products = await Products.find({ 
             category: foundCategory._id,
-            status: 'Approved' // 👈 CRITICAL: Filter by Approved status
+            status: "Approved"
         })
         .populate("category", "name")
-        .populate("vendorId", "name"); // 👈 Recommended: Populate vendor name if needed
+        .populate("vendorId", "name");  
 
-        // 3. Add categoryName field for convenience
+        // 3. Add categoryName for convenience
         const productsWithCategoryName = products.map((p) => ({
             ...p._doc,
             categoryName: p.category?.name || "Unknown"
         }));
 
-        res.json({
+        return res.json({
             success: true,
             products: productsWithCategoryName
         });
+
     } catch (err) {
         console.error("Error fetching products by category:", err);
-        res.status(500).json({ 
+        return res.status(500).json({ 
             success: false,
             error: err.message 
         });
     }
 });
+
 app.get('/api/product/:id', async (req, res) => {
     try {
         const productId = req.params.id;

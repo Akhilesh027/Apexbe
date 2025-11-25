@@ -4,21 +4,21 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 const Reports = () => {
   const salesData = [
-    { month: "Jan", sales: 4000 },
-    { month: "Feb", sales: 3000 },
-    { month: "Mar", sales: 5000 },
-    { month: "Apr", sales: 4500 },
-    { month: "May", sales: 6000 },
-    { month: "Jun", sales: 5500 },
+    { month: "Jan", sales: 0 },
+    { month: "Feb", sales: 0 },
+    { month: "Mar", sales: 0 },
+    { month: "Apr", sales: 0 },
+    { month: "May", sales: 0 },
+    { month: "Jun", sales: 0 },
   ];
 
   const orderData = [
-    { month: "Jan", orders: 120 },
-    { month: "Feb", orders: 98 },
-    { month: "Mar", orders: 145 },
-    { month: "Apr", orders: 132 },
-    { month: "May", orders: 168 },
-    { month: "Jun", orders: 155 },
+    { month: "Jan", orders: 0 },
+    { month: "Feb", orders: 0 },
+    { month: "Mar", orders: 0 },
+    { month: "Apr", orders: 0 },
+    { month: "May", orders: 0 },
+    { month: "Jun", orders: 0 },
   ];
 
   return (
@@ -68,8 +68,8 @@ const Reports = () => {
               <CardTitle>Total Revenue</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-success">₹27,500</div>
-              <p className="text-sm text-muted-foreground mt-2">+12.5% from last month</p>
+              <div className="text-3xl font-bold text-success">₹0</div>
+              <p className="text-sm text-muted-foreground mt-2">+0% from last month</p>
             </CardContent>
           </Card>
 
@@ -78,8 +78,8 @@ const Reports = () => {
               <CardTitle>Average Order Value</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-primary">₹1,250</div>
-              <p className="text-sm text-muted-foreground mt-2">+5.2% from last month</p>
+              <div className="text-3xl font-bold text-primary">₹0</div>
+              <p className="text-sm text-muted-foreground mt-2">+0% from last month</p>
             </CardContent>
           </Card>
 
@@ -88,8 +88,8 @@ const Reports = () => {
               <CardTitle>Customer Satisfaction</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-accent">94%</div>
-              <p className="text-sm text-muted-foreground mt-2">Based on 245 reviews</p>
+              <div className="text-3xl font-bold text-accent">0%</div>
+              <p className="text-sm text-muted-foreground mt-2">Based on 0 reviews</p>
             </CardContent>
           </Card>
         </div>

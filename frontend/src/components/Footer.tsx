@@ -6,22 +6,25 @@ const Footer = () => {
     <footer className="bg-navy-dark text-white mt-16">
       <div className="container mx-auto px-4 py-12">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8">
+          
+          {/* Logo & Description */}
           <div className="lg:col-span-1">
             <div className="border-2 border-white rounded-lg p-4 inline-block mb-4">
-              <img src={logo} alt="Company Logo" className="w-32 h-auto" />
+              <img src={logo} alt="ApexBee Logo" className="w-32 h-auto" />
             </div>
             <p className="text-sm text-gray-300 leading-relaxed">
-              Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam
-              nonu
+              ApexBee.in — India's growing marketplace where vendors and buyers 
+              connect for trusted shopping experiences.
             </p>
           </div>
 
+          {/* About Section */}
           <div>
             <h4 className="font-semibold mb-4">Get to Know Us</h4>
             <ul className="space-y-2 text-sm text-gray-300">
               <li>
                 <Link to="/about" className="hover:text-accent">
-                  About Amazon
+                  About ApexBee
                 </Link>
               </li>
               <li>
@@ -35,79 +38,71 @@ const Footer = () => {
                 </Link>
               </li>
               <li>
-                <Link to="/amazon-science" className="hover:text-accent">
-                  Amazon Science
+                <Link to="/science" className="hover:text-accent">
+                  ApexBee Research
                 </Link>
               </li>
             </ul>
           </div>
 
+          {/* Social Links */}
           <div>
             <h4 className="font-semibold mb-4">Connect with Us</h4>
             <ul className="space-y-2 text-sm text-gray-300">
               <li>
-                <Link to="#" className="hover:text-accent">
-                  Facebook
-                </Link>
+                <Link to="#" className="hover:text-accent">Facebook</Link>
               </li>
               <li>
-                <Link to="#" className="hover:text-accent">
-                  Twitter
-                </Link>
+                <Link to="#" className="hover:text-accent">Twitter</Link>
               </li>
               <li>
-                <Link to="#" className="hover:text-accent">
-                  Instagram
-                </Link>
+                <Link to="#" className="hover:text-accent">Instagram</Link>
               </li>
             </ul>
           </div>
 
+          {/* Vendor & Business Section */}
           <div>
-            <h4 className="font-semibold mb-4">Make Money with Us</h4>
+            <h4 className="font-semibold mb-4">Make Money with ApexBee</h4>
             <ul className="space-y-2 text-sm text-gray-300">
               <li>
-                {" "}
                 <Link to="/sale" className="hover:text-accent transition">
                   SALE
                 </Link>
               </li>
               <li>
                 <Link to="/vendors" className="hover:text-accent transition">
-                  VENDORS
+                  Vendors
                 </Link>
-              </li>{" "}
+              </li>
               <li>
-                <Link
-                  to="/super-vendor"
-                  className="hover:text-accent transition"
-                >
-                  SUPER VENDOR
+                <Link to="/super-vendor" className="hover:text-accent transition">
+                  Super Vendor
                 </Link>
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Sell on company name
+                  Sell on ApexBee
                 </Link>
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Sell under Company Accelerator
+                  ApexBee Accelerator
                 </Link>
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Protect and Build Your Brand
+                  Protect & Grow Your Brand
                 </Link>
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Company Name Global Selling
+                  ApexBee Global Selling
                 </Link>
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Supply to Company name
+                  Supply to ApexBee
                 </Link>
               </li>
               <li>
@@ -117,22 +112,18 @@ const Footer = () => {
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Fulfilment by Company name
+                  Fulfilment by ApexBee
                 </Link>
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Advertise Your Products
-                </Link>
-              </li>
-              <li>
-                <Link to="#" className="hover:text-accent">
-                  Company name on Merchants
+                  Advertise with Us
                 </Link>
               </li>
             </ul>
           </div>
 
+          {/* Help Section */}
           <div>
             <h4 className="font-semibold mb-4">Let Us Help You</h4>
             <ul className="space-y-2 text-sm text-gray-300">
@@ -148,7 +139,7 @@ const Footer = () => {
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Recalls and Product Safety Alerts
+                  Product Safety Alerts
                 </Link>
               </li>
               <li>
@@ -158,22 +149,24 @@ const Footer = () => {
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Company name App Download
+                  ApexBee App Download
                 </Link>
               </li>
               <li>
                 <Link to="#" className="hover:text-accent">
-                  Help
+                  Help & Support
                 </Link>
               </li>
             </ul>
           </div>
         </div>
 
+        {/* Bottom Payment Section */}
         <div className="border-t border-navy-light mt-8 pt-6 flex flex-col md:flex-row justify-between items-center">
           <p className="text-sm text-gray-400">
-            @2025 Companyname.com, Inc. or its affiliates
+            © 2025 ApexBee.in — All Rights Reserved
           </p>
+
           <div className="flex items-center gap-4 mt-4 md:mt-0">
             <div className="bg-white rounded px-3 py-1">
               <span className="text-navy font-semibold text-sm">UPI</span>
@@ -187,30 +180,20 @@ const Footer = () => {
         </div>
       </div>
 
+      {/* Footer Links */}
       <div className="border-t border-navy-light">
         <div className="container mx-auto px-4 py-4">
           <div className="flex flex-wrap gap-4 justify-center text-xs text-accent">
-            <Link to="/about" className="hover:underline">
-              About Us
-            </Link>
-            <Link to="/partner" className="hover:underline">
-              Partner with us
-            </Link>
-            <Link to="/terms" className="hover:underline">
-              Terms & Conditions
-            </Link>
-            <Link to="/media" className="hover:underline">
-              Media
-            </Link>
-            <Link to="/grievance" className="hover:underline">
-              Grievance policy
-            </Link>
-            <Link to="/bug-bounty" className="hover:underline">
-              Bug bounty
-            </Link>
+            <Link to="/about" className="hover:underline">About Us</Link>
+            <Link to="/partner" className="hover:underline">Partner with Us</Link>
+            <Link to="/terms" className="hover:underline">Terms & Conditions</Link>
+            <Link to="/media" className="hover:underline">Media</Link>
+            <Link to="/grievance" className="hover:underline">Grievance Policy</Link>
+            <Link to="/bug-bounty" className="hover:underline">Bug Bounty</Link>
             <Link to="/return-cancellation" className="hover:underline">
-              Return/Cancellation policy
+              Return / Cancellation Policy
             </Link>
+
             <div className="ml-auto flex items-center gap-2">
               <span className="text-white">Language:</span>
               <span className="flex items-center gap-1">

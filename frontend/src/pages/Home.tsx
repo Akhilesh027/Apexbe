@@ -63,7 +63,7 @@ const Home = () => {
         if (data.success && data.categories) {
           const transformed = data.categories.map((cat) => ({
             label: cat.name.charAt(0).toUpperCase() + cat.name.slice(1),
-            to: `/category/${cat.name.toLowerCase()}`,
+            to: `/category/${cat.name}`,
             image: cat.image,
             id: cat._id
           }));
