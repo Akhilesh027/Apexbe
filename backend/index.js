@@ -3153,10 +3153,23 @@ app.put('/api/admin/orders/:orderId/status', async (req, res) => {
     // Get previous status
     const previousStatus = order.orderStatus.currentStatus;
     
-    // Update status
-    order.orderStatus.currentStatus = status;
-    
- 
+if (!order.orderStatus) {
+  order.orderStatus = { currentStatus: previousStatus, history: [] };
+}
+
+if (!order.orderStatus.history) {
+  order.orderStatus.history = [];
+}
+
+order.orderStatus.currentStatus = status;
+
+order.orderStatus.history.push({
+  status,
+  changedAt: new Date(),
+  changedBy: req.user?.name || "Admin",
+  notes: `Status changed from ${previousStatus} to ${status}`
+});
+
     
     // Update delivery details if delivered
     if (status === 'delivered') {
@@ -3174,7 +3187,7 @@ app.put('/api/admin/orders/:orderId/status', async (req, res) => {
     
     // Populate user details for response
     const populatedOrder = await Order.findById(orderId)
-      .populate('userId', 'name email')
+      .populate('user', 'name email')
       .populate('orderItems.productId', 'name sku');
     
     res.json({
