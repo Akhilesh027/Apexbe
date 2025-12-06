@@ -6,7 +6,7 @@ import jwt from "jsonwebtoken";
 import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary.js";
-
+import PDFDocument from "pdfkit";
 import Vendor from "./models/vendor.js";
 import Products from "./models/Products.js";
 import Cart from "./models/Cart.js";
@@ -3120,7 +3120,331 @@ app.put('/api/user/profile/:userId', auth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+app.put('/api/admin/orders/:orderId/status', auth, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required'
+      });
+    }
+    
+    // Validate status
+    const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'out_for_delivery', 'delivered', 'cancelled', 'returned'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status. Valid statuses: ' + validStatuses.join(', ')
+      });
+    }
+    
+    const order = await Order.findById(orderId);
+    
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    // Get previous status
+    const previousStatus = order.orderStatus.currentStatus;
+    
+    // Update status
+    order.orderStatus.currentStatus = status;
+    
+    // Add to history
+    order.orderStatus.history.push({
+      status: status,
+      changedAt: new Date(),
+      changedBy: req.user.name || 'Admin',
+      notes: `Status changed from ${previousStatus} to ${status}`
+    });
+    
+    // Update delivery details if delivered
+    if (status === 'delivered') {
+      order.deliveryDetails.actualDelivery = new Date();
+      
+      // Auto-complete payment if it was pending verification
+      if (order.paymentDetails.status === 'requires_verification') {
+        order.paymentDetails.status = 'completed';
+        order.paymentDetails.paymentDate = new Date();
+      }
+    }
+    
+    // Save order
+    await order.save();
+    
+    // Populate user details for response
+    const populatedOrder = await Order.findById(orderId)
+      .populate('userId', 'name email')
+      .populate('orderItems.productId', 'name sku');
+    
+    res.json({
+      success: true,
+      message: `Order status updated to ${status}`,
+      order: {
+        _id: populatedOrder._id,
+        orderNumber: populatedOrder.orderNumber,
+        userDetails: populatedOrder.userDetails,
+        orderStatus: populatedOrder.orderStatus,
+        paymentDetails: populatedOrder.paymentDetails,
+        orderSummary: populatedOrder.orderSummary,
+        updatedAt: populatedOrder.updatedAt
+      }
+    });
+    
+  } catch (error) {
+    console.error('Update status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
 
+// 2. PUT /api/admin/orders/:orderId/payment-status - Update payment status
+app.put('/api/admin/orders/:orderId/payment-status', auth, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment status is required'
+      });
+    }
+    
+    // Validate payment status
+    const validPaymentStatuses = ['pending', 'processing', 'completed', 'failed', 'refunded', 'partially_refunded', 'requires_verification'];
+    if (!validPaymentStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment status. Valid statuses: ' + validPaymentStatuses.join(', ')
+      });
+    }
+    
+    const order = await Order.findById(orderId);
+    
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    // Get previous payment status
+    const previousPaymentStatus = order.paymentDetails.status;
+    
+    // Update payment status
+    order.paymentDetails.status = status;
+    
+    // Set payment date if completed
+    if (status === 'completed') {
+      order.paymentDetails.paymentDate = new Date();
+      order.requiresVerification = false;
+    }
+    
+    // Add note to order
+    if (!order.notes) {
+      order.notes = '';
+    }
+    order.notes += `\n[${new Date().toLocaleString()}] Payment status changed from ${previousPaymentStatus} to ${status} by Admin`;
+    
+    // Save order
+    await order.save();
+    
+    res.json({
+      success: true,
+      message: `Payment status updated to ${status}`,
+      order: {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        paymentDetails: order.paymentDetails,
+        orderStatus: order.orderStatus,
+        updatedAt: order.updatedAt
+      }
+    });
+    
+  } catch (error) {
+    console.error('Update payment status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+});
+
+// 3. GET /api/orders/:orderId/invoice - Download invoice (PDF)
+app.get('/api/orders/:orderId/invoice', auth, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    const order = await Order.findById(orderId)
+      .populate('userId', 'name email phone')
+      .populate('orderItems.productId', 'name sku');
+    
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    // Check authorization - user must be admin or order owner
+    if (req.user.role !== 'admin' && req.user.userId.toString() !== order.userId._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to download this invoice'
+      });
+    }
+    
+    // Create PDF document
+    const doc = new PDFDocument({ margin: 50 });
+    
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=invoice-${order.orderNumber}.pdf`);
+    
+    // Pipe PDF to response
+    doc.pipe(res);
+    
+    // Header
+    doc.fontSize(25).text('INVOICE', { align: 'center' });
+    doc.moveDown();
+    
+    // Invoice details
+    doc.fontSize(12);
+    doc.text(`Invoice Number: ${order.invoiceNumber}`);
+    doc.text(`Order Number: ${order.orderNumber}`);
+    doc.text(`Invoice Date: ${new Date(order.createdAt).toLocaleDateString()}`);
+    doc.moveDown();
+    
+    // Company details
+    doc.fontSize(14).text('ApexBee Store', { underline: true });
+    doc.fontSize(10);
+    doc.text('123 Business Street');
+    doc.text('Mumbai, Maharashtra 400001');
+    doc.text('GSTIN: 27ABCDE1234F1Z5');
+    doc.text('Phone: +91 1234567890');
+    doc.text('Email: support@apexbee.com');
+    doc.moveDown();
+    
+    // Billing details
+    doc.fontSize(12).text('Bill To:', { underline: true });
+    doc.fontSize(10);
+    doc.text(order.userDetails.name);
+    if (order.userId.email) doc.text(order.userId.email);
+    if (order.shippingAddress.phone) doc.text(`Phone: ${order.shippingAddress.phone}`);
+    doc.moveDown();
+    
+    // Shipping address
+    doc.fontSize(12).text('Ship To:', { underline: true });
+    doc.fontSize(10);
+    doc.text(order.shippingAddress.name);
+    doc.text(order.shippingAddress.address);
+    doc.text(`${order.shippingAddress.city}, ${order.shippingAddress.state} - ${order.shippingAddress.pincode}`);
+    doc.text(`Phone: ${order.shippingAddress.phone}`);
+    doc.moveDown();
+    
+    // Table header
+    const tableTop = doc.y;
+    doc.fontSize(10);
+    
+    // Table columns
+    doc.text('Description', 50, tableTop);
+    doc.text('Qty', 300, tableTop);
+    doc.text('Price', 350, tableTop);
+    doc.text('Amount', 400, tableTop);
+    
+    // Draw line
+    doc.moveTo(50, tableTop + 15)
+       .lineTo(550, tableTop + 15)
+       .stroke();
+    
+    let y = tableTop + 25;
+    
+    // Order items
+    order.orderItems.forEach((item, i) => {
+      doc.text(item.name, 50, y);
+      doc.text(item.quantity.toString(), 300, y);
+      doc.text(`₹${item.price.toFixed(2)}`, 350, y);
+      doc.text(`₹${(item.price * item.quantity).toFixed(2)}`, 400, y);
+      y += 20;
+    });
+    
+    // Draw line after items
+    doc.moveTo(50, y + 5)
+       .lineTo(550, y + 5)
+       .stroke();
+    
+    y += 20;
+    
+    // Order summary
+    doc.text('Subtotal:', 350, y);
+    doc.text(`₹${order.orderSummary.subtotal.toFixed(2)}`, 400, y);
+    y += 20;
+    
+    if (order.orderSummary.shipping > 0) {
+      doc.text('Shipping:', 350, y);
+      doc.text(`₹${order.orderSummary.shipping.toFixed(2)}`, 400, y);
+      y += 20;
+    }
+    
+    if (order.orderSummary.discount > 0) {
+      doc.text('Discount:', 350, y);
+      doc.text(`-₹${order.orderSummary.discount.toFixed(2)}`, 400, y);
+      y += 20;
+    }
+    
+    if (order.orderSummary.tax > 0) {
+      doc.text('Tax:', 350, y);
+      doc.text(`₹${order.orderSummary.tax.toFixed(2)}`, 400, y);
+      y += 20;
+    }
+    
+    // Total
+    doc.fontSize(12).font('Helvetica-Bold');
+    doc.text('Total:', 350, y + 10);
+    doc.text(`₹${order.orderSummary.total.toFixed(2)}`, 400, y + 10);
+    
+    y += 40;
+    
+    // Payment details
+    doc.fontSize(10).font('Helvetica');
+    doc.text('Payment Details:', 50, y);
+    y += 15;
+    doc.text(`Method: ${order.paymentDetails.method.toUpperCase()}`);
+    y += 15;
+    doc.text(`Status: ${order.paymentDetails.status}`);
+    y += 15;
+    if (order.paymentDetails.transactionId) {
+      doc.text(`Transaction ID: ${order.paymentDetails.transactionId}`);
+      y += 15;
+    }
+    
+    // Footer
+    doc.fontSize(8).text('Thank you for your business!', 50, 700, { align: 'center', width: 500 });
+    doc.text('Terms & Conditions: Goods sold are not returnable unless damaged during shipping.', 50, 720, { align: 'center', width: 500 });
+    
+    // Finalize PDF
+    doc.end();
+    
+  } catch (error) {
+    console.error('Generate invoice error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate invoice',
+      error: error.message
+    });
+  }
+});
 
 // Partial update user profile
 app.patch('/api/user/profile/:userId', auth, async (req, res) => {

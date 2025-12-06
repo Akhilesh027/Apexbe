@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { Star, Share2 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -36,18 +36,19 @@ const ProductDetail = () => {
     const [product, setProduct] = useState(initialProduct);
     const [similarProducts, setSimilarProducts] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [selectedColor, setSelectedColor] = useState("orange");
     const [quantity, setQuantity] = useState(1);
     const [mainImageIndex, setMainImageIndex] = useState(0);
+    const [showShare, setShowShare] = useState(false);
 
-    const [showShare, setShowShare] = useState(false); // NEW
+    // 🔑 Get referral code
+    const user = JSON.parse(localStorage.getItem("user"));
+    const referralCode = user?.referralCode;
 
-    const colors = [
-        { name: "orange", hex: "#ff8c42" },
-        { name: "purple", hex: "#7c3aed" },
-        { name: "teal", hex: "#14b8a6" },
-        { name: "cyan", hex: "#06b6d4" },
-    ];
+    const baseUrl = window.location.href.split('?')[0];
+    const shareUrl = `${baseUrl}?ref=${referralCode}`;
+
+    const shareText = `Check this product on ApexBee!
+Use my referral code ${referralCode} and get ₹50 on signup!`;
 
     useEffect(() => {
         if (!id) return;
@@ -84,16 +85,14 @@ const ProductDetail = () => {
         fetchProductDetails();
     }, [id]);
 
-    // 📌 SHARE HANDLER
+    // 📡 Share Handler
     const handleShare = async () => {
-        const url = window.location.href;
-
         if (navigator.share) {
             try {
                 await navigator.share({
                     title: product.itemName,
-                    text: "Check out this product on ApexBee!",
-                    url,
+                    text: shareText,
+                    url: shareUrl,
                 });
             } catch (err) {
                 console.log("Share cancelled");
@@ -104,25 +103,24 @@ const ProductDetail = () => {
     };
 
     const copyLink = () => {
-        navigator.clipboard.writeText(window.location.href);
-        alert("Link copied to clipboard!");
+        navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
+        alert("Referral link copied!");
     };
 
     const whatsappShare = () => {
-        window.open(`https://wa.me/?text=Check this product: ${window.location.href}`);
+        window.open(`https://wa.me/?text=${encodeURIComponent(shareText + "\n" + shareUrl)}`);
     };
 
     const facebookShare = () => {
-        window.open(`https://www.facebook.com/sharer/sharer.php?u=${window.location.href}`);
+        window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`);
     };
 
     const twitterShare = () => {
-        window.open(`https://twitter.com/intent/tweet?url=${window.location.href}&text=Check this product`);
+        window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`);
     };
 
     // Add to Cart
     const handleAddToCart = async () => {
-        const user = JSON.parse(localStorage.getItem("user"));
         if (!user?.id) return alert("Please login first.");
 
         const item = {
@@ -132,7 +130,7 @@ const ProductDetail = () => {
             price: product.afterDiscount,
             image: product.images?.[0],
             quantity,
-            selectedColor,
+            selectedColor: "default",
             vendorId: product.vendorId,
         };
 
@@ -151,7 +149,6 @@ const ProductDetail = () => {
     };
 
     const handleBuyNow = () => {
-        const user = JSON.parse(localStorage.getItem("user"));
         if (!user) {
             alert("Please login first.");
             navigate("/login");
@@ -159,15 +156,14 @@ const ProductDetail = () => {
         }
 
         const subtotal = product.afterDiscount * quantity;
-        const discountAmount = 0;
         const shipping = subtotal > 0 ? 50 : 0;
         const total = subtotal + shipping;
 
         navigate("/checkout", {
             state: {
-                cartItems: [{ ...product, quantity, selectedColor }],
+                cartItems: [{ ...product, quantity }],
                 subtotal,
-                discount: discountAmount,
+                discount: 0,
                 shipping,
                 total,
                 fromBuyNow: true,
@@ -189,11 +185,9 @@ const ProductDetail = () => {
         <div className="min-h-screen">
             <Navbar />
 
-            {/* Product Section */}
             <section className="container mx-auto px-4 py-8">
                 <div className="grid md:grid-cols-2 gap-12">
-
-                    {/* LEFT SIDE IMAGES */}
+                    {/* LEFT IMAGES */}
                     <div>
                         <div className="bg-blue-light rounded-2xl overflow-hidden mb-4">
                             <img
@@ -216,7 +210,7 @@ const ProductDetail = () => {
                         </div>
                     </div>
 
-                    {/* RIGHT PRODUCT DETAILS */}
+                    {/* RIGHT DETAILS */}
                     <div>
                         <div className="flex items-center gap-2 mb-2">
                             {[...Array(5)].map((_, i) => (
@@ -224,7 +218,6 @@ const ProductDetail = () => {
                             ))}
                             <span className="text-sm text-muted-foreground">(Write a review)</span>
 
-                            {/* SHARE ICON */}
                             <button onClick={handleShare} className="ml-auto text-accent flex items-center gap-1">
                                 <Share2 size={18} /> Share
                             </button>
@@ -249,7 +242,6 @@ const ProductDetail = () => {
                             </div>
                         </div>
 
-                        {/* ACTION BUTTONS */}
                         <div className="flex gap-4">
                             <Button onClick={handleAddToCart} className="flex-1 bg-accent text-white">
                                 Add to Cart
@@ -259,7 +251,6 @@ const ProductDetail = () => {
                             </Button>
                         </div>
 
-                        {/* DESCRIPTION */}
                         <div className="bg-gray-100 p-6 rounded-lg mt-6">
                             <h3 className="font-bold mb-2">Product Details</h3>
                             <p className="text-sm">{product.description}</p>
@@ -268,25 +259,21 @@ const ProductDetail = () => {
                 </div>
             </section>
 
-            {/* -------- SHARE POPUP -------- */}
+            {/* SHARE POPUP */}
             {showShare && (
                 <div className="fixed inset-0 bg-black/30 flex items-end justify-center">
                     <div className="bg-white w-full p-6 rounded-t-2xl shadow-lg">
                         <h2 className="font-bold text-lg mb-3 text-center">Share Product</h2>
 
+                        <p className="text-center font-semibold text-primary mb-3">
+                            Referral Code: {referralCode} — Get ₹50 on signup!
+                        </p>
+
                         <div className="flex flex-col gap-3">
-                            <Button onClick={copyLink} className="bg-gray-100 text-navy">
-                                Copy Link
-                            </Button>
-                            <Button onClick={whatsappShare} className="bg-green-500 text-white">
-                                WhatsApp
-                            </Button>
-                            <Button onClick={facebookShare} className="bg-blue-600 text-white">
-                                Facebook
-                            </Button>
-                            <Button onClick={twitterShare} className="bg-black text-white">
-                                Twitter
-                            </Button>
+                            <Button onClick={copyLink} className="bg-gray-100 text-navy">Copy Link</Button>
+                            <Button onClick={whatsappShare} className="bg-green-500 text-white">WhatsApp</Button>
+                            <Button onClick={facebookShare} className="bg-blue-600 text-white">Facebook</Button>
+                            <Button onClick={twitterShare} className="bg-black text-white">Twitter</Button>
                         </div>
 
                         <Button

@@ -59,7 +59,7 @@ const Dashboard = () => {
     { title: "Total Products", value: stats.totalProducts, icon: Package, color: "text-warning" },
     { title: "Total Orders", value: stats.totalOrders, icon: ShoppingCart, color: "text-destructive" },
     { title: "Pending Approvals", value: stats.pendingShopApprovals, icon: Clock, color: "text-warning" },
-    { title: "Total Revenue", value: `$${stats.totalRevenue.toFixed(2)}`, icon: DollarSign, color: "text-success" },
+    { title: "Total Revenue", value: `₹${stats.totalRevenue.toFixed(2)}`, icon: DollarSign, color: "text-success" },
   ];
 
   return (

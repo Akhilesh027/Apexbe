@@ -16,7 +16,7 @@ const Login = () => {
     password: "",
     referralCode: ""
   });
-  const [authMethod, setAuthMethod] = useState<"phone" | "email">("phone");
+  const [authMethod, setAuthMethod] = useState<"phone" | "email">("email");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -391,7 +391,7 @@ const Login = () => {
             Refer Friends and Earn Up to Rs. 400
             <span className="bg-white text-accent rounded-full p-1">💰</span>
           </h2>
-          <p className="text-sm opacity-90 mt-1">Share your referral code and earn Rs. 100 per successful referral!</p>
+          <p className="text-sm opacity-90 mt-1">Share your referral code and earn Rs. 50 per successful referral!</p>
         </div>
       </div>
 
@@ -454,7 +454,8 @@ const Login = () => {
                   {error}
                 </div>
               )}
-
+  
+              {renderFormContent()}
               {/* Social Login (Only show on Login tab for simplicity) */}
               {activeTab === "login" && (
                 <>
@@ -498,8 +499,7 @@ const Login = () => {
                   </div>
                 </>
               )}
-              
-              {renderFormContent()}
+            
               
               {/* Toggle to other tab */}
               <div className="text-center text-sm mt-4">
