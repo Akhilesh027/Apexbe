@@ -3156,13 +3156,7 @@ app.put('/api/admin/orders/:orderId/status', async (req, res) => {
     // Update status
     order.orderStatus.currentStatus = status;
     
-    // Add to history
-    order.orderStatus.history.push({
-      status: status,
-      changedAt: new Date(),
-      changedBy: req.user.name || 'Admin',
-      notes: `Status changed from ${previousStatus} to ${status}`
-    });
+ 
     
     // Update delivery details if delivered
     if (status === 'delivered') {

@@ -178,7 +178,7 @@ const orderSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ['pending', 'completed', 'failed', 'refunded', 'pending_verification', 'verified', 'rejected'],
+      enum: ['pending', 'completed', 'failed', 'refunded', 'pending_verification', 'verified', 'rejected','pending', 'processing', 'completed', 'failed', 'refunded', 'partially_refunded', 'requires_verification'],
       default: 'pending'
     },
     amount: {
@@ -240,7 +240,7 @@ const orderSchema = new mongoose.Schema({
   orderStatus: {
     currentStatus: {
       type: String,
-      enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'payment_pending', 'payment_verified'],
+      enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'payment_pending', 'payment_verified','pending', 'confirmed', 'processing', 'shipped', 'out_for_delivery', 'delivered', 'cancelled', 'returned'],
       default: 'pending'
     },
     timeline: [orderStatusSchema]
