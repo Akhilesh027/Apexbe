@@ -3166,7 +3166,7 @@ order.orderStatus.currentStatus = status;
 order.orderStatus.history.push({
   status,
   changedAt: new Date(),
-  changedBy: req.user?.name || "Admin",
+ 
   notes: `Status changed from ${previousStatus} to ${status}`
 });
 
@@ -3187,7 +3187,7 @@ order.orderStatus.history.push({
     
     // Populate user details for response
     const populatedOrder = await Order.findById(orderId)
-      .populate('user', 'name email')
+      .populate('userId', 'name email phone')
       .populate('orderItems.productId', 'name sku');
     
     res.json({
