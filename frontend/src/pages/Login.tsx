@@ -23,11 +23,9 @@ const Login = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  
-  // Get referral code from URL if present
+
   const urlReferralCode = searchParams.get('ref');
 
-  // Set referral code from URL on component mount
   useState(() => {
     if (urlReferralCode) {
       setFormData(prev => ({ ...prev, referralCode: urlReferralCode }));
