@@ -194,135 +194,113 @@ const Orders = () => {
     },
   ];
 
-  // Update delivery status
-  const handleUpdateDeliveryStatus = async (orderId: string, newStatus: string) => {
-    try {
-      setUpdatingStatus(`delivery-${orderId}`);
-      
-      const token = localStorage.getItem('token');
-      if (!token) {
-        toast.error("Please login again");
-        return;
-      }
+  
+const handleUpdateDeliveryStatus = async (orderId: string, newStatus: string) => {
+  try {
+    setUpdatingStatus(`delivery-${orderId}`);
 
-      const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
-      });
+    const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/status`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ status: newStatus })
+    });
 
-      const data = await response.json();
+    const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to update status');
-      }
-
-      if (data.success) {
-        toast.success(data.message || `Status updated to ${newStatus}`);
-        
-        // Update local state
-        setOrders(prevOrders => 
-          prevOrders.map(order => 
-            order._id === orderId 
-              ? { 
-                  ...order, 
-                  orderStatus: { 
-                    ...order.orderStatus, 
-                    currentStatus: newStatus 
-                  } 
-                }
-              : order
-          )
-        );
-
-        // Update selected order if open
-        if (selectedOrder && selectedOrder._id === orderId) {
-          setSelectedOrder(prev => ({
-            ...prev,
-            orderStatus: {
-              ...prev.orderStatus,
-              currentStatus: newStatus
-            }
-          }));
-        }
-      } else {
-        toast.error(data.message || 'Failed to update status');
-      }
-    } catch (error: any) {
-      console.error('Update delivery status error:', error);
-      toast.error(error.message || 'Failed to update status');
-    } finally {
-      setUpdatingStatus(null);
+    if (!response.ok) {
+      throw new Error(data.message || "Failed to update status");
     }
-  };
 
-  // Update payment status
-  const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => {
-    try {
-      setUpdatingStatus(`payment-${orderId}`);
-      
-      const token = localStorage.getItem('token');
-      if (!token) {
-        toast.error("Please login again");
-        return;
-      }
+    toast.success(data.message || `Status updated to ${newStatus}`);
 
-      const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/payment-status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to update payment status');
-      }
-
-      if (data.success) {
-        toast.success(data.message || `Payment status updated to ${newStatus}`);
-        
-        // Update local state
-        setOrders(prevOrders => 
-          prevOrders.map(order => 
-            order._id === orderId 
-              ? { 
-                  ...order, 
-                  paymentDetails: { 
-                    ...order.paymentDetails, 
-                    status: newStatus 
-                  } 
-                }
-              : order
-          )
-        );
-
-        // Update selected order if open
-        if (selectedOrder && selectedOrder._id === orderId) {
-          setSelectedOrder(prev => ({
-            ...prev,
-            paymentDetails: {
-              ...prev.paymentDetails,
-              status: newStatus
+    // Update local state
+    setOrders(prevOrders =>
+      prevOrders.map(order =>
+        order._id === orderId
+          ? {
+              ...order,
+              orderStatus: {
+                ...order.orderStatus,
+                currentStatus: newStatus,
+              },
             }
-          }));
-        }
-      } else {
-        toast.error(data.message || 'Failed to update payment status');
-      }
-    } catch (error: any) {
-      console.error('Update payment status error:', error);
-      toast.error(error.message || 'Failed to update payment status');
-    } finally {
-      setUpdatingStatus(null);
+          : order
+      )
+    );
+
+    // Update selected order if open
+    if (selectedOrder && selectedOrder._id === orderId) {
+      setSelectedOrder(prev => ({
+        ...prev,
+        orderStatus: {
+          ...prev.orderStatus,
+          currentStatus: newStatus,
+        },
+      }));
     }
-  };
+  } catch (error: any) {
+    console.error("Update delivery status error:", error);
+    toast.error(error.message || "Failed to update status");
+  } finally {
+    setUpdatingStatus(null);
+  }
+};
+
+
+// Update payment status
+const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => {
+  try {
+    setUpdatingStatus(`payment-${orderId}`);
+
+    const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/payment-status`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ status: newStatus })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || "Failed to update payment status");
+    }
+
+    toast.success(data.message || `Payment status updated to ${newStatus}`);
+
+    setOrders(prevOrders =>
+      prevOrders.map(order =>
+        order._id === orderId
+          ? {
+              ...order,
+              paymentDetails: {
+                ...order.paymentDetails,
+                status: newStatus,
+              },
+            }
+          : order
+      )
+    );
+
+    if (selectedOrder && selectedOrder._id === orderId) {
+      setSelectedOrder(prev => ({
+        ...prev,
+        paymentDetails: {
+          ...prev.paymentDetails,
+          status: newStatus,
+        },
+      }));
+    }
+  } catch (error: any) {
+    console.error("Update payment status error:", error);
+    toast.error(error.message || "Failed to update payment status");
+  } finally {
+    setUpdatingStatus(null);
+  }
+};
+
 
   // View payment proof
   const handleViewPaymentProof = () => {
