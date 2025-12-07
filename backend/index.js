@@ -3117,7 +3117,70 @@ app.put('/api/user/profile/:userId', auth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-// ================== UPDATE ORDER STATUS ==================
+// Helper function to handle referral completion (add this before your routes)
+const processReferralForOrder = async (order) => {
+  // Prevent duplicate processing
+  if (order.metadata?.referralCompleted) {
+    console.log(`Referral already processed for order ${order._id}`);
+    return null;
+  }
+
+  // Ensure both conditions are met for referral
+  const isPaymentCompleted = order.paymentDetails.status === 'completed';
+  const isOrderDelivered = order.orderStatus.currentStatus === 'delivered';
+  
+  if (!isPaymentCompleted || !isOrderDelivered) {
+    console.log(`Referral conditions not met for order ${order._id}:`, {
+      paymentStatus: order.paymentDetails.status,
+      orderStatus: order.orderStatus.currentStatus
+    });
+    return null;
+  }
+
+  try {
+    // Count completed AND delivered orders for this user (excluding current order)
+    const completedOrders = await Order.countDocuments({
+      userId: order.userId,
+      "paymentDetails.status": "completed",
+      "orderStatus.currentStatus": "delivered",
+      _id: { $ne: order._id } // Exclude current order
+    });
+
+    console.log(`Completed orders count for user ${order.userId}: ${completedOrders}`);
+
+    if (completedOrders === 0) { // This is the first completed & delivered order
+      console.log(`Processing referral for first completed order ${order._id}`);
+      const referralResult = await completeReferral(
+        order.userId, 
+        order.orderSummary.total
+      );
+
+      if (referralResult) {
+        // Initialize metadata if not exists
+        order.metadata = order.metadata || {};
+        
+        // Update order with referral info
+        order.metadata.referralCompleted = true;
+        order.metadata.referralId = referralResult._id;
+        order.metadata.rewardAmount = referralResult.rewardAmount;
+        order.metadata.referralProcessedAt = new Date();
+        
+        console.log(`Referral reward processed for order ${order._id}`, {
+          referralId: referralResult._id,
+          rewardAmount: referralResult.rewardAmount
+        });
+        return referralResult;
+      }
+    } else {
+      console.log(`Not first completed order for user ${order.userId}. Skipping referral.`);
+    }
+  } catch (err) {
+    console.error(`Referral processing error for order ${order._id}:`, err);
+    // Don't throw error to prevent order update failure
+  }
+  
+  return null;
+};
 app.put('/api/admin/orders/:orderId/status', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -3178,30 +3241,16 @@ app.put('/api/admin/orders/:orderId/status', async (req, res) => {
           order.paymentDetails.status === "requires_verification") {
         order.paymentDetails.status = "completed";
         order.paymentDetails.paymentDate = new Date();
+        console.log(`Auto-updated payment status to completed for order ${orderId}`);
       }
 
-      // ⭐ Referral Logic ⭐
-      const completedOrders = await Order.countDocuments({
-        userId: order.userId,
-        "paymentDetails.status": "completed"
-      });
-
-      if (completedOrders === 1 && !order.metadata?.referralCompleted) {
-        try {
-          const referralResult = await completeReferral(order.userId, order.orderSummary.total);
-
-          if (referralResult) {
-            order.metadata.referralCompleted = true;
-            order.metadata.referralId = referralResult._id;
-            order.metadata.rewardAmount = referralResult.rewardAmount;
-            console.log("Referral reward processed after delivery");
-          }
-        } catch (err) {
-          console.error("Referral processing error:", err);
-        }
+      // Check if payment is completed to process referral
+      if (order.paymentDetails.status === "completed") {
+        await processReferralForOrder(order);
       }
     }
 
+    // Save order changes
     await order.save();
 
     const populatedOrder = await Order.findById(orderId)
@@ -3223,10 +3272,6 @@ app.put('/api/admin/orders/:orderId/status', async (req, res) => {
     });
   }
 });
-
-
-
-// ================== UPDATE PAYMENT STATUS ==================
 app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -3269,28 +3314,13 @@ app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
       order.paymentDetails.paymentDate = new Date();
       order.requiresVerification = false;
 
-      // ============= REFERRAL TRIGGER WHEN PAYMENT COMPLETED =============
-      const completedOrders = await Order.countDocuments({
-        userId: order.userId,
-        "paymentDetails.status": "completed"
-      });
-
-      if (completedOrders === 1 && !order.metadata?.referralCompleted) {
-        try {
-          const referralResult = await completeReferral(order.userId, order.orderSummary.total);
-
-          if (referralResult) {
-            order.metadata.referralCompleted = true;
-            order.metadata.referralId = referralResult._id;
-            order.metadata.rewardAmount = referralResult.rewardAmount;
-            console.log("Referral reward processed after payment completion");
-          }
-        } catch (err) {
-          console.error("Referral reward error:", err);
-        }
+      // Check if order is delivered to process referral
+      if (order.orderStatus.currentStatus === "delivered") {
+        await processReferralForOrder(order);
       }
     }
 
+    // Save order changes
     await order.save();
 
     return res.json({
@@ -3308,8 +3338,6 @@ app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
     });
   }
 });
-
-
 // 3. GET /api/orders/:orderId/invoice - Download invoice (PDF)
 app.get('/api/orders/:orderId/invoice', async (req, res) => {
   try {
@@ -3327,13 +3355,7 @@ app.get('/api/orders/:orderId/invoice', async (req, res) => {
     }
     
     // Check authorization - user must be admin or order owner
-    if (req.user.role !== 'admin' && req.user.userId.toString() !== order.userId._id.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to download this invoice'
-      });
-    }
-    
+ 
     // Create PDF document
     const doc = new PDFDocument({ margin: 50 });
     

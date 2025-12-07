@@ -22,7 +22,7 @@ const referralSchema = new mongoose.Schema({
   },
   rewardAmount: {
     type: Number,
-    default: 100
+    default: 50
   },
   completedAt: Date
 }, {
