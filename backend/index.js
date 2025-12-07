@@ -1991,9 +1991,6 @@ function getOrderSuccessMessage(paymentMethod, paymentStatus) {
   return "Order created successfully";
 }
 
-
-
-
 app.get("/api/orders/vendor/:vendorId", async (req, res) => {
   const { vendorId } = req.params;
 
@@ -3120,172 +3117,198 @@ app.put('/api/user/profile/:userId', auth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+// ================== UPDATE ORDER STATUS ==================
 app.put('/api/admin/orders/:orderId/status', async (req, res) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body;
-    
+
     if (!status) {
       return res.status(400).json({
         success: false,
         message: 'Status is required'
       });
     }
-    
-    // Validate status
-    const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'out_for_delivery', 'delivered', 'cancelled', 'returned'];
+
+    const validStatuses = [
+      'pending', 'confirmed', 'processing',
+      'shipped', 'out_for_delivery',
+      'delivered', 'cancelled', 'returned'
+    ];
+
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid status. Valid statuses: ' + validStatuses.join(', ')
       });
     }
-    
+
     const order = await Order.findById(orderId);
-    
+
     if (!order) {
       return res.status(404).json({
         success: false,
         message: 'Order not found'
       });
     }
-    
-    // Get previous status
+
     const previousStatus = order.orderStatus.currentStatus;
-    
-if (!order.orderStatus) {
-  order.orderStatus = { currentStatus: previousStatus, history: [] };
-}
 
-if (!order.orderStatus.history) {
-  order.orderStatus.history = [];
-}
+    if (!order.orderStatus) {
+      order.orderStatus = { currentStatus: previousStatus, history: [] };
+    }
+    if (!order.orderStatus.history) {
+      order.orderStatus.history = [];
+    }
 
-order.orderStatus.currentStatus = status;
+    order.orderStatus.currentStatus = status;
 
-order.orderStatus.history.push({
-  status,
-  changedAt: new Date(),
- 
-  notes: `Status changed from ${previousStatus} to ${status}`
-});
+    order.orderStatus.history.push({
+      status,
+      changedAt: new Date(),
+      notes: `Status changed from ${previousStatus} to ${status}`
+    });
 
-    
-    // Update delivery details if delivered
-    if (status === 'delivered') {
+    // ============= REFERRAL TRIGGER WHEN ORDER DELIVERED =============
+    if (status === "delivered") {
       order.deliveryDetails.actualDelivery = new Date();
-      
-      // Auto-complete payment if it was pending verification
-      if (order.paymentDetails.status === 'requires_verification') {
-        order.paymentDetails.status = 'completed';
+
+      // Auto verify payment if still pending verification
+      if (order.paymentDetails.status === "pending_verification" ||
+          order.paymentDetails.status === "requires_verification") {
+        order.paymentDetails.status = "completed";
         order.paymentDetails.paymentDate = new Date();
       }
+
+      // ⭐ Referral Logic ⭐
+      const completedOrders = await Order.countDocuments({
+        userId: order.userId,
+        "paymentDetails.status": "completed"
+      });
+
+      if (completedOrders === 1 && !order.metadata?.referralCompleted) {
+        try {
+          const referralResult = await completeReferral(order.userId, order.orderSummary.total);
+
+          if (referralResult) {
+            order.metadata.referralCompleted = true;
+            order.metadata.referralId = referralResult._id;
+            order.metadata.rewardAmount = referralResult.rewardAmount;
+            console.log("Referral reward processed after delivery");
+          }
+        } catch (err) {
+          console.error("Referral processing error:", err);
+        }
+      }
     }
-    
-    // Save order
+
     await order.save();
-    
-    // Populate user details for response
+
     const populatedOrder = await Order.findById(orderId)
       .populate('userId', 'name email phone')
       .populate('orderItems.productId', 'name sku');
-    
-    res.json({
+
+    return res.json({
       success: true,
       message: `Order status updated to ${status}`,
-      order: {
-        _id: populatedOrder._id,
-        orderNumber: populatedOrder.orderNumber,
-        userDetails: populatedOrder.userDetails,
-        orderStatus: populatedOrder.orderStatus,
-        paymentDetails: populatedOrder.paymentDetails,
-        orderSummary: populatedOrder.orderSummary,
-        updatedAt: populatedOrder.updatedAt
-      }
+      order: populatedOrder
     });
-    
+
   } catch (error) {
-    console.error('Update status error:', error);
+    console.error("Update status error:", error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message
     });
   }
 });
 
+
+
+// ================== UPDATE PAYMENT STATUS ==================
 app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body;
-    
+
     if (!status) {
       return res.status(400).json({
         success: false,
         message: 'Payment status is required'
       });
     }
-    
-    // Validate payment status
-    const validPaymentStatuses = ['pending', 'processing', 'completed', 'failed', 'refunded', 'partially_refunded', 'requires_verification'];
+
+    const validPaymentStatuses = [
+      'pending', 'processing', 'completed',
+      'failed', 'refunded', 'partially_refunded',
+      'pending_verification', 'requires_verification'
+    ];
+
     if (!validPaymentStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid payment status. Valid statuses: ' + validPaymentStatuses.join(', ')
       });
     }
-    
+
     const order = await Order.findById(orderId);
-    
+
     if (!order) {
       return res.status(404).json({
         success: false,
         message: 'Order not found'
       });
     }
-    
-    // Get previous payment status
+
     const previousPaymentStatus = order.paymentDetails.status;
-    
-    // Update payment status
+
     order.paymentDetails.status = status;
-    
-    // Set payment date if completed
-    if (status === 'completed') {
+
+    if (status === "completed") {
       order.paymentDetails.paymentDate = new Date();
       order.requiresVerification = false;
+
+      // ============= REFERRAL TRIGGER WHEN PAYMENT COMPLETED =============
+      const completedOrders = await Order.countDocuments({
+        userId: order.userId,
+        "paymentDetails.status": "completed"
+      });
+
+      if (completedOrders === 1 && !order.metadata?.referralCompleted) {
+        try {
+          const referralResult = await completeReferral(order.userId, order.orderSummary.total);
+
+          if (referralResult) {
+            order.metadata.referralCompleted = true;
+            order.metadata.referralId = referralResult._id;
+            order.metadata.rewardAmount = referralResult.rewardAmount;
+            console.log("Referral reward processed after payment completion");
+          }
+        } catch (err) {
+          console.error("Referral reward error:", err);
+        }
+      }
     }
-    
-    // Add note to order
-    if (!order.notes) {
-      order.notes = '';
-    }
-    order.notes += `\n[${new Date().toLocaleString()}] Payment status changed from ${previousPaymentStatus} to ${status} by Admin`;
-    
-    // Save order
+
     await order.save();
-    
-    res.json({
+
+    return res.json({
       success: true,
       message: `Payment status updated to ${status}`,
-      order: {
-        _id: order._id,
-        orderNumber: order.orderNumber,
-        paymentDetails: order.paymentDetails,
-        orderStatus: order.orderStatus,
-        updatedAt: order.updatedAt
-      }
+      order
     });
-    
+
   } catch (error) {
-    console.error('Update payment status error:', error);
+    console.error("Update payment status error:", error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message
     });
   }
 });
+
 
 // 3. GET /api/orders/:orderId/invoice - Download invoice (PDF)
 app.get('/api/orders/:orderId/invoice', async (req, res) => {
