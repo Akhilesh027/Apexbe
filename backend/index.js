@@ -3524,6 +3524,481 @@ app.patch('/api/user/profile/:userId', auth, async (req, res) => {
   }
 });
 
+// Get file URL
+const uploadToCloudinary = (file) => {
+  return new Promise((resolve, reject) => {
+    try {
+      if (!file || !file.buffer) {
+        reject(new Error('No file or file buffer provided'));
+        return;
+      }
+
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'apexbee/payment-proofs',
+          resource_type: 'auto',
+          allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf'],
+          transformation: [
+            { quality: 'auto:good' },
+            { format: 'auto' }
+          ]
+        },
+        (error, result) => {
+          if (error) {
+            console.error('Cloudinary upload error:', error);
+            reject(error);
+          } else {
+            console.log('Cloudinary upload successful:', {
+              public_id: result.public_id,
+              url: result.secure_url,
+              format: result.format
+            });
+            resolve(result);
+          }
+        }
+      );
+
+      streamifier.createReadStream(file.buffer).pipe(uploadStream);
+    } catch (error) {
+      console.error('Error in uploadToCloudinary:', error);
+      reject(error);
+    }
+  });
+};
+
+// Helper function to delete file from Cloudinary
+const deleteFromCloudinary = async (publicId) => {
+  try {
+    if (!publicId) {
+      console.log('No publicId provided for deletion');
+      return;
+    }
+    
+    const result = await cloudinary.uploader.destroy(publicId);
+    console.log('Deleted from Cloudinary:', publicId, result);
+    return result;
+  } catch (error) {
+    console.error('Error deleting from Cloudinary:', error);
+    throw error;
+  }
+};
+
+
+const getCloudinaryUrl = (result) => {
+  return result.secure_url;
+};
+
+// Upload payment proof endpoint
+app.post('/api/upload/payment-proof', auth, upload.single('paymentProof'), async (req, res) => {
+  try {
+    const { transactionId, upiId } = req.body;
+    
+    console.log('Upload request received:', {
+      hasFile: !!req.file,
+      transactionId,
+      upiId,
+      fileInfo: req.file
+    });
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    if (!transactionId) {
+      // Delete uploaded file if transaction ID is missing
+      if (req.file.public_id) {
+        await deleteFromCloudinary(req.file.public_id);
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Transaction ID is required'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'File uploaded successfully to Cloudinary',
+      file: {
+        url: req.file.path,
+        publicId: req.file.filename, // Cloudinary public_id is stored in filename
+        originalName: req.file.originalname,
+        size: req.file.size,
+        mimeType: req.file.mimetype,
+        format: req.file.format,
+        width: req.file.width,
+        height: req.file.height,
+        transactionId: transactionId,
+        upiId: upiId,
+        uploadedAt: new Date()
+      }
+    });
+
+  } catch (error) {
+    console.error('Upload endpoint error:', error);
+    
+    // Try to delete file if error occurred
+    if (req.file && req.file.filename) {
+      try {
+        await deleteFromCloudinary(req.file.filename);
+      } catch (deleteError) {
+        console.error('Failed to delete file after error:', deleteError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to upload file'
+    });
+  }
+});
+
+// Create order with payment proof
+app.post('/api/orders/with-proof', auth, upload.single('paymentProof'), async (req, res) => {
+  try {
+    const { orderData, transactionId } = req.body;
+    const file = req.file;
+    
+    console.log('Create order with proof request:', {
+      hasOrderData: !!orderData,
+      hasFile: !!file,
+      transactionId,
+      fileInfo: file
+    });
+
+    if (!orderData) {
+      // Delete uploaded file if no order data
+      if (file && file.filename) {
+        await deleteFromCloudinary(file.filename);
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Order data is required'
+      });
+    }
+
+    const parsedOrderData = typeof orderData === 'string' ? JSON.parse(orderData) : orderData;
+
+    // Validate UPI payment
+    if (parsedOrderData.paymentDetails.method === 'upi') {
+      if (!transactionId) {
+        // Delete uploaded file if no transaction ID
+        if (file && file.filename) {
+          await deleteFromCloudinary(file.filename);
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Transaction ID is required for UPI payments'
+        });
+      }
+
+      if (!file) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment proof is required for UPI payments'
+        });
+      }
+
+      // Create payment proof data from uploaded file
+      const paymentProof = {
+        type: 'upi_screenshot',
+        url: file.path,
+        publicId: file.filename,
+        filename: file.filename.split('/').pop(),
+        originalName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        format: file.format,
+        width: file.width,
+        height: file.height,
+        transactionReference: transactionId,
+        upiId: parsedOrderData.paymentDetails.upiDetails?.upiId || '9177176969-2@ybl',
+        uploadedAt: new Date(),
+        status: 'pending'
+      };
+
+      // Add payment proof to upiDetails
+      if (!parsedOrderData.paymentDetails.upiDetails) {
+        parsedOrderData.paymentDetails.upiDetails = {};
+      }
+      parsedOrderData.paymentDetails.upiDetails.paymentProof = paymentProof;
+      parsedOrderData.paymentDetails.upiDetails.transactionId = transactionId;
+      parsedOrderData.paymentDetails.upiDetails.upiId = '9177176969-2@ybl';
+      
+      // Set payment status
+      parsedOrderData.paymentDetails.status = 'pending_verification';
+      parsedOrderData.orderStatus = {
+        currentStatus: 'payment_pending',
+        timeline: [{
+          status: 'payment_pending',
+          timestamp: new Date(),
+          description: 'Payment pending verification',
+          updatedBy: 'system'
+        }]
+      };
+    }
+
+    // Validate order items have all required fields
+    if (parsedOrderData.orderItems && parsedOrderData.orderItems.length > 0) {
+      parsedOrderData.orderItems = parsedOrderData.orderItems.map(item => {
+        // Ensure all required fields are present
+        const price = item.price || 0;
+        const quantity = item.quantity || 1;
+        const itemTotal = price * quantity;
+        
+        return {
+          ...item,
+          price: Number(price),
+          originalPrice: Number(item.originalPrice || price),
+          quantity: Number(quantity),
+          itemTotal: Number(item.itemTotal || itemTotal)
+        };
+      });
+    }
+
+    console.log('Creating order with data:', {
+      userId: parsedOrderData.userId,
+      itemsCount: parsedOrderData.orderItems?.length,
+      total: parsedOrderData.orderSummary?.total,
+      paymentMethod: parsedOrderData.paymentDetails?.method
+    });
+
+    const order = new Order(parsedOrderData);
+    await order.save();
+
+    res.status(201).json({
+      success: true,
+      message: parsedOrderData.paymentDetails.method === 'upi' 
+        ? 'Order created successfully. Payment proof uploaded for verification.' 
+        : 'Order created successfully',
+      order: {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        orderStatus: order.orderStatus,
+        paymentDetails: order.paymentDetails,
+        createdAt: order.createdAt
+      },
+      paymentProofUrl: parsedOrderData.paymentDetails.method === 'upi' 
+        ? parsedOrderData.paymentDetails.upiDetails.paymentProof?.url 
+        : null
+    });
+
+  } catch (error) {
+    console.error('Create order error:', error);
+    
+    // Clean up Cloudinary upload if order creation failed
+    if (req.file && req.file.filename) {
+      try {
+        await deleteFromCloudinary(req.file.filename);
+        console.log('Cleaned up Cloudinary file after order creation failed');
+      } catch (deleteError) {
+        console.error('Failed to clean up Cloudinary file:', deleteError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to create order'
+    });
+  }
+});
+
+
+// Regular order creation (for wallet payments)
+app.post('/api/orders', auth, async (req, res) => {
+  try {
+    const orderData = req.body;
+
+    console.log('Creating regular order:', {
+      userId: orderData.userId,
+      paymentMethod: orderData.paymentDetails?.method
+    });
+
+    // Validate order items have all required fields
+    if (orderData.orderItems && orderData.orderItems.length > 0) {
+      orderData.orderItems = orderData.orderItems.map(item => {
+        // Ensure all required fields are present
+        const price = item.price || 0;
+        const quantity = item.quantity || 1;
+        const itemTotal = price * quantity;
+        
+        return {
+          ...item,
+          price: Number(price),
+          originalPrice: Number(item.originalPrice || price),
+          quantity: Number(quantity),
+          itemTotal: Number(item.itemTotal || itemTotal)
+        };
+      });
+    }
+
+    const order = new Order(orderData);
+    await order.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Order created successfully',
+      order: {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        orderStatus: order.orderStatus,
+        paymentDetails: order.paymentDetails,
+        createdAt: order.createdAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Create order error:', error);
+    
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to create order'
+    });
+  }
+});
+
+
+// Get order by ID
+app.get('/api/orders/:id', auth, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id)
+      .populate('userId', 'name email')
+      .populate('orderItems.productId', 'name images');
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      order: order
+    });
+
+  } catch (error) {
+    console.error('Get order error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get order'
+    });
+  }
+});
+
+// Get orders by user
+app.get('/api/orders/user/:userId', auth, async (req, res) => {
+  try {
+    const orders = await Order.find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .populate('orderItems.productId', 'name images');
+
+    res.status(200).json({
+      success: true,
+      orders: orders
+    });
+
+  } catch (error) {
+    console.error('Get user orders error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get user orders'
+    });
+  }
+});
+
+// Verify UPI payment (admin endpoint)
+app.post('/api/orders/:id/verify-payment', auth, async (req, res) => {
+  try {
+    const { verified, notes } = req.body;
+    const adminId = req.user?.id; // Assuming user ID is in token
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    if (order.paymentDetails.method !== 'upi') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only UPI payments can be verified'
+      });
+    }
+
+    if (verified) {
+      order.paymentDetails.status = 'verified';
+      order.paymentDetails.upiDetails.verified = true;
+      order.paymentDetails.upiDetails.verifiedBy = adminId;
+      order.paymentDetails.upiDetails.verifiedAt = new Date();
+      order.paymentDetails.upiDetails.verificationNotes = notes;
+      order.paymentDetails.paymentDate = new Date();
+      order.orderStatus.currentStatus = 'confirmed';
+      
+      order.orderStatus.timeline.push({
+        status: 'payment_verified',
+        timestamp: new Date(),
+        description: 'Payment verified successfully',
+        updatedBy: 'admin'
+      });
+    } else {
+      order.paymentDetails.status = 'rejected';
+      order.paymentDetails.upiDetails.verificationNotes = notes;
+      order.orderStatus.currentStatus = 'payment_failed';
+      
+      order.orderStatus.timeline.push({
+        status: 'payment_failed',
+        timestamp: new Date(),
+        description: 'Payment verification failed',
+        updatedBy: 'admin'
+      });
+    }
+
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      message: verified ? 'Payment verified successfully' : 'Payment rejected',
+      order: order
+    });
+
+  } catch (error) {
+    console.error('Verify payment error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to verify payment'
+    });
+  }
+});
+
+// Get orders pending verification (admin endpoint)
+app.get('/api/orders/pending-verification', auth, async (req, res) => {
+  try {
+    const orders = await Order.find({
+      'paymentDetails.method': 'upi',
+      'paymentDetails.status': 'pending_verification'
+    })
+    .sort({ createdAt: -1 })
+    .populate('userId', 'name email phone');
+
+    res.status(200).json({
+      success: true,
+      orders: orders
+    });
+
+  } catch (error) {
+    console.error('Get pending verification orders error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get pending verification orders'
+    });
+  }
+});
+
 
 app.use("/uploads", express.static("uploads"));
 

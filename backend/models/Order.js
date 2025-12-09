@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-
 const orderItemSchema = new mongoose.Schema({
   productId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -63,16 +62,45 @@ const orderStatusSchema = new mongoose.Schema({
   }
 });
 
-// UPI Payment Details Schema
+const paymentProofSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ['upi_screenshot', 'bank_transfer', 'other'],
+    default: 'upi_screenshot'
+  },
+  url: {
+    type: String,
+    required: true
+  },
+  filename: {
+    type: String,
+    required: true
+  },
+  originalName: String,
+  fileSize: Number,
+  mimeType: String,
+  transactionReference: {
+    type: String,
+    required: true
+  },
+  upiId: String,
+  uploadedAt: {
+    type: Date,
+    default: Date.now
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'verified', 'rejected'],
+    default: 'pending'
+  }
+});
+
 const upiPaymentSchema = new mongoose.Schema({
   upiId: {
     type: String,
     required: true
   },
-  screenshot: {
-    type: String, // URL or base64 string
-    required: true
-  },
+  paymentProof: paymentProofSchema,
   transactionId: {
     type: String,
     required: true
@@ -86,42 +114,15 @@ const upiPaymentSchema = new mongoose.Schema({
     ref: 'User'
   },
   verifiedAt: Date,
-  uploadedAt: {
-    type: Date,
-    default: Date.now
-  },
   verificationNotes: String
 });
 
-// Payment Proof Schema
-const paymentProofSchema = new mongoose.Schema({
-  type: {
-    type: String,
-    enum: ['upi_screenshot', 'bank_transfer', 'other'],
-    default: 'upi_screenshot'
-  },
-  url: {
-    type: String,
-    required: true
-  },
-  transactionReference: {
-    type: String,
-    required: true
-  },
-  upiId: String,
-  fileName: String,
-  fileSize: Number,
-  mimeType: String
-});
-
 const orderSchema = new mongoose.Schema({
-  // Order Identification
   orderNumber: {
     type: String,
     unique: true
   },
   
-  // User Information
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -137,7 +138,6 @@ const orderSchema = new mongoose.Schema({
     phone: String
   },
 
-  // Shipping Information
   shippingAddress: {
     name: {
       type: String,
@@ -169,7 +169,6 @@ const orderSchema = new mongoose.Schema({
     }
   },
 
-  // Enhanced Payment Information
   paymentDetails: {
     method: {
       type: String,
@@ -188,23 +187,16 @@ const orderSchema = new mongoose.Schema({
     transactionId: String,
     paymentDate: Date,
     
-    // UPI Specific Details
     upiDetails: upiPaymentSchema,
     
-    // Payment Proof (for UPI, bank transfer, etc.)
-    paymentProof: paymentProofSchema,
-    
-    // Additional Payment Metadata
     gatewayResponse: Object,
     refundAmount: Number,
     refundReason: String,
     refundDate: Date
   },
 
-  // Order Items
   orderItems: [orderItemSchema],
 
-  // Order Summary
   orderSummary: {
     itemsCount: {
       type: Number,
@@ -236,7 +228,6 @@ const orderSchema = new mongoose.Schema({
     }
   },
 
-  // Order Status & Tracking
   orderStatus: {
     currentStatus: {
       type: String,
@@ -246,7 +237,6 @@ const orderSchema = new mongoose.Schema({
     timeline: [orderStatusSchema]
   },
 
-  // Delivery Information
   deliveryDetails: {
     expectedDelivery: Date,
     shippingMethod: {
@@ -256,11 +246,10 @@ const orderSchema = new mongoose.Schema({
     trackingNumber: String,
     carrier: String,
     actualDeliveryDate: Date,
-    deliveryProof: String, // Image URL for delivery proof
-    deliveredBy: String // Delivery person name/id
+    deliveryProof: String,
+    deliveredBy: String
   },
 
-  // Vendor Information
   vendorOrders: [{
     vendorId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -282,7 +271,6 @@ const orderSchema = new mongoose.Schema({
     totalAmount: Number
   }],
 
-  // Admin Notes
   adminNotes: [{
     note: String,
     addedBy: {
@@ -300,11 +288,9 @@ const orderSchema = new mongoose.Schema({
     }
   }],
 
-  // Customer Communication
   customerNotes: String,
   internalNotes: String,
 
-  // Metadata
   metadata: {
     source: {
       type: String,
@@ -317,7 +303,6 @@ const orderSchema = new mongoose.Schema({
     appVersion: String
   },
 
-  // Timestamps
   createdAt: {
     type: Date,
     default: Date.now
@@ -356,7 +341,6 @@ orderSchema.pre('save', async function(next) {
       const month = String(date.getMonth() + 1).padStart(2, '0');
       const day = String(date.getDate()).padStart(2, '0');
       
-      // Find the latest order to increment the sequence
       const latestOrder = await this.constructor.findOne(
         {},
         {},
@@ -379,7 +363,7 @@ orderSchema.pre('save', async function(next) {
     
     // Auto-set payment status based on method
     if (this.isNew) {
-      if (this.paymentDetails.method === 'cod') {
+      if (this.paymentDetails.method === 'wallet' || this.paymentDetails.method === 'card') {
         this.paymentDetails.status = 'completed';
         this.orderStatus.currentStatus = 'confirmed';
       } else if (this.paymentDetails.method === 'upi') {
@@ -398,12 +382,10 @@ orderSchema.pre('save', async function(next) {
 // Update timeline when status changes
 orderSchema.pre('save', function(next) {
   if (this.isModified('orderStatus.currentStatus') && this.orderStatus) {
-    // Ensure timeline exists
     if (!this.orderStatus.timeline) {
       this.orderStatus.timeline = [];
     }
     
-    // Only add if the status is different from the last one
     const lastStatus = this.orderStatus.timeline.length > 0 
       ? this.orderStatus.timeline[this.orderStatus.timeline.length - 1].status 
       : null;
@@ -444,73 +426,6 @@ orderSchema.pre('save', function(next) {
   
   next();
 });
-
-// Virtual for formatted order date
-orderSchema.virtual('formattedDate').get(function() {
-  return this.createdAt.toLocaleDateString('en-IN', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-});
-
-// Virtual for total items count
-orderSchema.virtual('totalItems').get(function() {
-  return this.orderItems.reduce((total, item) => total + item.quantity, 0);
-});
-
-// Indexes for better performance
-orderSchema.index({ userId: 1, createdAt: -1 });
-orderSchema.index({ orderNumber: 1 });
-orderSchema.index({ 'paymentDetails.status': 1 });
-orderSchema.index({ 'orderStatus.currentStatus': 1 });
-orderSchema.index({ createdAt: -1 });
-orderSchema.index({ 'vendorOrders.vendorId': 1 });
-
-// Static method to find orders by payment status
-orderSchema.statics.findByPaymentStatus = function(status) {
-  return this.find({ 'paymentDetails.status': status });
-};
-
-// Static method to find orders requiring payment verification
-orderSchema.statics.findPendingVerification = function() {
-  return this.find({ 
-    'paymentDetails.method': 'upi',
-    'paymentDetails.status': 'pending_verification'
-  });
-};
-
-// Instance method to verify UPI payment
-orderSchema.methods.verifyUPIPayment = function(adminId, notes = '') {
-  if (this.paymentDetails.method !== 'upi') {
-    throw new Error('This order does not have UPI payment');
-  }
-  
-  if (!this.paymentDetails.upiDetails) {
-    throw new Error('No UPI details found for this order');
-  }
-  
-  this.paymentDetails.status = 'verified';
-  this.paymentDetails.upiDetails.verified = true;
-  this.paymentDetails.upiDetails.verifiedBy = adminId;
-  this.paymentDetails.upiDetails.verifiedAt = new Date();
-  this.paymentDetails.upiDetails.verificationNotes = notes;
-  this.paymentDetails.paymentDate = new Date();
-  
-  return this.save();
-};
-
-// Instance method to reject UPI payment
-orderSchema.methods.rejectUPIPayment = function(adminId, notes = '') {
-  if (this.paymentDetails.method !== 'upi') {
-    throw new Error('This order does not have UPI payment');
-  }
-  
-  this.paymentDetails.status = 'rejected';
-  this.paymentDetails.upiDetails.verificationNotes = notes;
-  
-  return this.save();
-};
 
 const Order = mongoose.model('Order', orderSchema);
 

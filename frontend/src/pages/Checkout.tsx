@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { Plus, Edit, Upload, QrCode, Copy, Check, Loader2 } from "lucide-react";
+import { Plus, Edit, QrCode, Copy, Check, Loader2, Upload, X, Eye } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -44,11 +44,14 @@ const Checkout = () => {
 
   // UPI Payment States
   const [showUPIDialog, setShowUPIDialog] = useState(false);
-  const [upiScreenshot, setUpiScreenshot] = useState(null);
-  const [upiScreenshotFile, setUpiScreenshotFile] = useState(null);
   const [upiTransactionId, setUpiTransactionId] = useState("");
   const [isProcessingUPI, setIsProcessingUPI] = useState(false);
   const [copiedUPI, setCopiedUPI] = useState(false);
+
+  // Payment Proof Upload States
+  const [paymentProof, setPaymentProof] = useState(null);
+  const [paymentProofPreview, setPaymentProofPreview] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Cart and order details
   const cartData = location.state || {};
@@ -66,6 +69,94 @@ const Checkout = () => {
     qrCodeUrl: upi,
     merchantName: "ApexBee Store",
     amount: orderDetails.total,
+  };
+
+  // File validation
+  const validateFile = (file) => {
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+    const maxSize = 5 * 1024 * 1024; // 5MB
+
+    if (!allowedTypes.includes(file.type)) {
+      toast({
+        title: "Invalid file type",
+        description: "Please upload JPG, PNG, GIF, WEBP, or PDF files only",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    if (file.size > maxSize) {
+      toast({
+        title: "File too large",
+        description: "Maximum file size is 5MB",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    return true;
+  };
+
+  // Handle file upload
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!validateFile(file)) {
+      e.target.value = "";
+      return;
+    }
+
+    setPaymentProof(file);
+
+    // Create preview for images
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPaymentProofPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setPaymentProofPreview(null);
+    }
+  };
+
+  // Remove uploaded file
+  const removePaymentProof = () => {
+    setPaymentProof(null);
+    setPaymentProofPreview(null);
+    // Reset file input
+    const fileInput = document.getElementById('payment-proof-upload');
+    if (fileInput) fileInput.value = "";
+  };
+
+  // Upload payment proof to backend
+  const uploadPaymentProof = async (file, transactionId) => {
+    const formData = new FormData();
+    formData.append('paymentProof', file);
+    formData.append('transactionId', transactionId);
+    formData.append('upiId', upiConfig.upiId);
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('https://api.apexbee.in/api/upload/payment-proof', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to upload payment proof');
+      }
+
+      const data = await response.json();
+      return data.fileUrl;
+    } catch (error) {
+      console.error('Upload error:', error);
+      throw error;
+    }
   };
 
   // Redirect if cart is empty
@@ -222,318 +313,245 @@ const Checkout = () => {
     }
   };
 
-  const handleScreenshotUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      // Validate file size (5MB max)
-      if (file.size > 5 * 1024 * 1024) {
-        toast({
-          title: "File too large",
-          description: "Please select an image under 5MB",
-          variant: "destructive",
-        });
-        return;
-      }
+const handlePlaceOrder = async (paymentMethod = selectedPayment) => {
+  if (!selectedAddress) {
+    toast({
+      title: "Address required",
+      description: "Please select a delivery address",
+      variant: "destructive",
+    });
+    return;
+  }
 
-      // Validate file type
-      if (!file.type.startsWith("image/")) {
-        toast({
-          title: "Invalid file type",
-          description: "Please select an image file",
-          variant: "destructive",
-        });
-        return;
-      }
+  const calculatedSubtotal = orderDetails.items.reduce((acc, item) => {
+    const price = item.price || item.afterDiscount || 0;
+    const quantity = item.quantity || 1;
+    return acc + price * quantity;
+  }, 0);
 
-      setUpiScreenshotFile(file);
+  const calculatedTotal =
+    calculatedSubtotal +
+    (orderDetails.shipping || 0) -
+    (orderDetails.discount || 0);
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setUpiScreenshot(e.target.result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
+  if (paymentMethod === "wallet" && walletBalance < calculatedTotal) {
+    toast({
+      title: "Insufficient Wallet",
+      description: `Wallet balance ₹${walletBalance.toFixed(
+        2
+      )} is not enough`,
+      variant: "destructive",
+    });
+    return;
+  }
 
-  const uploadScreenshotToServer = async (file) => {
-    try {
-      const formData = new FormData();
-      formData.append("screenshot", file);
-      formData.append("uploadType", "payment_proof");
-      formData.append("paymentMethod", "upi");
+  setIsLoading(true);
+  try {
+    const user = JSON.parse(localStorage.getItem("user"));
+    const token = localStorage.getItem("token");
 
-      const token = localStorage.getItem("token");
-      const response = await fetch(
-        "https://api.apexbee.in/api/upload/payment-proof",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: formData,
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to upload screenshot");
-      }
-
-      const data = await response.json();
-      return data.imageUrl; // Backend should return { success: true, imageUrl: "..." }
-    } catch (error) {
-      console.error("Screenshot upload failed:", error);
-      throw error; // Re-throw to handle in the calling function
-    }
-  };
-
-  const handlePlaceOrder = async (paymentMethod = selectedPayment) => {
-    if (!selectedAddress) {
+    if (!user || !token) {
       toast({
-        title: "Address required",
-        description: "Please select a delivery address",
+        title: "Login required",
+        description: "Please login again",
         variant: "destructive",
       });
+      navigate("/login");
       return;
     }
 
-    const calculatedSubtotal = orderDetails.items.reduce((acc, item) => {
-      const price = item.price || item.afterDiscount || 0;
+    // Item mapping with all required fields
+    const mappedItems = orderDetails.items.map((item) => {
+      const price = item.price !== undefined
+        ? item.price
+        : item.afterDiscount !== undefined
+        ? item.afterDiscount
+        : 0;
+
       const quantity = item.quantity || 1;
-      return acc + price * quantity;
-    }, 0);
+      const itemTotal = price * quantity;
 
-    const calculatedTotal =
-      calculatedSubtotal +
-      (orderDetails.shipping || 0) -
-      (orderDetails.discount || 0);
+      return {
+        productId: item.productId || item._id || item.id,
+        name: item.itemName || item.name || "Unnamed Product",
+        price: Number(price),
+        originalPrice: Number(item.originalPrice || price), // Add originalPrice
+        image: item.images?.[0] || item.image || "/placeholder.png",
+        quantity: Number(quantity),
+        color: item.selectedColor || item.color || "default",
+        size: item.size || "One Size",
+        vendorId: item.vendorId || null,
+        itemTotal: Number(itemTotal) // Add itemTotal
+      };
+    });
 
-    if (paymentMethod === "wallet" && walletBalance < calculatedTotal) {
-      toast({
-        title: "Insufficient Wallet",
-        description: `Wallet balance ₹${walletBalance.toFixed(
-          2
-        )} is not enough`,
-        variant: "destructive",
-      });
-      return;
+    const finalSubtotal = mappedItems.reduce(
+      (acc, item) => acc + item.price * item.quantity,
+      0
+    );
+
+    const finalTotal = Math.max(
+      0,
+      finalSubtotal +
+        (orderDetails.shipping || 0) -
+        (orderDetails.discount || 0)
+    );
+
+    // Prepare UPI payment details with proof
+    let upiDetails = null;
+    if (paymentMethod === 'upi') {
+      upiDetails = {
+        upiId: upiConfig.upiId,
+        transactionId: upiTransactionId || `UPI_${Date.now()}`,
+        paymentProof: null // Will be added after Cloudinary upload
+      };
     }
 
-    setIsLoading(true);
-    try {
-      const user = JSON.parse(localStorage.getItem("user"));
-      const token = localStorage.getItem("token");
-
-      if (!user || !token) {
-        toast({
-          title: "Login required",
-          description: "Please login again",
-          variant: "destructive",
-        });
-        navigate("/login");
-        return;
-      }
-
-      // Item mapping
-      const mappedItems = orderDetails.items.map((item) => {
-        const price =
-          item.price !== undefined
-            ? item.price
-            : item.afterDiscount !== undefined
-            ? item.afterDiscount
-            : 0;
-
-        const quantity = item.quantity || 1;
-
-        return {
-          productId: item.productId || item._id || item.id,
-          name: item.itemName || item.name || "Unnamed Product",
-          price: Number(price),
-          quantity: Number(quantity),
-          image: item.images?.[0] || item.image || "/placeholder.png",
-          color: item.selectedColor || item.color || "default",
-          size: item.size || "One Size",
-        };
-      });
-
-      const finalSubtotal = mappedItems.reduce(
-        (acc, item) => acc + item.price * item.quantity,
-        0
-      );
-
-      const finalTotal = Math.max(
-        0,
-        finalSubtotal +
-          (orderDetails.shipping || 0) -
-          (orderDetails.discount || 0)
-      );
-
-      // **FIXED: Payment proof structure for backend**
-      // Check what your backend expects - usually one of these formats:
-      
-      // Option 1: Simple string URL (most common)
-      let paymentProof = null;
-      
-      // Option 2: Object with specific fields (if backend expects it)
-      if (paymentMethod === "upi" && upiScreenshot) {
-        paymentProof = {
-          url: upiScreenshot, // Base64 or URL
-          transactionId: upiTransactionId,
-          upiId: upiConfig.upiId,
-          uploadedAt: new Date().toISOString(),
-          verified: false
-        };
-      }
-
-      // **FIXED: Order data with proper payment proof**
-      const orderData = {
+    // Order data
+    const orderData = {
+      userId: user.id,
+      userDetails: {
         userId: user.id,
-        userDetails: {
-          userId: user.id,
-          name: user.name || user.username,
-          email: user.email,
-          phone: selectedAddress.phone,
+        name: user.name || user.username,
+        email: user.email,
+        phone: selectedAddress.phone,
+      },
+      shippingAddress: selectedAddress,
+
+      paymentDetails: {
+        method: paymentMethod,
+        amount: finalTotal,
+        status: paymentMethod === 'upi' ? 'pending_verification' : 'completed',
+        transactionId: paymentMethod === 'wallet' 
+          ? `WALLET_${Date.now()}` 
+          : upiTransactionId || `TXN_${Date.now()}`,
+        upiDetails: upiDetails,
+      },
+
+      orderItems: mappedItems,
+
+      orderSummary: {
+        itemsCount: mappedItems.reduce((acc, item) => acc + item.quantity, 0),
+        subtotal: finalSubtotal,
+        shipping: orderDetails.shipping || 0,
+        discount: orderDetails.discount || 0,
+        total: finalTotal,
+        tax: 0,
+        grandTotal: finalTotal,
+      },
+
+      status: paymentMethod === 'upi' ? 'payment_pending' : 'confirmed',
+    };
+
+    console.log("Sending order data with items:", mappedItems);
+
+    let response;
+    if (paymentMethod === 'upi' && paymentProof) {
+      // Use FormData for file upload
+      const formData = new FormData();
+      formData.append('orderData', JSON.stringify(orderData));
+      formData.append('paymentProof', paymentProof);
+      formData.append('transactionId', upiTransactionId);
+
+      response = await fetch("https://api.apexbee.in/api/orders/with-proof", {
+        method: "POST",
+        headers: {
+          'Authorization': `Bearer ${token}`,
         },
-        shippingAddress: selectedAddress,
-
-        paymentDetails: {
-          method: paymentMethod,
-          amount: finalTotal,
-          status: paymentMethod === "upi" ? "pending_verification" : "completed",
-          transactionId:
-            paymentMethod === "wallet"
-              ? `WALLET_${Date.now()}`
-              : paymentMethod === "upi"
-              ? upiTransactionId || `UPI_${Date.now()}`
-              : `TXN_${Date.now()}`,
-          upiId: paymentMethod === "upi" ? upiConfig.upiId : undefined,
-        },
-
-        // **IMPORTANT: Backend might expect paymentProof as simple string or object**
-        // Try this format first - backend can save as stringified JSON or parse it
-        paymentProof: paymentMethod === "upi" ? JSON.stringify(paymentProof) : null,
-
-        // Alternative: Send as separate fields if backend expects
-        // paymentProofImage: upiScreenshot,
-        // paymentProofTransactionId: upiTransactionId,
-
-        orderItems: mappedItems,
-
-        orderSummary: {
-          itemsCount: mappedItems.reduce((acc, item) => acc + item.quantity, 0),
-          subtotal: finalSubtotal,
-          shipping: orderDetails.shipping || 0,
-          discount: orderDetails.discount || 0,
-          total: finalTotal,
-          tax: 0,
-          grandTotal: finalTotal,
-        },
-
-        status: "pending",
-        requiresVerification: paymentMethod === "upi", // Flag for UPI verification
-      };
-
-      console.log("Sending order data:", orderData);
-
-      // API call
-      const res = await fetch("https://api.apexbee.in/api/orders", {
+        body: formData,
+      });
+    } else {
+      // Regular JSON request for wallet payments
+      response = await fetch("https://api.apexbee.in/api/orders", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify(orderData),
       });
-
-      const result = await res.json();
-
-      if (!res.ok) {
-        throw new Error(result.message || result.error || "Order failed");
-      }
-
-      if (result.success) {
-        // Clear cart
-        localStorage.removeItem("cart");
-
-        // Reset UPI states
-        if (paymentMethod === "upi") {
-          setUpiScreenshot(null);
-          setUpiScreenshotFile(null);
-          setUpiTransactionId("");
-          setShowUPIDialog(false);
-        }
-
-        // Success message
-        const successMessage = result.requiresVerification
-          ? "Order placed! Payment verification pending."
-          : "Order placed successfully!";
-
-        toast({
-          title: "Success!",
-          description: successMessage,
-          variant: "default",
-        });
-
-        // Navigate to success page
-        navigate("/order-success", {
-          state: {
-            orderId: result.order?._id || result.order?.orderNumber,
-            paymentMethod: paymentMethod,
-            requiresVerification: result.requiresVerification || false,
-          },
-        });
-      } else {
-        throw new Error(result.message || "Order creation failed");
-      }
-    } catch (err) {
-      console.error("Order error:", err);
-      toast({
-        title: "Order Failed",
-        description: err.message || "Failed to place order",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
     }
-  };
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.message || result.error || "Order failed");
+    }
+
+    if (result.success) {
+      // Clear cart
+      localStorage.removeItem("cart");
+
+      // Reset states
+      setUpiTransactionId("");
+      setPaymentProof(null);
+      setPaymentProofPreview(null);
+      setShowUPIDialog(false);
+
+      // Success message
+      let successMessage = "";
+      if (paymentMethod === 'upi') {
+        successMessage = "Order placed successfully! Payment proof uploaded. Our team will verify your payment shortly.";
+      } else {
+        successMessage = "Order placed successfully!";
+      }
+
+      toast({
+        title: "Success!",
+        description: successMessage,
+        variant: "default",
+      });
+
+      // Navigate to success page
+      navigate("/order-success", {
+        state: {
+          orderId: result.order?._id || result.order?.orderNumber,
+          paymentMethod: paymentMethod,
+          requiresVerification: paymentMethod === 'upi',
+          paymentProofUploaded: paymentMethod === 'upi' && paymentProof !== null,
+        },
+      });
+    } else {
+      throw new Error(result.message || "Order creation failed");
+    }
+  } catch (err) {
+    console.error("Order error:", err);
+    toast({
+      title: "Order Failed",
+      description: err.message || "Failed to place order",
+      variant: "destructive",
+    });
+  } finally {
+    setIsLoading(false);
+    setIsUploading(false);
+  }
+};
+
 
   const handleUPIPayment = async () => {
-    if (!upiScreenshot) {
+    // Validation
+    if (!upiTransactionId.trim()) {
       toast({
-        title: "Screenshot Required",
-        description: "Please upload payment screenshot",
+        title: "Transaction ID Required",
+        description: "Please enter UPI transaction ID to continue",
         variant: "destructive",
       });
       return;
     }
 
-    if (!upiTransactionId.trim()) {
+    if (!paymentProof) {
       toast({
-        title: "Transaction ID Required",
-        description: "Please enter UPI transaction ID",
+        title: "Payment Proof Required",
+        description: "Please upload payment screenshot before proceeding",
         variant: "destructive",
       });
       return;
     }
 
     setIsProcessingUPI(true);
+    setIsUploading(true);
+    
     try {
-      let screenshotUrl = upiScreenshot;
-
-      // Upload to server first if possible
-      if (upiScreenshotFile) {
-        try {
-          screenshotUrl = await uploadScreenshotToServer(upiScreenshotFile);
-          console.log("Screenshot uploaded to:", screenshotUrl);
-          
-          // Update the screenshot state with the server URL
-          setUpiScreenshot(screenshotUrl);
-        } catch (uploadError) {
-          console.warn("Using base64 as fallback:", uploadError);
-          // Continue with base64 string
-        }
-      }
-
       // Place order with UPI payment
       await handlePlaceOrder("upi");
     } catch (error) {
@@ -545,6 +563,7 @@ const Checkout = () => {
       });
     } finally {
       setIsProcessingUPI(false);
+      setIsUploading(false);
     }
   };
 
@@ -599,6 +618,15 @@ const Checkout = () => {
       total: calculatedTotal,
     }));
   }, [orderDetails.items, orderDetails.shipping, orderDetails.discount]);
+
+  // Reset UPI dialog when closed
+  useEffect(() => {
+    if (!showUPIDialog) {
+      setUpiTransactionId("");
+      setPaymentProof(null);
+      setPaymentProofPreview(null);
+    }
+  }, [showUPIDialog]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -789,7 +817,7 @@ const Checkout = () => {
                   <div className="flex justify-between text-green-600 text-sm sm:text-base">
                     <span>Discount</span>
                     <span>-₹{orderDetails.discount.toFixed(2)}</span>
-                  </div>
+                </div>
                 )}
 
                 <div className="flex justify-between text-sm sm:text-base">
@@ -907,120 +935,102 @@ const Checkout = () => {
 
       {/* UPI Payment Dialog */}
       <Dialog open={showUPIDialog} onOpenChange={setShowUPIDialog}>
-        <DialogContent className="sm:max-w-md max-w-[95vw] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-w-[95vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg sm:text-xl">
               <QrCode className="h-5 w-5 sm:h-6 sm:w-6" />
               UPI Payment
             </DialogTitle>
             <DialogDescription className="text-sm sm:text-base">
-              Scan the QR code or use UPI ID to complete your payment
+              Complete your payment and upload screenshot for verification
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 sm:space-y-6 py-4">
-            {/* QR Code Section */}
-            <div className="text-center">
-              <div className="bg-white p-3 sm:p-4 rounded-lg border inline-block max-w-full">
-                <img
-                  src={upiConfig.qrCodeUrl}
-                  alt="UPI QR Code"
-                  className="w-40 h-40 sm:w-48 sm:h-48 mx-auto"
-                />
-              </div>
-              <p className="text-xs sm:text-sm text-muted-foreground mt-2">
-                Scan QR code with any UPI app
-              </p>
-            </div>
-
-            {/* UPI ID Section */}
-            <div className="text-center">
-              <Label className="text-sm sm:text-base font-medium mb-2 block">
-                Or use UPI ID
-              </Label>
-              <div className="bg-primary/10 p-3 sm:p-4 rounded-lg border border-primary/20">
-                <p className="font-mono text-base sm:text-lg font-bold break-all">
-                  {upiConfig.upiId}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 text-xs sm:text-sm"
-                  onClick={copyUPIId}
-                >
-                  {copiedUPI ? (
-                    <Check className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                  ) : (
-                    <Copy className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                  )}
-                  {copiedUPI ? "Copied!" : "Copy UPI ID"}
-                </Button>
-              </div>
-            </div>
-
-            {/* Payment Details */}
-            <div className="bg-muted/30 p-3 sm:p-4 rounded-lg">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm sm:text-base">Amount to pay:</span>
-                <span className="font-bold text-lg sm:text-xl">
-                  ₹{orderDetails.total.toFixed(2)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-xs sm:text-sm">
-                <span>Merchant:</span>
-                <span>{upiConfig.merchantName}</span>
-              </div>
-            </div>
-
-            {/* Screenshot Upload */}
-            <div className="space-y-3">
-              <Label className="text-sm sm:text-base font-medium">
-                Upload Payment Screenshot *
-              </Label>
-              <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-3 sm:p-4 text-center">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleScreenshotUpload}
-                  className="hidden"
-                  id="screenshot-upload"
-                />
-                <label
-                  htmlFor="screenshot-upload"
-                  className="cursor-pointer block"
-                >
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <Upload className="h-6 w-6 sm:h-8 sm:w-8 text-muted-foreground" />
-                    <p className="text-sm font-medium">
-                      Click to upload screenshot
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      PNG, JPG, JPEG up to 5MB
-                    </p>
+            {/* Step 1: Payment Instructions */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4">
+              <h4 className="font-semibold text-blue-800 mb-2">Step 1: Make Payment</h4>
+              <div className="space-y-3">
+                <div className="flex items-start gap-2">
+                  <div className="flex-shrink-0 mt-1">
+                    <div className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center">1</div>
                   </div>
-                </label>
-              </div>
-              {upiScreenshot && (
-                <div className="mt-2 text-center">
-                  <p className="text-xs text-green-600 mb-2">
-                    ✓ Screenshot uploaded
+                  <p className="text-sm text-blue-700">
+                    Scan the QR code below or use UPI ID to make payment of ₹{orderDetails.total.toFixed(2)}
                   </p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="flex-shrink-0 mt-1">
+                    <div className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center">2</div>
+                  </div>
+                  <p className="text-sm text-blue-700">
+                    After successful payment, note down the <strong>transaction ID/reference number</strong> from your UPI app
+                  </p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="flex-shrink-0 mt-1">
+                    <div className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center">3</div>
+                  </div>
+                  <p className="text-sm text-blue-700">
+                    Take a <strong>screenshot</strong> of the payment confirmation screen
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* QR Code and UPI ID Section */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+              {/* QR Code */}
+              <div className="text-center">
+                <div className="bg-white p-3 sm:p-4 rounded-lg border inline-block max-w-full">
                   <img
-                    src={upiScreenshot}
-                    alt="Payment screenshot"
-                    className="w-24 h-24 sm:w-32 sm:h-32 object-cover rounded border mx-auto"
+                    src={upiConfig.qrCodeUrl}
+                    alt="UPI QR Code"
+                    className="w-36 h-36 sm:w-44 sm:h-44 mx-auto"
                   />
                 </div>
-              )}
+                <p className="text-xs sm:text-sm text-muted-foreground mt-2">
+                  Scan QR code with any UPI app
+                </p>
+              </div>
+
+              {/* UPI ID */}
+              <div className="text-center">
+                <Label className="text-sm sm:text-base font-medium mb-2 block">
+                  Or use UPI ID
+                </Label>
+                <div className="bg-primary/10 p-3 sm:p-4 rounded-lg border border-primary/20">
+                  <p className="font-mono text-base sm:text-lg font-bold break-all">
+                    {upiConfig.upiId}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 text-xs sm:text-sm"
+                    onClick={copyUPIId}
+                  >
+                    {copiedUPI ? (
+                      <Check className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                    ) : (
+                      <Copy className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                    )}
+                    {copiedUPI ? "Copied!" : "Copy UPI ID"}
+                  </Button>
+                </div>
+                <div className="mt-3 text-xs text-muted-foreground">
+                  <p>Merchant: <strong>{upiConfig.merchantName}</strong></p>
+                  <p>Amount: <strong>₹{orderDetails.total.toFixed(2)}</strong></p>
+                </div>
+              </div>
             </div>
 
-            {/* Transaction ID */}
+            {/* Step 2: Transaction ID */}
             <div className="space-y-2">
               <Label
                 htmlFor="transaction-id"
                 className="text-sm sm:text-base font-medium"
               >
-                UPI Transaction ID *
+                Step 2: Enter Transaction ID *
               </Label>
               <Input
                 id="transaction-id"
@@ -1030,28 +1040,152 @@ const Checkout = () => {
                 className="w-full text-sm sm:text-base"
               />
               <p className="text-xs text-muted-foreground">
-                Find this in your UPI app after payment
+                Find this in your UPI app after payment (usually starts with TXN, REF, or similar)
               </p>
+            </div>
+
+            {/* Step 3: Upload Payment Proof */}
+            <div className="space-y-2">
+              <Label className="text-sm sm:text-base font-medium">
+                Step 3: Upload Payment Screenshot *
+              </Label>
+              
+              {paymentProof ? (
+                <div className="border border-green-200 bg-green-50 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Check className="h-5 w-5 text-green-600" />
+                      <span className="font-medium text-green-700">File uploaded successfully</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={removePaymentProof}
+                      className="h-8 w-8 p-0 hover:bg-red-50"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    {paymentProofPreview ? (
+                      <div className="w-16 h-16 rounded border overflow-hidden flex-shrink-0">
+                        <img
+                          src={paymentProofPreview}
+                          alt="Payment proof preview"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-16 h-16 rounded border flex items-center justify-center bg-gray-100 flex-shrink-0">
+                        <span className="text-xs font-medium">PDF</span>
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{paymentProof.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {(paymentProof.size / 1024).toFixed(2)} KB • {paymentProof.type}
+                      </p>
+                      {paymentProofPreview && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0 text-xs mt-1"
+                          onClick={() => window.open(paymentProofPreview, '_blank')}
+                        >
+                          <Eye className="h-3 w-3 mr-1" />
+                          View full image
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-primary transition-colors cursor-pointer">
+                  <input
+                    type="file"
+                    id="payment-proof-upload"
+                    className="hidden"
+                    accept="image/*,.pdf"
+                    onChange={handleFileUpload}
+                  />
+                  <label
+                    htmlFor="payment-proof-upload"
+                    className="cursor-pointer flex flex-col items-center gap-2"
+                  >
+                    <Upload className="h-8 w-8 text-gray-400" />
+                    <div>
+                      <p className="font-medium">Upload payment screenshot</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        JPG, PNG, GIF, WEBP or PDF (Max 5MB)
+                      </p>
+                    </div>
+                    <Button variant="outline" size="sm" className="mt-2">
+                      Choose File
+                    </Button>
+                  </label>
+                </div>
+              )}
+              
+              <div className="text-xs text-gray-500 space-y-1">
+                <p className="font-medium">What to upload:</p>
+                <ul className="list-disc list-inside space-y-1 pl-2">
+                  <li>Screenshot of payment confirmation from your UPI app</li>
+                  <li>Clear image showing transaction ID/Reference number</li>
+                  <li>Image should show amount (₹{orderDetails.total.toFixed(2)}) and recipient ({upiConfig.upiId})</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Important Notes */}
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 sm:p-4">
+              <h4 className="font-semibold text-yellow-800 mb-2 flex items-center gap-2">
+                ⚠️ Important Notes
+              </h4>
+              <ul className="text-sm text-yellow-700 space-y-1 list-disc list-inside pl-2">
+                <li>Your order will be processed only after payment verification</li>
+                <li>Verification usually takes 1-2 business hours</li>
+                <li>Keep your UPI app open for verification</li>
+                <li>Make sure transaction ID matches exactly with your UPI app</li>
+              </ul>
             </div>
           </div>
 
           <DialogFooter>
-            <Button
-              onClick={handleUPIPayment}
-              disabled={
-                !upiScreenshot || !upiTransactionId.trim() || isProcessingUPI
-              }
-              className="w-full text-sm sm:text-base py-2.5 sm:py-3"
-            >
-              {isProcessingUPI ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Processing Payment...
-                </>
-              ) : (
-                "Confirm Payment & Place Order"
-              )}
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-3 w-full">
+              <Button
+                variant="outline"
+                onClick={() => setShowUPIDialog(false)}
+                className="w-full sm:w-auto"
+                disabled={isProcessingUPI || isUploading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleUPIPayment}
+                disabled={!upiTransactionId.trim() || !paymentProof || isProcessingUPI || isUploading}
+                className="w-full sm:w-auto"
+              >
+                {(isProcessingUPI || isUploading) ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  "Confirm Payment & Place Order"
+                )}
+              </Button>
+            </div>
+            
+            {(!upiTransactionId.trim() || !paymentProof) && (
+              <p className="text-xs text-red-500 text-center mt-2 w-full">
+                {!upiTransactionId.trim() && !paymentProof 
+                  ? "Please enter transaction ID and upload payment proof" 
+                  : !upiTransactionId.trim() 
+                    ? "Please enter transaction ID" 
+                    : "Please upload payment proof"}
+              </p>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -39,6 +39,11 @@ import {
   Download,
   RefreshCw,
   Loader2,
+  ImageIcon,
+  FileText,
+  ExternalLink,
+  ShieldCheck,
+  ShieldX,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -47,6 +52,7 @@ const Orders = () => {
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const [verifyingPayment, setVerifyingPayment] = useState(false);
 
   // Fetch orders
   const fetchOrders = async () => {
@@ -97,6 +103,9 @@ const Orders = () => {
       delivered: { className: "bg-green-100 text-green-800 border-green-200", icon: CheckCircle2 },
       cancelled: { className: "bg-red-100 text-red-800 border-red-200", icon: XCircle },
       returned: { className: "bg-gray-100 text-gray-800 border-gray-200", icon: RefreshCw },
+      payment_pending: { className: "bg-pink-100 text-pink-800 border-pink-200", icon: CreditCard },
+      payment_verified: { className: "bg-green-100 text-green-800 border-green-200", icon: ShieldCheck },
+      payment_failed: { className: "bg-red-100 text-red-800 border-red-200", icon: ShieldX },
     };
 
     const paymentConfig = {
@@ -106,7 +115,9 @@ const Orders = () => {
       failed: { className: "bg-red-100 text-red-800 border-red-200", icon: XCircle },
       refunded: { className: "bg-gray-100 text-gray-800 border-gray-200", icon: RefreshCw },
       partially_refunded: { className: "bg-orange-100 text-orange-800 border-orange-200", icon: AlertCircle },
-      requires_verification: { className: "bg-blue-100 text-blue-800 border-blue-200", icon: AlertCircle },
+      pending_verification: { className: "bg-blue-100 text-blue-800 border-blue-200", icon: AlertCircle },
+      verified: { className: "bg-green-100 text-green-800 border-green-200", icon: ShieldCheck },
+      rejected: { className: "bg-red-100 text-red-800 border-red-200", icon: ShieldX },
     };
 
     const config = type === "delivery" ? deliveryConfig : paymentConfig;
@@ -133,6 +144,41 @@ const Orders = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Get payment proof URL from order - with null safety
+  const getPaymentProof = (order: any) => {
+    if (!order || !order.paymentDetails?.upiDetails?.paymentProof) {
+      return null;
+    }
+    
+    const proof = order.paymentDetails.upiDetails.paymentProof;
+    
+    // Handle different proof formats
+    if (typeof proof === 'string') {
+      return proof;
+    }
+    
+    if (proof.url) {
+      return proof.url;
+    }
+    
+    return null;
+  };
+
+  // Check if order has payment proof - with null safety
+  const hasPaymentProof = (order: any) => {
+    if (!order) return false;
+    return !!getPaymentProof(order);
+  };
+
+  // Get payment proof details - with null safety
+  const getPaymentProofDetails = (order: any) => {
+    if (!order || !order.paymentDetails?.upiDetails?.paymentProof) {
+      return null;
+    }
+    
+    return order.paymentDetails.upiDetails.paymentProof;
   };
 
   // Table columns
@@ -164,7 +210,22 @@ const Orders = () => {
     },
     { 
       header: "Payment Status", 
-      accessor: (item: any) => getStatusBadge(item.paymentDetails?.status || 'pending', 'payment') 
+      accessor: (item: any) => {
+        const hasProof = hasPaymentProof(item);
+        const isPendingVerification = item.paymentDetails?.status === 'pending_verification';
+        
+        return (
+          <div className="flex items-center gap-2">
+            {getStatusBadge(item.paymentDetails?.status || 'pending', 'payment')}
+            {isPendingVerification && hasProof && (
+              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                <ImageIcon className="h-3 w-3 mr-1" />
+                Proof
+              </Badge>
+            )}
+          </div>
+        );
+      }
     },
     { 
       header: "Payment Method", 
@@ -181,157 +242,309 @@ const Orders = () => {
     {
       header: "Actions",
       accessor: (item: any) => (
-        <Button 
-          size="sm" 
-          variant="outline" 
-          onClick={() => setSelectedOrder(item)}
-          className="h-8 w-8 p-0"
-        >
-          <Eye className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            size="sm" 
+            variant="outline" 
+            onClick={() => setSelectedOrder(item)}
+            className="h-8 w-8 p-0"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          {hasPaymentProof(item) && (
+            <Button 
+              size="sm" 
+              variant="ghost" 
+              onClick={() => {
+                setSelectedOrder(item);
+                setTimeout(() => {
+                  const proofTab = document.querySelector('[data-tab="proof"]') as HTMLElement;
+                  if (proofTab) {
+                    proofTab.click();
+                  }
+                }, 100);
+              }}
+              className="h-8 w-8 p-0"
+              title="View Payment Proof"
+            >
+              <ImageIcon className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       ),
       className: "text-right",
     },
   ];
 
-  
-const handleUpdateDeliveryStatus = async (orderId: string, newStatus: string) => {
-  try {
-    setUpdatingStatus(`delivery-${orderId}`);
+  // Update delivery status
+  const handleUpdateDeliveryStatus = async (orderId: string, newStatus: string) => {
+    try {
+      setUpdatingStatus(`delivery-${orderId}`);
+      const token = localStorage.getItem('token');
 
-    const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/status`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ status: newStatus })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || "Failed to update status");
-    }
-
-    toast.success(data.message || `Status updated to ${newStatus}`);
-
-    // Update local state
-    setOrders(prevOrders =>
-      prevOrders.map(order =>
-        order._id === orderId
-          ? {
-              ...order,
-              orderStatus: {
-                ...order.orderStatus,
-                currentStatus: newStatus,
-              },
-            }
-          : order
-      )
-    );
-
-    // Update selected order if open
-    if (selectedOrder && selectedOrder._id === orderId) {
-      setSelectedOrder(prev => ({
-        ...prev,
-        orderStatus: {
-          ...prev.orderStatus,
-          currentStatus: newStatus,
+      const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/status`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
         },
-      }));
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to update status");
+      }
+
+      toast.success(data.message || `Status updated to ${newStatus}`);
+
+      // Update local state
+      setOrders(prevOrders =>
+        prevOrders.map(order =>
+          order._id === orderId
+            ? {
+                ...order,
+                orderStatus: {
+                  ...order.orderStatus,
+                  currentStatus: newStatus,
+                },
+              }
+            : order
+        )
+      );
+
+      // Update selected order if open
+      if (selectedOrder && selectedOrder._id === orderId) {
+        setSelectedOrder(prev => ({
+          ...prev,
+          orderStatus: {
+            ...prev.orderStatus,
+            currentStatus: newStatus,
+          },
+        }));
+      }
+    } catch (error: any) {
+      console.error("Update delivery status error:", error);
+      toast.error(error.message || "Failed to update status");
+    } finally {
+      setUpdatingStatus(null);
     }
-  } catch (error: any) {
-    console.error("Update delivery status error:", error);
-    toast.error(error.message || "Failed to update status");
-  } finally {
-    setUpdatingStatus(null);
-  }
-};
+  };
 
+  // Update payment status
+  const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => {
+    try {
+      setUpdatingStatus(`payment-${orderId}`);
+      const token = localStorage.getItem('token');
 
-// Update payment status
-const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => {
-  try {
-    setUpdatingStatus(`payment-${orderId}`);
-
-    const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/payment-status`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ status: newStatus })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || "Failed to update payment status");
-    }
-
-    toast.success(data.message || `Payment status updated to ${newStatus}`);
-
-    setOrders(prevOrders =>
-      prevOrders.map(order =>
-        order._id === orderId
-          ? {
-              ...order,
-              paymentDetails: {
-                ...order.paymentDetails,
-                status: newStatus,
-              },
-            }
-          : order
-      )
-    );
-
-    if (selectedOrder && selectedOrder._id === orderId) {
-      setSelectedOrder(prev => ({
-        ...prev,
-        paymentDetails: {
-          ...prev.paymentDetails,
-          status: newStatus,
+      const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/payment-status`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
         },
-      }));
-    }
-  } catch (error: any) {
-    console.error("Update payment status error:", error);
-    toast.error(error.message || "Failed to update payment status");
-  } finally {
-    setUpdatingStatus(null);
-  }
-};
+        body: JSON.stringify({ status: newStatus })
+      });
 
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to update payment status");
+      }
+
+      toast.success(data.message || `Payment status updated to ${newStatus}`);
+
+      setOrders(prevOrders =>
+        prevOrders.map(order =>
+          order._id === orderId
+            ? {
+                ...order,
+                paymentDetails: {
+                  ...order.paymentDetails,
+                  status: newStatus,
+                },
+              }
+            : order
+        )
+      );
+
+      if (selectedOrder && selectedOrder._id === orderId) {
+        setSelectedOrder(prev => ({
+          ...prev,
+          paymentDetails: {
+            ...prev.paymentDetails,
+            status: newStatus,
+          },
+        }));
+      }
+    } catch (error: any) {
+      console.error("Update payment status error:", error);
+      toast.error(error.message || "Failed to update payment status");
+    } finally {
+      setUpdatingStatus(null);
+    }
+  };
+
+  // Verify UPI payment
+  const handleVerifyUPIPayment = async (orderId: string, verified: boolean, notes = '') => {
+    try {
+      setVerifyingPayment(true);
+      const token = localStorage.getItem('token');
+
+      const response = await fetch(`https://api.apexbee.in/api/orders/${orderId}/verify-payment`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ 
+          verified, 
+          notes 
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to verify payment");
+      }
+
+      toast.success(data.message || `Payment ${verified ? 'verified' : 'rejected'} successfully`);
+
+      // Update local state
+      setOrders(prevOrders =>
+        prevOrders.map(order =>
+          order._id === orderId
+            ? {
+                ...order,
+                paymentDetails: {
+                  ...order.paymentDetails,
+                  status: verified ? 'verified' : 'rejected',
+                  upiDetails: {
+                    ...order.paymentDetails?.upiDetails,
+                    verified,
+                    verifiedAt: new Date().toISOString(),
+                    verificationNotes: notes
+                  }
+                },
+                orderStatus: {
+                  ...order.orderStatus,
+                  currentStatus: verified ? 'payment_verified' : 'payment_failed',
+                }
+              }
+            : order
+        )
+      );
+
+      if (selectedOrder && selectedOrder._id === orderId) {
+        setSelectedOrder(prev => ({
+          ...prev,
+          paymentDetails: {
+            ...prev.paymentDetails,
+            status: verified ? 'verified' : 'rejected',
+            upiDetails: {
+              ...prev.paymentDetails?.upiDetails,
+              verified,
+              verifiedAt: new Date().toISOString(),
+              verificationNotes: notes
+            }
+          },
+          orderStatus: {
+            ...prev.orderStatus,
+            currentStatus: verified ? 'payment_verified' : 'payment_failed',
+          }
+        }));
+      }
+    } catch (error: any) {
+      console.error("Verify payment error:", error);
+      toast.error(error.message || "Failed to verify payment");
+    } finally {
+      setVerifyingPayment(false);
+    }
+  };
 
   // View payment proof
   const handleViewPaymentProof = () => {
-    if (!selectedOrder?.paymentProof) {
+    if (!selectedOrder) return;
+    
+    const proofUrl = getPaymentProof(selectedOrder);
+    
+    if (!proofUrl) {
       toast.info("No payment proof available");
       return;
     }
 
-    let paymentProofUrl = selectedOrder.paymentProof;
-    
-    // If paymentProof is an object, extract URL
-    if (typeof selectedOrder.paymentProof === 'object' && selectedOrder.paymentProof.url) {
-      paymentProofUrl = selectedOrder.paymentProof.url;
-    }
-    
-    // If it's a base64 string
-    if (paymentProofUrl.startsWith('data:image')) {
-      const newWindow = window.open();
-      if (newWindow) {
-        newWindow.document.write(`
-          <html>
-            <head><title>Payment Proof - ${selectedOrder.orderNumber}</title></head>
-            <body style="margin:0;padding:20px;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#f5f5f5;">
-              <img src="${paymentProofUrl}" style="max-width:90%;max-height:90vh;border:1px solid #ddd;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);" />
-            </body>
-          </html>
-        `);
-      }
-    } else {
-      // If it's a URL, open in new tab
-      window.open(paymentProofUrl, '_blank');
+    const newWindow = window.open();
+    if (newWindow) {
+      newWindow.document.write(`
+        <html>
+          <head>
+            <title>Payment Proof - ${selectedOrder?.orderNumber || 'Order'}</title>
+            <style>
+              body {
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                background: #f5f5f5;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              }
+              .container {
+                max-width: 800px;
+                width: 100%;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+                overflow: hidden;
+              }
+              .header {
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+              }
+              .content {
+                padding: 20px;
+              }
+              img {
+                max-width: 100%;
+                height: auto;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+              }
+              .info {
+                margin-top: 20px;
+                padding: 15px;
+                background: #f8fafc;
+                border-radius: 8px;
+                border-left: 4px solid #3b82f6;
+              }
+              .info-item {
+                margin: 5px 0;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>Payment Proof</h1>
+                <p>Order: ${selectedOrder?.orderNumber || 'N/A'}</p>
+              </div>
+              <div class="content">
+                <img src="${proofUrl}" alt="Payment Proof" />
+                <div class="info">
+                  <div class="info-item"><strong>Transaction ID:</strong> ${selectedOrder?.paymentDetails?.upiDetails?.transactionId || 'N/A'}</div>
+                  <div class="info-item"><strong>UPI ID:</strong> ${selectedOrder?.paymentDetails?.upiDetails?.upiId || 'N/A'}</div>
+                  <div class="info-item"><strong>Amount:</strong> ₹${selectedOrder?.paymentDetails?.amount?.toFixed(2) || '0.00'}</div>
+                  <div class="info-item"><strong>Uploaded:</strong> ${selectedOrder?.paymentDetails?.upiDetails?.paymentProof?.uploadedAt ? formatDate(selectedOrder.paymentDetails.upiDetails.paymentProof.uploadedAt) : 'N/A'}</div>
+                </div>
+              </div>
+            </div>
+          </body>
+        </html>
+      `);
     }
   };
 
@@ -388,6 +601,13 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
     return updatingStatus === `${type}-${orderId}`;
   };
 
+  // Get file icon based on type
+  const getFileIcon = (mimeType: string) => {
+    if (mimeType?.startsWith('image/')) return ImageIcon;
+    if (mimeType === 'application/pdf') return FileText;
+    return FileText;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -424,12 +644,12 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Pending</p>
+                <p className="text-sm font-medium text-muted-foreground">Pending Verification</p>
                 <p className="text-2xl font-bold">
-                  {orders.filter(o => o.orderStatus?.currentStatus === 'pending').length}
+                  {orders.filter(o => o.paymentDetails?.status === 'pending_verification').length}
                 </p>
               </div>
-              <Package className="h-8 w-8 text-yellow-500" />
+              <AlertCircle className="h-8 w-8 text-blue-500" />
             </div>
           </CardContent>
         </Card>
@@ -471,7 +691,7 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
 
       {/* Order Details Dialog */}
       <Dialog open={!!selectedOrder} onOpenChange={() => setSelectedOrder(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShoppingBag className="h-5 w-5" />
@@ -484,11 +704,12 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
 
           {selectedOrder && (
             <Tabs defaultValue="overview" className="space-y-4">
-              <TabsList className="grid grid-cols-4 w-full">
+              <TabsList className="grid grid-cols-5 w-full">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="products">Products</TabsTrigger>
                 <TabsTrigger value="shipping">Shipping</TabsTrigger>
                 <TabsTrigger value="payment">Payment</TabsTrigger>
+                <TabsTrigger value="proof" data-tab="proof">Payment Proof</TabsTrigger>
               </TabsList>
 
               {/* Overview Tab */}
@@ -517,10 +738,6 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
                           <span className="text-sm text-muted-foreground">Order Date:</span>
                           <span className="text-sm font-medium">{formatDate(selectedOrder.createdAt)}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-sm text-muted-foreground">Invoice Number:</span>
-                          <span className="text-sm font-medium font-mono">{selectedOrder.invoiceNumber || 'N/A'}</span>
-                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -544,12 +761,6 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
                           <div className="flex justify-between text-green-600">
                             <span className="text-sm">Discount:</span>
                             <span className="text-sm font-medium">-₹{selectedOrder.orderSummary?.discount?.toFixed(2)}</span>
-                          </div>
-                        )}
-                        {(selectedOrder.orderSummary?.tax || 0) > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-sm text-muted-foreground">Tax:</span>
-                            <span className="text-sm font-medium">₹{selectedOrder.orderSummary?.tax?.toFixed(2)}</span>
                           </div>
                         )}
                         <Separator />
@@ -594,6 +805,9 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
                           <SelectItem value="delivered">Delivered</SelectItem>
                           <SelectItem value="cancelled">Cancelled</SelectItem>
                           <SelectItem value="returned">Returned</SelectItem>
+                          <SelectItem value="payment_pending">Payment Pending</SelectItem>
+                          <SelectItem value="payment_verified">Payment Verified</SelectItem>
+                          <SelectItem value="payment_failed">Payment Failed</SelectItem>
                         </SelectContent>
                       </Select>
                     </CardContent>
@@ -627,7 +841,9 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
                           <SelectItem value="failed">Failed</SelectItem>
                           <SelectItem value="refunded">Refunded</SelectItem>
                           <SelectItem value="partially_refunded">Partially Refunded</SelectItem>
-                          <SelectItem value="requires_verification">Requires Verification</SelectItem>
+                          <SelectItem value="pending_verification">Pending Verification</SelectItem>
+                          <SelectItem value="verified">Verified</SelectItem>
+                          <SelectItem value="rejected">Rejected</SelectItem>
                         </SelectContent>
                       </Select>
                     </CardContent>
@@ -767,44 +983,162 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
                         </div>
                       </div>
 
-                      {selectedOrder.paymentDetails?.upiId && (
-                        <div>
-                          <p className="text-sm text-muted-foreground">UPI ID</p>
-                          <p className="font-mono text-sm">{selectedOrder.paymentDetails.upiId}</p>
-                        </div>
-                      )}
-
-                      {/* Payment Proof Section */}
-                      {selectedOrder.paymentProof && (
-                        <div className="mt-4 pt-4 border-t">
-                          <div className="flex items-center justify-between mb-3">
-                            <h4 className="font-semibold">Payment Proof</h4>
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              onClick={handleViewPaymentProof}
-                            >
-                              <Eye className="h-4 w-4 mr-2" />
-                              View Proof
-                            </Button>
+                      {selectedOrder.paymentDetails?.upiDetails && (
+                        <div className="space-y-3">
+                          <Separator />
+                          <h4 className="font-semibold">UPI Details</h4>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <p className="text-sm text-muted-foreground">UPI ID</p>
+                              <p className="font-mono text-sm">{selectedOrder.paymentDetails.upiDetails.upiId || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm text-muted-foreground">Transaction ID</p>
+                              <p className="font-mono text-sm truncate">{selectedOrder.paymentDetails.upiDetails.transactionId || 'N/A'}</p>
+                            </div>
                           </div>
-                          
-                          {/* Show payment proof image if available */}
-                          {selectedOrder.paymentProof && 
-                           (typeof selectedOrder.paymentProof === 'string' && 
-                            selectedOrder.paymentProof.startsWith('data:image')) && (
-                            <div className="mt-2 flex justify-center">
-                              <img 
-                                src={selectedOrder.paymentProof} 
-                                alt="Payment Proof"
-                                className="max-w-full h-auto max-h-48 rounded border cursor-pointer hover:opacity-90 transition-opacity"
-                                onClick={handleViewPaymentProof}
-                              />
+                          {selectedOrder.paymentDetails.upiDetails.verified !== undefined && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Verified</p>
+                              <div className="flex items-center gap-2">
+                                {selectedOrder.paymentDetails.upiDetails.verified ? (
+                                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-red-500" />
+                                )}
+                                <span className="text-sm">
+                                  {selectedOrder.paymentDetails.upiDetails.verified ? 'Yes' : 'No'}
+                                  {selectedOrder.paymentDetails.upiDetails.verifiedAt && (
+                                    <span className="text-muted-foreground ml-2">
+                                      on {formatDate(selectedOrder.paymentDetails.upiDetails.verifiedAt)}
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          {selectedOrder.paymentDetails.upiDetails.verificationNotes && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Verification Notes</p>
+                              <p className="text-sm p-2 bg-muted rounded">{selectedOrder.paymentDetails.upiDetails.verificationNotes}</p>
                             </div>
                           )}
                         </div>
                       )}
                     </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* Payment Proof Tab */}
+              <TabsContent value="proof" className="space-y-4">
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-semibold flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4" />
+                        Payment Proof
+                      </h3>
+                      {getPaymentProof(selectedOrder) && (
+                        <div className="flex gap-2">
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            onClick={handleViewPaymentProof}
+                          >
+                            <ExternalLink className="h-4 w-4 mr-2" />
+                            Open Full View
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    {getPaymentProof(selectedOrder) ? (
+                      <div className="space-y-4">
+                        {/* Payment Proof Image */}
+                        <div className="flex justify-center">
+                          <img 
+                            src={getPaymentProof(selectedOrder)} 
+                            alt="Payment Proof"
+                            className="max-w-full h-auto max-h-80 rounded-lg border shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
+                            onClick={handleViewPaymentProof}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = '/placeholder.png';
+                              toast.error("Failed to load payment proof image");
+                            }}
+                          />
+                        </div>
+
+                        {/* Payment Proof Details */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <Card>
+                            <CardContent className="pt-4">
+                              <h4 className="font-semibold mb-3">Proof Details</h4>
+                              <div className="space-y-2">
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-muted-foreground">File Type:</span>
+                                  <span className="text-sm font-medium capitalize">
+                                    {getPaymentProofDetails(selectedOrder)?.mimeType?.split('/')[1] || 'Image'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-muted-foreground">File Size:</span>
+                                  <span className="text-sm font-medium">
+                                    {getPaymentProofDetails(selectedOrder)?.fileSize ? 
+                                      `${(getPaymentProofDetails(selectedOrder).fileSize / 1024).toFixed(2)} KB` : 
+                                      'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-muted-foreground">Uploaded:</span>
+                                  <span className="text-sm font-medium">
+                                    {getPaymentProofDetails(selectedOrder)?.uploadedAt ? 
+                                      formatDate(getPaymentProofDetails(selectedOrder).uploadedAt) : 
+                                      'N/A'}
+                                  </span>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card>
+                            <CardContent className="pt-4">
+                              <h4 className="font-semibold mb-3">Transaction Details</h4>
+                              <div className="space-y-2">
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-muted-foreground">Reference ID:</span>
+                                  <span className="text-sm font-medium font-mono">
+                                    {getPaymentProofDetails(selectedOrder)?.transactionReference || 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-muted-foreground">UPI ID:</span>
+                                  <span className="text-sm font-medium font-mono">
+                                    {getPaymentProofDetails(selectedOrder)?.upiId || 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-sm text-muted-foreground">Verification Status:</span>
+                                  <span className="text-sm font-medium capitalize">
+                                    {getPaymentProofDetails(selectedOrder)?.status || 'pending'}
+                                  </span>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                     
+                      </div>
+                    ) : (
+                      <div className="text-center py-8">
+                        <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+                        <p className="text-muted-foreground">No payment proof available</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          This order does not have a payment proof uploaded.
+                        </p>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -815,13 +1149,29 @@ const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => 
           <div className="flex justify-between pt-4 border-t">
             <Button 
               variant="outline"
-              onClick={() => handleDownloadInvoice(selectedOrder?._id)}
+              onClick={() => selectedOrder && handleDownloadInvoice(selectedOrder._id)}
               className="flex items-center gap-2"
+              disabled={!selectedOrder}
             >
               <Download className="h-4 w-4" />
               Download Invoice
             </Button>
             <div className="flex gap-2">
+              {selectedOrder && hasPaymentProof(selectedOrder) && (
+                <Button 
+                  variant="outline"
+                  onClick={() => {
+                    const proofTab = document.querySelector('[data-tab="proof"]') as HTMLElement;
+                    if (proofTab) {
+                      proofTab.click();
+                    }
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <ImageIcon className="h-4 w-4" />
+                  View Proof
+                </Button>
+              )}
               <Button 
                 variant="outline"
                 onClick={() => setSelectedOrder(null)}
