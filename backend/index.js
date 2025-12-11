@@ -159,62 +159,121 @@ app.get("/api/vendor/:vendorId", async (req, res) => {
 
 const userSchema = new mongoose.Schema(
   {
-    name: String,
-    email: { type: String, unique: true, sparse: true },
-    phone: { type: String, unique: true, sparse: true },
-    password: String,
     name: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  phone: {
-    type: String,
-    trim: true
-  },
-  dateOfBirth: {
-    type: Date
-  },
-  gender: {
-    type: String,
-    enum: ['male', 'female', 'other', 'prefer-not-to-say'],
-    default: 'prefer-not-to-say'
-  },
-  bio: {
-    type: String,
-    maxlength: 500
-  },
-  avatar: {
-    type: String,
-    default: ''
-  },
-      referralCode: {
-    type: String,
-    unique: true,
-    sparse: true
-  },
-   referralCode: {
-    type: String,
-    unique: true,
-    sparse: true
-  },
-  referredBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  walletBalance: {
-    type: Number,
-    default: 0
-  },
-  totalEarnings: {
-    type: Number,
-    default: 0
-  }
+      type: String,
+      required: true,
+      trim: true
+    },
+    email: { 
+      type: String, 
+      unique: true, 
+      sparse: true 
+    },
+    phone: { 
+      type: String, 
+      unique: true, 
+      sparse: true 
+    },
+    password: String,
+    dateOfBirth: {
+      type: Date
+    },
+    gender: {
+      type: String,
+      enum: ['male', 'female', 'other', 'prefer-not-to-say'],
+      default: 'prefer-not-to-say'
+    },
+    bio: {
+      type: String,
+      maxlength: 500
+    },
+    avatar: {
+      type: String,
+      default: ''
+    },
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true
+    },
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    referralLevel: {
+      type: Number,
+      default: 0 // 0 = root level, 1 = direct referral, 2 = indirect referral
+    },
+    walletBalance: {
+      type: Number,
+      default: 0
+    },
+    totalEarnings: {
+      type: Number,
+      default: 0
+    },
+    // Track referred users
+    directReferrals: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }],
+    indirectReferrals: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }]
   },
   { timestamps: true }
 );
 
+
 const User = mongoose.model("User", userSchema);
+const commissionSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  orderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order',
+    required: true
+  },
+  amount: {
+    type: Number,
+    required: true
+  },
+  commissionType: {
+    type: String,
+    enum: ['signup', 'purchase', 'recurring'],
+    required: true
+  },
+  level: {
+    type: Number,
+    enum: [1, 2, 3, 4, 5]
+  },
+  source: {
+    type: String,
+    enum: ['product-commission', 'order-commission', 'signup-bonus']
+  },
+  percentage: {
+    type: Number,
+    description: "Percentage used for calculation"
+  },
+  productCommissionAmount: {
+    type: Number,
+    description: "Total product commission available"
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'credited', 'reversed'],
+    default: 'credited'
+  },
+  notes: String
+}, {
+  timestamps: true
+});
+
+const Commission = mongoose.model('Commission', commissionSchema);
 
 // ---------------------------------------------
 // 🔐 TOKEN CREATOR
@@ -277,72 +336,209 @@ const auth = async (req, res, next) => {
   }
 };
 
-// Process Referral Function
+// Process Referral with multi-level support - FIXED VERSION
 const processReferral = async (referredUserId, referralCode) => {
   try {
-    const referrer = await User.findOne({ referralCode });
-    if (!referrer) {
-      console.log('Referrer not found for code:', referralCode);
-      return;
+    console.log(`Processing referral for user ${referredUserId} with code ${referralCode}`);
+    
+    // Find the direct referrer using the provided referral code
+    const directReferrer = await User.findOne({ referralCode });
+    
+    if (!directReferrer) {
+      console.log('Direct referrer not found for code:', referralCode);
+      return null;
     }
 
-    // Create referral record
-    const referral = await Referral.create({
-      referrer: referrer._id,
+    console.log(`Direct referrer found: ${directReferrer._id} (${directReferrer.name})`);
+
+    // ========== CREATE DIRECT REFERRAL (Level 1 - 50rs) ==========
+    let directReferral = await Referral.findOne({
+      referrer: directReferrer._id,
       referredUser: referredUserId,
-      referralCode,
-      status: 'pending',
-      rewardAmount: 50
+      level: 1
     });
 
-    // Update referred user's record
-    await User.findByIdAndUpdate(referredUserId, {
-      referredBy: referrer._id
-    });
-
-    console.log(`Referral created: ${referrer._id} -> ${referredUserId}`);
-    return referral;
-  } catch (error) {
-    console.error('Error processing referral:', error);
-  }
-};
-
-// Complete Referral Function (call this when user makes purchase)
-const completeReferral = async (userId, orderAmount) => {
-  try {
-    const referral = await Referral.findOne({ 
-      referredUser: userId, 
-      status: 'pending' 
-    });
-
-    if (!referral) {
-      console.log('No pending referral found for user:', userId);
-      return;
+    if (!directReferral) {
+      directReferral = await Referral.create({
+        referrer: directReferrer._id,
+        referredUser: referredUserId,
+        referralCode: referralCode,
+        level: 1,
+        rewardAmount: 50, // Direct referral gets 50rs
+        status: 'pending',
+        commissionType: 'signup-bonus', // Changed from 'signup' to 'signup-bonus'
+        commissions: {
+          level1: 50, // Changed from 'direct' to 'level1' to match schema
+          level2: 0,   // Changed from 'indirect' to 'level2' to match schema
+          adminCommission: 0
+        },
+        commissionRecipients: [{
+          userId: directReferrer._id,
+          level: 1,
+          amount: 50,
+          commissionType: 'signup-bonus', // Added required field
+          status: 'pending'
+        }]
+      });
+      
+      console.log(`✅ Direct referral (50rs) created: ${directReferrer._id} -> ${referredUserId}`);
+    } else {
+      console.log(`Direct referral already exists: ${directReferral._id}`);
     }
 
-    // Update referral status to completed
-    referral.status = 'completed';
-    referral.completedAt = new Date();
-    await referral.save();
-
-    // Credit reward to referrer
-    await User.findByIdAndUpdate(referral.referrer, {
-      $inc: { 
-        walletBalance: referral.rewardAmount,
-        totalEarnings: referral.rewardAmount
-      }
+    // ========== UPDATE REFERRED USER'S RECORD ==========
+    await User.findByIdAndUpdate(referredUserId, {
+      referredBy: directReferrer._id,
+      referralLevel: 1 // This user is at level 1 from the root
     });
 
-    // Update referral status to credited
-    referral.status = 'credited';
-    await referral.save();
+    // Add to direct referrer's direct referrals
+    await User.findByIdAndUpdate(directReferrer._id, {
+      $push: { directReferrals: referredUserId }
+    });
 
-    console.log(`Referral completed and credited: ${referral._id}`);
-    return referral;
+    console.log(`Updated user ${referredUserId} referredBy to ${directReferrer._id}`);
+
+    // ========== CREATE INDIRECT REFERRAL (Level 2 - 25rs) ==========
+    // Check if direct referrer has a parent (for indirect referral)
+    if (directReferrer.referredBy) {
+      console.log(`Direct referrer has parent: ${directReferrer.referredBy}`);
+      
+      // Find the indirect referrer (parent of direct referrer)
+      const indirectReferrer = await User.findById(directReferrer.referredBy);
+      
+      if (indirectReferrer) {
+        console.log(`Indirect referrer found: ${indirectReferrer._id} (${indirectReferrer.name})`);
+        
+        // Check if indirect referral already exists
+        let indirectReferral = await Referral.findOne({
+          referrer: indirectReferrer._id,
+          referredUser: referredUserId,
+          level: 2
+        });
+
+        if (!indirectReferral) {
+          indirectReferral = await Referral.create({
+            referrer: indirectReferrer._id,
+            referredUser: referredUserId,
+            referralCode: `${referralCode}-indirect`,
+            level: 2,
+            rewardAmount: 25, // Indirect referral gets 25rs
+            status: 'pending',
+            commissionType: 'signup-bonus', // Changed from 'signup' to 'signup-bonus'
+            commissions: {
+              level1: 0,   // Changed from 'direct' to 'level1'
+              level2: 25,  // Changed from 'indirect' to 'level2'
+              adminCommission: 0
+            },
+            commissionRecipients: [{
+              userId: indirectReferrer._id,
+              level: 2,
+              amount: 25,
+              commissionType: 'signup-bonus', // Added required field
+              status: 'pending'
+            }]
+          });
+          
+          console.log(`✅ Indirect referral (25rs) created: ${indirectReferrer._id} -> ${referredUserId}`);
+        } else {
+          console.log(`Indirect referral already exists: ${indirectReferral._id}`);
+        }
+
+        // Add to indirect referrer's indirect referrals
+        await User.findByIdAndUpdate(indirectReferrer._id, {
+          $push: { indirectReferrals: referredUserId }
+        });
+      }
+    } else {
+      console.log('No indirect referrer (direct referrer has no parent)');
+    }
+
+    // ========== UPDATE REFERRAL CHAIN ==========
+    // Update both referrals with the full chain
+    const referralChain = [];
+    
+    // Add direct referrer
+    referralChain.push({
+      userId: directReferrer._id,
+      referralCode: directReferrer.referralCode,
+      level: 1,
+      earnedCommission: 50,
+      commissionType: 'signup-bonus' // Add this
+    });
+    
+    // Add indirect referrer if exists
+    if (directReferrer.referredBy) {
+      const indirectReferrer = await User.findById(directReferrer.referredBy);
+      if (indirectReferrer) {
+        referralChain.push({
+          userId: indirectReferrer._id,
+          referralCode: indirectReferrer.referralCode,
+          level: 2,
+          earnedCommission: 25,
+          commissionType: 'signup-bonus' // Add this
+        });
+      }
+    }
+    
+    // Update direct referral with chain
+    await Referral.findByIdAndUpdate(directReferral._id, {
+      referralChain: referralChain
+    });
+
+    // Update indirect referral if exists
+    if (directReferrer.referredBy) {
+      const indirectReferral = await Referral.findOne({
+        referrer: directReferrer.referredBy,
+        referredUser: referredUserId,
+        level: 2
+      });
+      
+      if (indirectReferral) {
+        await Referral.findByIdAndUpdate(indirectReferral._id, {
+          referralChain: referralChain
+        });
+      }
+    }
+
+    console.log(`✅ Referral processing complete for user ${referredUserId}`);
+    return {
+      directReferral,
+      indirectReferral: directReferrer.referredBy ? await Referral.findOne({
+        referrer: directReferrer.referredBy,
+        referredUser: referredUserId,
+        level: 2
+      }) : null
+    };
   } catch (error) {
-    console.error('Error completing referral:', error);
+    console.error('❌ Error processing referral:', error);
+    return null;
   }
 };
+
+// Helper function to debug referral creation
+const debugReferralsForUser = async (userId) => {
+  try {
+    const Referral = mongoose.model('Referral');
+    const referrals = await Referral.find({ referredUser: userId })
+      .populate('referrer', 'name email referralCode')
+      .sort({ level: 1 });
+    
+    console.log(`\n🔍 DEBUG: Referrals for user ${userId}:`);
+    referrals.forEach(ref => {
+      console.log(`  Level ${ref.level}: ${ref.referrer?.name} (${ref.referrer?._id})`);
+      console.log(`    Amount: ₹${ref.rewardAmount}, Status: ${ref.status}`);
+      console.log(`    Commission Recipients:`, ref.commissionRecipients);
+    });
+    
+    return referrals;
+  } catch (error) {
+    console.error('Debug error:', error);
+    return [];
+  }
+};
+
+// Updated registration endpoint with debugging
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, phone, password, referralCode } = req.body;
@@ -370,9 +566,24 @@ app.post("/api/auth/register", async (req, res) => {
       referralCode: userReferralCode,
     });
 
+    console.log(`✅ New user created: ${newUser._id} (${newUser.email})`);
+
     // Process referral if referral code provided
     if (referralCode) {
-      await processReferral(newUser._id, referralCode);
+      console.log(`🔗 Processing referral with code: ${referralCode}`);
+      const referralResult = await processReferral(newUser._id, referralCode);
+      
+      if (referralResult) {
+        console.log(`✅ Referral processing result:`, {
+          direct: referralResult.directReferral ? 'Created' : 'Exists',
+          indirect: referralResult.indirectReferral ? 'Created' : 'None'
+        });
+      }
+      
+      // Debug: Check what referrals were created
+      await debugReferralsForUser(newUser._id);
+    } else {
+      console.log('No referral code provided');
     }
 
     res.json({
@@ -382,13 +593,56 @@ app.post("/api/auth/register", async (req, res) => {
         name: newUser.name,
         email: newUser.email,
         phone: newUser.phone,
-        referralCode: newUser.referralCode
+        referralCode: newUser.referralCode,
+        referredBy: newUser.referredBy || null
       },
       token: createToken(newUser),
     });
   } catch (err) {
     console.error('Registration error:', err);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Add an endpoint to check referral status
+app.get("/api/referrals/debug/:userId", auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const referrals = await debugReferralsForUser(userId);
+    const user = await User.findById(userId)
+      .populate('referredBy', 'name email referralCode')
+      .populate('directReferrals', 'name email')
+      .populate('indirectReferrals', 'name email');
+
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        referralCode: user.referralCode,
+        referredBy: user.referredBy,
+        referralLevel: user.referralLevel,
+        directReferralsCount: user.directReferrals?.length || 0,
+        indirectReferralsCount: user.indirectReferrals?.length || 0
+      },
+      referrals: referrals.map(ref => ({
+        id: ref._id,
+        level: ref.level,
+        referrer: ref.referrer,
+        rewardAmount: ref.rewardAmount,
+        status: ref.status,
+        commissionRecipients: ref.commissionRecipients,
+        createdAt: ref.createdAt
+      }))
+    });
+  } catch (error) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({ error: 'Failed to get debug info' });
   }
 });
 app.post("/api/auth/login", async (req, res) => {
@@ -456,7 +710,7 @@ app.get("/api/referrals/code", auth, async (req, res) => {
 });
 app.get("/api/referrals/stats", auth, async (req, res) => {
   try {
-    console.log('Getting referral stats for user:', req.user?._id);
+    console.log('Getting enhanced referral stats for user:', req.user?._id);
     
     if (!req.user) {
       return res.status(401).json({ error: 'User not authenticated' });
@@ -464,6 +718,16 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
 
     const userId = req.user._id;
 
+    // Get user with referral details
+    const user = await User.findById(userId)
+      .populate('referredBy', 'name email referralCode')
+      .populate({
+        path: 'directReferrals',
+        select: 'name email createdAt',
+        options: { limit: 5 }
+      });
+
+    // Basic referral counts
     const totalReferrals = await Referral.countDocuments({ referrer: userId });
     const completedReferrals = await Referral.countDocuments({ 
       referrer: userId, 
@@ -473,29 +737,159 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
       referrer: userId, 
       status: 'pending' 
     });
+
+    // Multi-level counts
+    const totalDirectReferrals = user.directReferrals?.length || 0;
+    const totalIndirectReferrals = user.indirectReferrals?.length || 0;
     
-    const totalEarningsResult = await Referral.aggregate([
-      { $match: { referrer: new mongoose.Types.ObjectId(userId), status: 'credited' } },
-      { $group: { _id: null, total: { $sum: '$rewardAmount' } } }
+    // Get completed referrals by level
+    const directReferrals = await Referral.find({ 
+      referrer: userId, 
+      level: 1,
+      status: 'credited'
+    }).countDocuments();
+    
+    const indirectReferrals = await Referral.find({ 
+      referrer: userId, 
+      level: 2,
+      status: 'credited'
+    }).countDocuments();
+
+    // Calculate earnings by type and level
+    const earningsAggregation = await Referral.aggregate([
+      { 
+        $match: { 
+          referrer: new mongoose.Types.ObjectId(userId), 
+          status: 'credited' 
+        } 
+      },
+      {
+        $group: {
+          _id: {
+            level: '$level',
+            type: '$commissionType'
+          },
+          totalAmount: { $sum: '$rewardAmount' },
+          count: { $sum: 1 }
+        }
+      }
     ]);
 
-    const user = await User.findById(userId);
+    // Calculate commission totals from Commission model
+    const commissionAggregation = await Commission.aggregate([
+      { 
+        $match: { 
+          userId: new mongoose.Types.ObjectId(userId),
+          status: 'credited'
+        } 
+      },
+      {
+        $group: {
+          _id: '$commissionType',
+          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Initialize totals
+    let totalEarnings = 0;
+    let directEarnings = 0;
+    let indirectEarnings = 0;
+    let signupBonusTotal = 0;
+    let purchaseCommissionTotal = 0;
+
+    // Process referral earnings
+    earningsAggregation.forEach(item => {
+      const amount = item.totalAmount || 0;
+      totalEarnings += amount;
+      
+      if (item._id.level === 1) {
+        directEarnings += amount;
+      } else if (item._id.level === 2) {
+        indirectEarnings += amount;
+      }
+      
+      if (item._id.type === 'signup') {
+        signupBonusTotal += amount;
+      } else if (item._id.type === 'purchase') {
+        purchaseCommissionTotal += amount;
+      }
+    });
+
+    // Add commission earnings (these are separate from referral bonuses)
+    commissionAggregation.forEach(item => {
+      const amount = item.totalAmount || 0;
+      totalEarnings += amount;
+      
+      if (item._id === 'signup') {
+        signupBonusTotal += amount;
+      } else if (item._id === 'purchase') {
+        purchaseCommissionTotal += amount;
+      }
+    });
+
+    // Get latest commissions for quick view
+    const recentCommissions = await Commission.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate('orderId', 'orderNumber total');
+
+    // Get pending commissions
+    const pendingCommissions = await Commission.countDocuments({ 
+      userId, 
+      status: 'pending' 
+    });
 
     res.json({
+      // Basic stats
       totalReferrals,
       completedReferrals,
       pendingReferrals,
-      totalEarnings: totalEarningsResult[0]?.total || 0,
-      walletBalance: user?.walletBalance || 0
+      totalEarnings,
+      walletBalance: user?.walletBalance || 0,
+      
+      // Multi-level stats
+      totalDirectReferrals,
+      totalIndirectReferrals,
+      completedDirectReferrals: directReferrals,
+      completedIndirectReferrals: indirectReferrals,
+      pendingDirectReferrals: pendingReferrals - indirectReferrals,
+      pendingIndirectReferrals: pendingReferrals - directReferrals,
+      
+      // Earnings breakdown
+      directEarnings,
+      indirectEarnings,
+      signupBonusTotal,
+      purchaseCommissionTotal,
+      
+      // User info
+      userLevel: user?.referralLevel || 0,
+      hasParent: !!user?.referredBy,
+      parentInfo: user?.referredBy ? {
+        name: user.referredBy.name,
+        referralCode: user.referredBy.referralCode
+      } : null,
+      
+      // Quick stats
+      recentCommissionsCount: recentCommissions.length,
+      pendingCommissionsCount: pendingCommissions,
+      
+      // Direct referrals preview
+      recentDirectReferrals: user.directReferrals?.map(ref => ({
+        name: ref.name,
+        email: ref.email,
+        joined: ref.createdAt
+      })) || []
     });
   } catch (error) {
-    console.error('Get referral stats error:', error);
+    console.error('Get enhanced referral stats error:', error);
     res.status(500).json({ error: 'Failed to get referral stats' });
   }
 });
 app.get("/api/referrals/history", auth, async (req, res) => {
   try {
-    console.log('Getting referral history for user:', req.user?._id);
+    console.log('Getting enhanced referral history for user:', req.user?._id);
     
     if (!req.user) {
       return res.status(401).json({ error: 'User not authenticated' });
@@ -503,97 +897,486 @@ app.get("/api/referrals/history", auth, async (req, res) => {
 
     const userId = req.user._id;
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
+    const type = req.query.type; // 'all', 'direct', 'indirect', 'signup', 'purchase'
 
-    const referrals = await Referral.find({ referrer: userId })
-      .populate('referredUser', 'name email')
+    // Build query
+    const query = { referrer: userId };
+    
+    if (type === 'direct') {
+      query.level = 1;
+    } else if (type === 'indirect') {
+      query.level = 2;
+    } else if (type === 'signup') {
+      query.commissionType = 'signup';
+    } else if (type === 'purchase') {
+      query.commissionType = 'purchase';
+    }
+
+    // Get referrals with enhanced details
+    const referrals = await Referral.find(query)
+      .populate('referredUser', 'name email phone')
+      .populate({
+        path: 'orderId',
+        select: 'orderNumber total paymentDetails',
+        populate: {
+          path: 'orderItems.productId',
+          select: 'name commission'
+        }
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 
-    const total = await Referral.countDocuments({ referrer: userId });
+    const total = await Referral.countDocuments(query);
 
-    res.json({
-      referrals: referrals.map(ref => ({
+    // Format response
+    const formattedReferrals = referrals.map(ref => {
+      const commissionDetails = ref.commissionRecipients?.find(
+        recipient => recipient.userId.toString() === userId.toString()
+      );
+
+      return {
         _id: ref._id,
         referredUser: ref.referredUser,
+        level: ref.level,
+        levelName: ref.level === 1 ? 'Direct' : 'Indirect',
         status: ref.status,
         rewardAmount: ref.rewardAmount,
-        createdAt: ref.createdAt
-      })),
+        commissionType: ref.commissionType || 'signup',
+        type: ref.commissionType === 'signup' ? 'signup-bonus' : 'purchase-commission',
+        createdAt: ref.createdAt,
+        completedAt: ref.completedAt,
+        orderDetails: ref.orderId ? {
+          orderNumber: ref.orderId.orderNumber,
+          total: ref.orderId.total,
+          paymentMethod: ref.orderId.paymentDetails?.method
+        } : null,
+        commissionDetails: commissionDetails ? {
+          amount: commissionDetails.amount,
+          creditedAt: commissionDetails.creditedAt
+        } : null
+      };
+    });
+
+    res.json({
+      referrals: formattedReferrals,
       totalPages: Math.ceil(total / limit),
       currentPage: page,
-      total
+      total,
+      summary: {
+        directCount: await Referral.countDocuments({ referrer: userId, level: 1 }),
+        indirectCount: await Referral.countDocuments({ referrer: userId, level: 2 }),
+        signupCount: await Referral.countDocuments({ referrer: userId, commissionType: 'signup' }),
+        purchaseCount: await Referral.countDocuments({ referrer: userId, commissionType: 'purchase' })
+      }
     });
   } catch (error) {
-    console.error('Get referral history error:', error);
+    console.error('Get enhanced referral history error:', error);
     res.status(500).json({ error: 'Failed to get referral history' });
   }
 });
-app.get("/api/referrals/stats", async (req, res) => {
+app.get("/api/user/commissions", auth, async (req, res) => {
   try {
-    const userId = req.user.id;
-
-    const totalReferrals = await Referral.countDocuments({ referrer: userId });
-    const completedReferrals = await Referral.countDocuments({ 
-      referrer: userId, 
-      status: 'credited' 
-    });
-    const pendingReferrals = await Referral.countDocuments({ 
-      referrer: userId, 
-      status: 'pending' 
-    });
+    console.log('Getting commission history for user:', req.user?._id);
     
-    const totalEarningsResult = await Referral.aggregate([
-      { $match: { referrer: new mongoose.Types.ObjectId(userId), status: 'credited' } },
-      { $group: { _id: null, total: { $sum: '$rewardAmount' } } }
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const type = req.query.type; // 'all', 'signup', 'purchase'
+    const level = req.query.level; // 1, 2
+
+    // Build query
+    const query = { userId };
+    
+    if (type && type !== 'all') {
+      query.commissionType = type;
+    }
+    
+    if (level) {
+      query.level = parseInt(level);
+    }
+
+    // Get commissions
+    const commissions = await Commission.find(query)
+      .populate('orderId', 'orderNumber total createdAt')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Commission.countDocuments(query);
+
+    // Calculate totals
+    const totals = await Commission.aggregate([
+      { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+      {
+        $group: {
+          _id: '$commissionType',
+          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      }
     ]);
 
-    const user = await User.findById(userId);
+    // Format totals
+    const totalByType = {
+      signup: 0,
+      purchase: 0,
+      total: 0
+    };
 
-    res.json({
-      totalReferrals,
-      completedReferrals,
-      pendingReferrals,
-      totalEarnings: totalEarningsResult[0]?.total || 0,
-      walletBalance: user.walletBalance || 0
+    totals.forEach(item => {
+      totalByType[item._id] = item.totalAmount;
+      totalByType.total += item.totalAmount;
     });
-  } catch (error) {
-    console.error('Get referral stats error:', error);
-    res.status(500).json({ error: 'Failed to get referral stats' });
-  }
-});
-app.get("/api/referrals/history", async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
 
-    const referrals = await Referral.find({ referrer: userId })
-      .populate('referredUser', 'name email')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Referral.countDocuments({ referrer: userId });
+    // Format response
+    const formattedCommissions = commissions.map(com => ({
+      _id: com._id,
+      amount: com.amount,
+      commissionType: com.commissionType,
+      level: com.level,
+      source: com.source,
+      percentage: com.percentage,
+      status: com.status,
+      createdAt: com.createdAt,
+      orderId: com.orderId ? {
+        orderNumber: com.orderId.orderNumber,
+        total: com.orderId.total,
+        createdAt: com.orderId.createdAt
+      } : null,
+      notes: com.notes
+    }));
 
     res.json({
-      referrals: referrals.map(ref => ({
-        _id: ref._id,
-        referredUser: ref.referredUser,
-        status: ref.status,
-        rewardAmount: ref.rewardAmount,
-        createdAt: ref.createdAt
-      })),
+      commissions: formattedCommissions,
       totalPages: Math.ceil(total / limit),
       currentPage: page,
-      total
+      total,
+      totals: totalByType,
+      summary: {
+        signupCount: await Commission.countDocuments({ userId, commissionType: 'signup' }),
+        purchaseCount: await Commission.countDocuments({ userId, commissionType: 'purchase' }),
+        pendingCount: await Commission.countDocuments({ userId, status: 'pending' })
+      }
     });
   } catch (error) {
-    console.error('Get referral history error:', error);
-    res.status(500).json({ error: 'Failed to get referral history' });
+    console.error('Get commission history error:', error);
+    res.status(500).json({ error: 'Failed to get commission history' });
+  }
+});
+app.get("/api/referrals/earnings-summary", auth, async (req, res) => {
+  try {
+    console.log('Getting earnings summary for user:', req.user?._id);
+    
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const userId = req.user._id;
+    const timeframe = req.query.timeframe || 'all'; // 'today', 'week', 'month', 'year', 'all'
+
+    // Calculate date range based on timeframe
+    let startDate = null;
+    const now = new Date();
+    
+    switch (timeframe) {
+      case 'today':
+        startDate = new Date(now.setHours(0, 0, 0, 0));
+        break;
+      case 'week':
+        startDate = new Date(now.setDate(now.getDate() - 7));
+        break;
+      case 'month':
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+        break;
+      case 'year':
+        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        break;
+      default:
+        startDate = null;
+    }
+
+    // Build date query
+    const dateQuery = startDate ? { createdAt: { $gte: startDate } } : {};
+
+    // Get referral earnings
+    const referralEarnings = await Referral.aggregate([
+      {
+        $match: {
+          referrer: new mongoose.Types.ObjectId(userId),
+          status: 'credited',
+          ...dateQuery
+        }
+      },
+      {
+        $group: {
+          _id: {
+            level: '$level',
+            type: '$commissionType'
+          },
+          totalAmount: { $sum: '$rewardAmount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get commission earnings
+    const commissionEarnings = await Commission.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(userId),
+          status: 'credited',
+          ...dateQuery
+        }
+      },
+      {
+        $group: {
+          _id: {
+            commissionType: '$commissionType',
+            level: '$level'
+          },
+          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Combine and format results
+    const summary = {
+      timeframe,
+      startDate: startDate,
+      totals: {
+        direct: 0,
+        indirect: 0,
+        signup: 0,
+        purchase: 0,
+        total: 0
+      },
+      breakdown: {
+        byLevel: { level1: 0, level2: 0 },
+        byType: { signup: 0, purchase: 0 }
+      }
+    };
+
+    // Process referral earnings
+    referralEarnings.forEach(item => {
+      const amount = item.totalAmount || 0;
+      const level = item._id.level;
+      const type = item._id.type;
+
+      summary.totals.total += amount;
+
+      if (level === 1) {
+        summary.totals.direct += amount;
+        summary.breakdown.byLevel.level1 += amount;
+      } else if (level === 2) {
+        summary.totals.indirect += amount;
+        summary.breakdown.byLevel.level2 += amount;
+      }
+
+      if (type === 'signup') {
+        summary.totals.signup += amount;
+        summary.breakdown.byType.signup += amount;
+      } else if (type === 'purchase') {
+        summary.totals.purchase += amount;
+        summary.breakdown.byType.purchase += amount;
+      }
+    });
+
+    // Process commission earnings
+    commissionEarnings.forEach(item => {
+      const amount = item.totalAmount || 0;
+      const type = item._id.commissionType;
+      const level = item._id.level;
+
+      summary.totals.total += amount;
+
+      if (type === 'signup') {
+        summary.totals.signup += amount;
+        summary.breakdown.byType.signup += amount;
+      } else if (type === 'purchase') {
+        summary.totals.purchase += amount;
+        summary.breakdown.byType.purchase += amount;
+      }
+
+      if (level === 1) {
+        summary.totals.direct += amount;
+        summary.breakdown.byLevel.level1 += amount;
+      } else if (level === 2) {
+        summary.totals.indirect += amount;
+        summary.breakdown.byLevel.level2 += amount;
+      }
+    });
+
+    // Get top earning referrals
+    const topReferrals = await Referral.aggregate([
+      {
+        $match: {
+          referrer: new mongoose.Types.ObjectId(userId),
+          status: 'credited',
+          ...dateQuery
+        }
+      },
+      {
+        $group: {
+          _id: '$referredUser',
+          totalEarned: { $sum: '$rewardAmount' },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { totalEarned: -1 } },
+      { $limit: 5 }
+    ]);
+
+    // Populate user details for top referrals
+    const topReferralDetails = await Promise.all(
+      topReferrals.map(async (referral) => {
+        const user = await User.findById(referral._id).select('name email');
+        return {
+          user: user ? { name: user.name, email: user.email } : null,
+          totalEarned: referral.totalEarned,
+          referralCount: referral.count
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      summary,
+      topReferrals: topReferralDetails,
+      timeframeInfo: {
+        label: timeframe === 'all' ? 'All Time' : `Last ${timeframe}`,
+        startDate: startDate,
+        endDate: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Get earnings summary error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to get earnings summary' 
+    });
+  }
+});
+app.get("/api/referrals/network", auth, async (req, res) => {
+  try {
+    console.log('Getting referral network for user:', req.user?._id);
+    
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const userId = req.user._id;
+    const depth = parseInt(req.query.depth) || 2; // How many levels deep to fetch
+
+    // Get user with their referral network
+    const user = await User.findById(userId)
+      .populate('referredBy', 'name email referralCode')
+      .populate({
+        path: 'directReferrals',
+        select: 'name email referralCode createdAt walletBalance totalEarnings',
+        populate: {
+          path: 'directReferrals',
+          select: 'name email referralCode createdAt',
+          ...(depth > 1 ? {
+            populate: {
+              path: 'directReferrals',
+              select: 'name email referralCode createdAt',
+              ...(depth > 2 ? {} : null) // Can extend further if needed
+            }
+          } : null)
+        }
+      });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Build network tree
+    const buildNetworkTree = async (userNode, currentDepth = 0) => {
+      if (currentDepth >= depth) return null;
+
+      const tree = {
+        userId: userNode._id,
+        name: userNode.name,
+        email: userNode.email,
+        referralCode: userNode.referralCode,
+        walletBalance: userNode.walletBalance || 0,
+        totalEarnings: userNode.totalEarnings || 0,
+        createdAt: userNode.createdAt,
+        level: currentDepth,
+        referrals: []
+      };
+
+      // Get direct referrals with their stats
+      const directReferrals = await User.find({ referredBy: userNode._id })
+        .select('name email referralCode createdAt walletBalance totalEarnings')
+        .limit(20); // Limit for performance
+
+      // Build subtrees for each referral
+      for (const referral of directReferrals) {
+        if (currentDepth + 1 < depth) {
+          const subtree = await buildNetworkTree(referral, currentDepth + 1);
+          tree.referrals.push(subtree);
+        } else {
+          tree.referrals.push({
+            userId: referral._id,
+            name: referral.name,
+            email: referral.email,
+            referralCode: referral.referralCode,
+            level: currentDepth + 1,
+            leaf: true // Mark as leaf node (no deeper levels loaded)
+          });
+        }
+      }
+
+      return tree;
+    };
+
+    const networkTree = await buildNetworkTree(user);
+
+    // Get network statistics
+    const networkStats = {
+      totalMembers: 0,
+      totalEarnings: user.totalEarnings || 0,
+      levels: {}
+    };
+
+    // Calculate statistics by level
+    for (let i = 1; i <= depth; i++) {
+      const levelUsers = await User.find({ referralLevel: i }).countDocuments();
+      networkStats.levels[`level${i}`] = levelUsers;
+      networkStats.totalMembers += levelUsers;
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        referralCode: user.referralCode,
+        referredBy: user.referredBy,
+        referralLevel: user.referralLevel
+      },
+      network: networkTree,
+      stats: networkStats,
+      depth,
+      timestamp: new Date()
+    });
+  } catch (error) {
+    console.error('Get referral network error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to get referral network' 
+    });
   }
 });
 app.post("/api/referrals/complete", auth, async (req, res) => {
@@ -3117,8 +3900,7 @@ app.put('/api/user/profile/:userId', auth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-// Helper function to handle referral completion (add this before your routes)
-const processReferralForOrder = async (order) => {
+const processMultiLevelReferralForOrder = async (order) => {
   // Prevent duplicate processing
   if (order.metadata?.referralCompleted) {
     console.log(`Referral already processed for order ${order._id}`);
@@ -3148,39 +3930,301 @@ const processReferralForOrder = async (order) => {
 
     console.log(`Completed orders count for user ${order.userId}: ${completedOrders}`);
 
+    const allResults = [];
+
+    // Process signup bonuses for first order only
     if (completedOrders === 0) { // This is the first completed & delivered order
-      console.log(`Processing referral for first completed order ${order._id}`);
-      const referralResult = await completeReferral(
+      console.log(`Processing signup bonus for first completed order ${order._id}`);
+      
+      const signupBonusResult = await completeMultiLevelReferral(
         order.userId, 
         order.orderSummary.total
       );
 
-      if (referralResult) {
-        // Initialize metadata if not exists
-        order.metadata = order.metadata || {};
-        
-        // Update order with referral info
-        order.metadata.referralCompleted = true;
-        order.metadata.referralId = referralResult._id;
-        order.metadata.rewardAmount = referralResult.rewardAmount;
-        order.metadata.referralProcessedAt = new Date();
-        
-        console.log(`Referral reward processed for order ${order._id}`, {
-          referralId: referralResult._id,
-          rewardAmount: referralResult.rewardAmount
-        });
-        return referralResult;
+      if (signupBonusResult) {
+        allResults.push(...signupBonusResult);
       }
     } else {
-      console.log(`Not first completed order for user ${order.userId}. Skipping referral.`);
+      console.log(`Not first completed order for user ${order.userId}. Only purchase commissions apply.`);
+    }
+
+    // Process purchase commissions for every order
+    console.log(`Processing purchase commissions for order ${order._id}`);
+    const purchaseCommissionResult = await processPurchaseCommission(order);
+
+    if (purchaseCommissionResult) {
+      allResults.push(...purchaseCommissionResult);
+    }
+
+    if (allResults.length > 0) {
+      // Initialize metadata if not exists
+      order.metadata = order.metadata || {};
+      
+      // Update order with multi-level referral info
+      order.metadata.referralCompleted = true;
+      order.metadata.referralType = 'multi-level';
+      order.metadata.referralProcessedAt = new Date();
+      
+      // Store all commission recipients
+      order.metadata.commissionRecipients = allResults.map(result => ({
+        userId: result.referrer,
+        level: result.level,
+        amount: result.rewardAmount,
+        type: result.type || 'signup-bonus'
+      }));
+      
+      // Calculate totals by type
+      const signupBonuses = allResults.filter(r => !r.type || r.type === 'signup-bonus');
+      const purchaseCommissions = allResults.filter(r => r.type === 'purchase-commission');
+      
+      order.metadata.totalCommissionPaid = allResults.reduce((sum, r) => sum + r.rewardAmount, 0);
+      order.metadata.signupBonusTotal = signupBonuses.reduce((sum, r) => sum + r.rewardAmount, 0);
+      order.metadata.purchaseCommissionTotal = purchaseCommissions.reduce((sum, r) => sum + r.rewardAmount, 0);
+      order.metadata.directCommission = allResults.find(r => r.level === 1)?.rewardAmount || 0;
+      order.metadata.indirectCommission = allResults.find(r => r.level === 2)?.rewardAmount || 0;
+      
+      // Save order with updated metadata
+      await Order.findByIdAndUpdate(order._id, {
+        $set: {
+          'metadata': order.metadata,
+          'updatedAt': new Date()
+        }
+      });
+      
+      console.log(`✅ Multi-level referral processed for order ${order._id}`, {
+        totalResults: allResults.length,
+        signupBonuses: signupBonuses.length,
+        purchaseCommissions: purchaseCommissions.length,
+        totalCommission: order.metadata.totalCommissionPaid,
+        signupBonusTotal: order.metadata.signupBonusTotal,
+        purchaseCommissionTotal: order.metadata.purchaseCommissionTotal
+      });
+      
+      return allResults;
+    } else {
+      console.log(`No commissions to process for order ${order._id}`);
     }
   } catch (err) {
-    console.error(`Referral processing error for order ${order._id}:`, err);
-    // Don't throw error to prevent order update failure
+    console.error(`❌ Multi-level referral processing error for order ${order._id}:`, err);
   }
   
   return null;
 };
+
+// ========== FIXED COMPLETE MULTI LEVEL REFERRAL ==========
+const completeMultiLevelReferral = async (userId, orderAmount) => {
+  try {
+    const User = mongoose.model('User');
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      console.log('User not found:', userId);
+      return null;
+    }
+
+    console.log(`Completing referrals for user: ${userId}, referredBy: ${user.referredBy}`);
+
+    // Find ALL pending referrals for this user (both direct and indirect)
+    const pendingReferrals = await Referral.find({ 
+      referredUser: userId, 
+      status: 'pending' 
+    }).populate('referrer', 'name email');
+
+    console.log(`Found ${pendingReferrals.length} pending referrals`);
+
+    if (pendingReferrals.length === 0) {
+      console.log('No pending referrals found for user:', userId);
+      return null;
+    }
+
+    const results = [];
+
+    // Process each pending referral
+    for (const referral of pendingReferrals) {
+      try {
+        console.log(`Processing referral ${referral._id}, Level: ${referral.level}, Amount: ₹${referral.rewardAmount}`);
+        
+        // Credit commission to referrer
+        if (referral.commissionRecipients && referral.commissionRecipients.length > 0) {
+          for (const recipient of referral.commissionRecipients) {
+            if (recipient.status === 'pending') {
+              // Credit commission to user's wallet
+              await User.findByIdAndUpdate(recipient.userId, {
+                $inc: {
+                  walletBalance: recipient.amount,
+                  totalEarnings: recipient.amount
+                }
+              });
+              
+              recipient.status = 'credited';
+              recipient.creditedAt = new Date();
+              
+              results.push({
+                referralId: referral._id,
+                referrer: recipient.userId,
+                level: recipient.level,
+                rewardAmount: recipient.amount,
+                type: 'signup-bonus',
+                creditedAt: recipient.creditedAt
+              });
+              
+              console.log(`✅ Signup bonus credited: Level ${recipient.level}, ₹${recipient.amount} to user ${recipient.userId}`);
+            }
+          }
+        } else {
+          // Fallback: credit directly to referrer
+          await User.findByIdAndUpdate(referral.referrer._id, {
+            $inc: {
+              walletBalance: referral.rewardAmount,
+              totalEarnings: referral.rewardAmount
+            }
+          });
+          
+          const level = referral.level || 1;
+          results.push({
+            referralId: referral._id,
+            referrer: referral.referrer._id,
+            level: level,
+            rewardAmount: referral.rewardAmount,
+            type: 'signup-bonus',
+            creditedAt: new Date()
+          });
+          
+          console.log(`✅ Signup bonus credited (fallback): Level ${level}, ₹${referral.rewardAmount} to user ${referral.referrer._id}`);
+        }
+        
+        // Update referral status
+        referral.status = 'credited';
+        referral.completedAt = new Date();
+        referral.orderAmount = orderAmount;
+        await referral.save();
+        
+        console.log(`Referral ${referral._id} marked as credited`);
+        
+      } catch (error) {
+        console.error(`Error processing referral ${referral._id}:`, error);
+      }
+    }
+
+    console.log(`✅ Completed ${results.length} signup bonus payments`);
+    return results;
+  } catch (error) {
+    console.error('Error in completeMultiLevelReferral:', error);
+    return null;
+  }
+};
+
+// ========== UPDATED PROCESS PURCHASE COMMISSION ==========
+const processPurchaseCommission = async (order) => {
+  try {
+    const User = mongoose.model('User');
+    const user = await User.findById(order.userId);
+    
+    if (!user || !user.referredBy) {
+      console.log('User not found or not referred by anyone');
+      return null;
+    }
+
+    const results = [];
+    
+    // Calculate total product commission from order items
+    let totalProductCommission = 0;
+    
+    if (order.orderItems && order.orderItems.length > 0) {
+      for (const item of order.orderItems) {
+        // Need to populate product commission if not already populated
+        let product;
+        if (item.productId && typeof item.productId === 'object' && item.productId.commission) {
+          product = item.productId;
+        } else {
+          product = await Products.findById(item.productId).select('commission finalAmount name');
+        }
+        
+        if (product && product.commission) {
+          const itemPrice = item.price || product.finalAmount || 0;
+          const itemCommission = (itemPrice * item.quantity * product.commission) / 100;
+          totalProductCommission += itemCommission;
+          
+          console.log(`Product ${product.name} commission: ${product.commission}% of ₹${itemPrice} × ${item.quantity} = ₹${itemCommission}`);
+        }
+      }
+    }
+    
+    console.log(`Total product commission available: ₹${totalProductCommission}`);
+    
+    // If no product commission found in items, use default 5% of order
+    if (totalProductCommission <= 0 && order.orderSummary?.total > 0) {
+      console.log('No product commission found, using default 5% of order');
+      totalProductCommission = order.orderSummary.total * 0.05;
+    }
+    
+    // If we have commission to distribute
+    if (totalProductCommission > 0) {
+      let currentUserId = user.referredBy;
+      let level = 1;
+      
+      // Calculate purchase commissions for up to 2 levels
+      while (currentUserId && level <= 2) {
+        const referrer = await User.findById(currentUserId);
+        if (!referrer) break;
+        
+        let commissionPercentage = 0;
+        if (level === 1) {
+          commissionPercentage = 0.10; // 10% of product commission for direct referrer
+        } else if (level === 2) {
+          commissionPercentage = 0.05; // 5% of product commission for indirect referrer
+        }
+        
+        const commissionAmount = totalProductCommission * commissionPercentage;
+        
+        if (commissionAmount > 0) {
+          // Credit commission to referrer's wallet
+          await User.findByIdAndUpdate(referrer._id, {
+            $inc: {
+              walletBalance: commissionAmount,
+              totalEarnings: commissionAmount
+            }
+          });
+          
+          // Create commission record
+          await Commission.create({
+            userId: referrer._id,
+            orderId: order._id,
+            amount: commissionAmount,
+            commissionType: 'purchase',
+            level: level,
+            source: 'product-commission',
+            percentage: commissionPercentage * 100,
+            productCommissionAmount: totalProductCommission,
+            status: 'credited',
+            notes: `From order ${order.orderNumber || order._id}`
+          });
+          
+          results.push({
+            referrer: referrer._id,
+            level: level,
+            rewardAmount: commissionAmount,
+            type: 'purchase-commission',
+            percentage: commissionPercentage * 100,
+            fromProductCommission: totalProductCommission
+          });
+          
+          console.log(`✅ Purchase commission credited: Level ${level}, ${commissionPercentage * 100}% of ₹${totalProductCommission} = ₹${commissionAmount}`);
+        }
+        
+        // Move to next level
+        currentUserId = referrer.referredBy;
+        level++;
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error('Error processing purchase commission:', error);
+    return null;
+  }
+};
+
 app.put('/api/admin/orders/:orderId/status', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -3217,50 +4261,89 @@ app.put('/api/admin/orders/:orderId/status', async (req, res) => {
 
     const previousStatus = order.orderStatus.currentStatus;
 
-    if (!order.orderStatus) {
-      order.orderStatus = { currentStatus: previousStatus, history: [] };
+    // Update order status
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      {
+        $set: {
+          'orderStatus.currentStatus': status,
+          'updatedAt': new Date()
+        },
+        $push: {
+          'orderStatus.history': {
+            status,
+            changedAt: new Date(),
+            notes: `Status changed from ${previousStatus} to ${status}`,
+            changedBy: 'admin'
+          }
+        }
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedOrder) {
+      throw new Error('Failed to update order');
     }
-    if (!order.orderStatus.history) {
-      order.orderStatus.history = [];
-    }
 
-    order.orderStatus.currentStatus = status;
-
-    order.orderStatus.history.push({
-      status,
-      changedAt: new Date(),
-      notes: `Status changed from ${previousStatus} to ${status}`
-    });
-
-    // ============= REFERRAL TRIGGER WHEN ORDER DELIVERED =============
+    // ============= MULTI-LEVEL REFERRAL TRIGGER WHEN ORDER DELIVERED =============
     if (status === "delivered") {
-      order.deliveryDetails.actualDelivery = new Date();
+      // Update delivery details
+      await Order.findByIdAndUpdate(orderId, {
+        $set: {
+          'deliveryDetails.actualDeliveryDate': new Date(),
+          'deliveredAt': new Date()
+        }
+      });
 
       // Auto verify payment if still pending verification
       if (order.paymentDetails.status === "pending_verification" ||
           order.paymentDetails.status === "requires_verification") {
-        order.paymentDetails.status = "completed";
-        order.paymentDetails.paymentDate = new Date();
+        await Order.findByIdAndUpdate(orderId, {
+          $set: {
+            'paymentDetails.status': "completed",
+            'paymentDetails.paymentDate': new Date()
+          }
+        });
         console.log(`Auto-updated payment status to completed for order ${orderId}`);
       }
 
-      // Check if payment is completed to process referral
-      if (order.paymentDetails.status === "completed") {
-        await processReferralForOrder(order);
+      // Check if payment is completed to process multi-level referral
+      const updatedOrderWithPayment = await Order.findById(orderId);
+      
+      if (updatedOrderWithPayment.paymentDetails.status === "completed") {
+        console.log(`Processing referral for delivered order ${orderId}`);
+        
+        try {
+          // Populate product details for commission calculation
+          const populatedOrder = await Order.findById(orderId)
+            .populate({
+              path: 'orderItems.productId',
+              select: 'name commission finalAmount price'
+            })
+            .populate('userId', 'name email phone');
+          
+          if (populatedOrder) {
+            const referralResult = await processMultiLevelReferralForOrder(populatedOrder);
+            if (referralResult) {
+              console.log(`✅ Referral processed for order ${orderId}: ${referralResult.length} commissions`);
+            }
+          }
+        } catch (referralError) {
+          console.error(`❌ Error processing referral for order ${orderId}:`, referralError);
+        }
       }
     }
 
-    // Save order changes
-    await order.save();
-
-    const populatedOrder = await Order.findById(orderId)
+    // Get final updated order - FIXED POPULATION
+    const finalOrder = await Order.findById(orderId)
       .populate('userId', 'name email phone')
-      .populate('orderItems.productId', 'name sku');
+      .populate('orderItems.productId', 'name sku commission')
+      .populate('metadata.commissionRecipients.userId', 'name email'); // This should now work
 
     return res.json({
       success: true,
       message: `Order status updated to ${status}`,
-      order: populatedOrder
+      order: finalOrder
     });
 
   } catch (error) {
@@ -3272,10 +4355,13 @@ app.put('/api/admin/orders/:orderId/status', async (req, res) => {
     });
   }
 });
+// ========== UPDATED PAYMENT STATUS ENDPOINT ==========
 app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body;
+
+    console.log(`Updating payment status for order ${orderId} to ${status}`);
 
     if (!status) {
       return res.status(400).json({
@@ -3308,25 +4394,59 @@ app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
 
     const previousPaymentStatus = order.paymentDetails.status;
 
-    order.paymentDetails.status = status;
+    // Update payment status
+    const updateData = {
+      $set: {
+        'paymentDetails.status': status,
+        'updatedAt': new Date()
+      }
+    };
 
     if (status === "completed") {
-      order.paymentDetails.paymentDate = new Date();
-      order.requiresVerification = false;
-
-      // Check if order is delivered to process referral
-      if (order.orderStatus.currentStatus === "delivered") {
-        await processReferralForOrder(order);
-      }
+      updateData.$set['paymentDetails.paymentDate'] = new Date();
+      updateData.$set['requiresVerification'] = false;
+    } else if (status === "pending_verification" || status === "requires_verification") {
+      updateData.$set['requiresVerification'] = true;
     }
 
-    // Save order changes
-    await order.save();
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedOrder) {
+      throw new Error('Failed to update order');
+    }
+
+    // Check if order is delivered to process multi-level referral
+    if (status === "completed" && order.orderStatus.currentStatus === "delivered") {
+      console.log(`Payment completed and order delivered for ${orderId}, processing referral`);
+      
+      try {
+        // Populate product details
+        const populatedOrder = await Order.findById(orderId)
+          .populate({
+            path: 'orderItems.productId',
+            select: 'name commission finalAmount price'
+          });
+        
+        if (populatedOrder) {
+          const referralResult = await processMultiLevelReferralForOrder(populatedOrder);
+          if (referralResult) {
+            console.log(`✅ Referral processed: ${referralResult.length} commissions`);
+          }
+        }
+      } catch (referralError) {
+        console.error(`❌ Error processing referral:`, referralError);
+      }
+    }
 
     return res.json({
       success: true,
       message: `Payment status updated to ${status}`,
-      order
+      order: updatedOrder,
+      previousStatus: previousPaymentStatus
     });
 
   } catch (error) {
@@ -3338,7 +4458,245 @@ app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
     });
   }
 });
-// 3. GET /api/orders/:orderId/invoice - Download invoice (PDF)
+
+// ========== ADD THESE DEBUG ENDPOINTS ==========
+
+// Debug endpoint to check order status and referrals
+app.get('/api/admin/orders/:orderId/debug', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    const order = await Order.findById(orderId)
+      .populate('userId', 'name email phone referralCode referredBy')
+      .populate({
+        path: 'orderItems.productId',
+        select: 'name commission finalAmount price'
+      });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Get referral records for this user
+    const referrals = await Referral.find({ referredUser: order.userId })
+      .populate('referrer', 'name email phone referralCode');
+
+    // Get commission records for this order
+    const commissions = await Commission.find({ orderId: order._id })
+      .populate('userId', 'name email');
+
+    const debugInfo = {
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      userId: order.userId?._id,
+      userName: order.userId?.name,
+      referredBy: order.userId?.referredBy,
+      
+      paymentDetails: {
+        method: order.paymentDetails.method,
+        status: order.paymentDetails.status,
+        amount: order.paymentDetails.amount,
+        completed: order.paymentDetails.status === 'completed'
+      },
+      
+      orderStatus: {
+        current: order.orderStatus.currentStatus,
+        delivered: order.orderStatus.currentStatus === 'delivered'
+      },
+      
+      metadata: order.metadata || {},
+      
+      orderItems: order.orderItems?.map(item => ({
+        productId: item.productId?._id,
+        productName: item.productId?.name,
+        quantity: item.quantity,
+        price: item.price,
+        commissionPercentage: item.productId?.commission || 0,
+        commissionAmount: item.productId?.commission ? 
+          (item.price * item.quantity * item.productId.commission) / 100 : 0
+      })),
+      
+      referrals: referrals.map(ref => ({
+        id: ref._id,
+        level: ref.level,
+        referrer: ref.referrer,
+        rewardAmount: ref.rewardAmount,
+        status: ref.status,
+        commissionRecipients: ref.commissionRecipients
+      })),
+      
+      commissions: commissions.map(com => ({
+        id: com._id,
+        userId: com.userId,
+        amount: com.amount,
+        type: com.commissionType,
+        level: com.level,
+        source: com.source
+      })),
+      
+      conditions: {
+        canProcessReferral: 
+          order.paymentDetails.status === 'completed' &&
+          order.orderStatus.currentStatus === 'delivered' &&
+          !(order.metadata?.referralCompleted),
+        isFirstOrder: await Order.countDocuments({
+          userId: order.userId,
+          "paymentDetails.status": "completed",
+          "orderStatus.currentStatus": "delivered",
+          _id: { $ne: order._id }
+        }) === 0
+      }
+    };
+
+    return res.json({
+      success: true,
+      data: debugInfo
+    });
+
+  } catch (error) {
+    console.error("Debug endpoint error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
+  }
+});
+
+// Manual trigger for referral processing
+app.post('/api/admin/orders/:orderId/process-referral', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    console.log(`Manually processing referral for order ${orderId}`);
+    
+    const order = await Order.findById(orderId)
+      .populate({
+        path: 'orderItems.productId',
+        select: 'name commission finalAmount price'
+      });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Check conditions
+    if (order.paymentDetails.status !== 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: `Payment must be completed (current: ${order.paymentDetails.status})`
+      });
+    }
+
+    if (order.orderStatus.currentStatus !== 'delivered') {
+      return res.status(400).json({
+        success: false,
+        message: `Order must be delivered (current: ${order.orderStatus.currentStatus})`
+      });
+    }
+
+    if (order.metadata?.referralCompleted) {
+      return res.status(400).json({
+        success: false,
+        message: 'Referral already processed'
+      });
+    }
+
+    // Process referral
+    const referralResult = await processMultiLevelReferralForOrder(order);
+    
+    // Get updated order
+    const updatedOrder = await Order.findById(orderId);
+
+    return res.json({
+      success: true,
+      message: 'Referral processing completed',
+      referralResult: referralResult,
+      order: {
+        id: updatedOrder._id,
+        orderNumber: updatedOrder.orderNumber,
+        metadata: updatedOrder.metadata,
+        paymentStatus: updatedOrder.paymentDetails.status,
+        orderStatus: updatedOrder.orderStatus.currentStatus
+      }
+    });
+
+  } catch (error) {
+    console.error("Manual referral processing error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
+  }
+});
+
+
+app.get('/api/admin/orders/:orderId/referral-details', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    const order = await Order.findById(orderId)
+      .populate('userId', 'name email phone referralCode')
+      .populate({
+        path: 'metadata.commissionRecipients.userId',
+        select: 'name email phone referralCode walletBalance'
+      });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Get referral history for this user
+    const Referral = mongoose.model('Referral');
+    const referrals = await Referral.find({ referredUser: order.userId })
+      .populate('referrer', 'name email phone referralCode')
+      .sort({ createdAt: -1 });
+
+    const commissionSummary = {
+      orderId: order._id,
+      userId: order.userId,
+      orderAmount: order.orderSummary?.total || 0,
+      referralProcessed: order.metadata?.referralCompleted || false,
+      totalCommissionPaid: order.metadata?.totalCommissionPaid || 0,
+      directCommission: order.metadata?.directCommission || 0,
+      indirectCommission: order.metadata?.indirectCommission || 0,
+      commissionRecipients: order.metadata?.commissionRecipients || [],
+      referrals: referrals.map(ref => ({
+        _id: ref._id,
+        referrer: ref.referrer,
+        level: ref.level,
+        status: ref.status,
+        rewardAmount: ref.rewardAmount,
+        createdAt: ref.createdAt,
+        completedAt: ref.completedAt,
+        commissionRecipients: ref.commissionRecipients
+      }))
+    };
+
+    return res.json({
+      success: true,
+      data: commissionSummary
+    });
+
+  } catch (error) {
+    console.error("Get referral details error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
+  }
+});
 app.get('/api/orders/:orderId/invoice', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -3497,7 +4855,6 @@ app.get('/api/orders/:orderId/invoice', async (req, res) => {
   }
 });
 
-// Partial update user profile
 app.patch('/api/user/profile/:userId', auth, async (req, res) => {
   try {
     const allowedUpdates = ['name', 'phone', 'dateOfBirth', 'gender', 'bio', 'avatar'];
@@ -3524,7 +4881,6 @@ app.patch('/api/user/profile/:userId', auth, async (req, res) => {
   }
 });
 
-// Get file URL
 const uploadToCloudinary = (file) => {
   return new Promise((resolve, reject) => {
     try {
@@ -3566,7 +4922,6 @@ const uploadToCloudinary = (file) => {
   });
 };
 
-// Helper function to delete file from Cloudinary
 const deleteFromCloudinary = async (publicId) => {
   try {
     if (!publicId) {
@@ -3582,7 +4937,6 @@ const deleteFromCloudinary = async (publicId) => {
     throw error;
   }
 };
-
 
 const getCloudinaryUrl = (result) => {
   return result.secure_url;
