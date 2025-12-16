@@ -77,28 +77,7 @@ const Home = () => {
     }
   };
 
-  const stores = [
-    { name: "RATNADEEP", tagline: "Recycling since 1987", image: ratnadeepLogo },
-    { name: "Wooden Street", tagline: "Furniture, loaded with love", image: wodden },
-    { name: "Urban Ladder", tagline: "Quality & comfort", image: urben },
-  ];
-
-  const nearbyStores = [
-    { name: "Max Fashion", logo: "https://logo.clearbit.com/maxfashion.in" },
-    { name: "Central", logo: "https://logo.clearbit.com/centralandme.com" },
-    { name: "Pantaloons", logo: "https://logo.clearbit.com/pantaloons.com" },
-    { name: "Westside", logo: "https://logo.clearbit.com/westside.com" },
-    { name: "Lifestyle", logo: "https://logo.clearbit.com/lifestylestores.com" },
-    { name: "D-Mart", logo: "https://logo.clearbit.com/dmart.in" },
-    { name: "Ratnadeep", logo: "https://logo.clearbit.com/ratnadeepretail.com" },
-  ];
-
-  const fashionBrands = [
-    { name: "Raymond", logo: "https://logo.clearbit.com/raymond.in" },
-    { name: "H&M", logo: "https://logo.clearbit.com/hm.com" },
-    { name: "Harissons", logo: "https://logo.clearbit.com/harissonsbags.com" },
-    { name: "Ray-Ban", logo: "https://logo.clearbit.com/ray-ban.com" },
-  ];
+ 
 
   const handleViewAllCategories = () => {
     navigate("/categories");
@@ -217,60 +196,153 @@ const Home = () => {
         </div>
       </section>
 
-      {/* Featured Stores with Wave */}
-      <WaveSection bgColor="bg-navy">
-        <div className="container mx-auto px-4 py-12">
-          <h2 className="text-2xl font-bold text-white text-center mb-8">
-            Grocery & Home Furnishing
-          </h2>
-          <div className="grid md:grid-cols-3 gap-6">
-            {stores.map((store) => (
-              <StoreCard key={store.name} {...store} />
-            ))}
+      {/* Featured Stores with Wave - Coming Soon */}
+<WaveSection bgColor="bg-navy">
+  <div className="container mx-auto px-4 py-12">
+    <div className="relative">
+      <h2 className="text-2xl font-bold text-white text-center mb-8">
+        Grocery & Home Furnishing
+      </h2>
+      <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
+        <span className="bg-yellow-500 text-navy text-xs font-bold px-3 py-1 rounded-full animate-pulse">
+          COMING SOON
+        </span>
+      </div>
+    </div>
+    <div className="grid md:grid-cols-3 gap-6">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="relative">
+          <div className="bg-gray-800 rounded-xl p-6 h-64 flex flex-col items-center justify-center border-2 border-dashed border-gray-600">
+            <div className="text-5xl mb-4 animate-bounce">🛒</div>
+            <div className="h-4 bg-gray-700 rounded w-3/4 mb-2 animate-pulse"></div>
+            <div className="h-3 bg-gray-700 rounded w-1/2 animate-pulse"></div>
+          </div>
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-xl opacity-0 hover:opacity-100 transition-opacity duration-300">
+            <div className="text-white text-lg font-bold bg-navy/80 px-4 py-2 rounded-lg">
+              Launching Soon!
+            </div>
           </div>
         </div>
-      </WaveSection>
+      ))}
+    </div>
+  </div>
+</WaveSection>
 
-      {/* Near By Stores */}
-      <section className="container mx-auto px-4 py-12">
-        <h2 className="text-2xl font-bold text-navy text-center mb-8">Near By Stores</h2>
-        <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-7 gap-4 mb-8">
-          {nearbyStores.map((store) => (
-            <BrandCard key={store.name} {...store} />
-          ))}
-        </div>
-        <div className="bg-gradient-to-r from-yellow-400 to-yellow-500 text-navy text-center py-3 rounded-lg font-semibold shadow-md">
-          🎉 Earn 10% Cashback on Every App Order
-        </div>
-      </section>
-
-      {/* Fashion Brands */}
-      <section className="container mx-auto px-4 py-12">
-        <h2 className="text-2xl font-bold text-navy text-center mb-8">Popular Fashion Brands</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          {fashionBrands.map((brand) => (
-            <BrandCard key={brand.name} {...brand} />
-          ))}
-        </div>
-      </section>
-
-      {/* App Download Banner */}
-      <section className="bg-gradient-to-r from-accent to-navy text-white py-12">
-        <div className="container mx-auto px-4 text-center">
-          <h2 className="text-3xl font-bold mb-4">Download Our App</h2>
-          <p className="text-lg mb-6 max-w-2xl mx-auto">
-            Get the best shopping experience with exclusive app-only deals and faster checkout.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button className="bg-white text-navy hover:bg-gray-100 font-semibold px-8 py-3">
-              📱 Download for iOS
-            </Button>
-            <Button className="bg-white text-navy hover:bg-gray-100 font-semibold px-8 py-3">
-              🤖 Download for Android
-            </Button>
+{/* Near By Stores - Coming Soon */}
+<section className="container mx-auto px-4 py-12 relative">
+  <div className="relative">
+    <h2 className="text-2xl font-bold text-navy text-center mb-8">
+      Near By Stores
+    </h2>
+    <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
+      <div className="flex items-center gap-1 bg-gradient-to-r from-yellow-400 to-yellow-500 text-navy text-xs font-bold px-3 py-1 rounded-full">
+        <div className="w-2 h-2 bg-navy rounded-full animate-ping"></div>
+        <span>COMING SOON</span>
+        <div className="w-2 h-2 bg-navy rounded-full animate-ping" style={{ animationDelay: '0.2s' }}></div>
+      </div>
+    </div>
+  </div>
+  <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-7 gap-4 mb-8">
+    {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+      <div key={i} className="relative group">
+        <div className="bg-gray-100 rounded-lg p-4 aspect-square flex items-center justify-center border-2 border-dashed border-gray-300">
+          <div className="text-3xl animate-pulse" style={{ animationDelay: `${i * 0.1}s` }}>
+            🏪
           </div>
         </div>
-      </section>
+        <div className="absolute inset-0 bg-gradient-to-t from-navy/70 to-transparent rounded-lg flex items-end justify-center pb-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          <span className="text-white text-xs font-bold">Coming Soon</span>
+        </div>
+      </div>
+    ))}
+  </div>
+  <div className="bg-gradient-to-r from-gray-200 to-gray-300 text-gray-500 text-center py-3 rounded-lg font-semibold shadow-md relative overflow-hidden">
+    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent animate-shimmer"></div>
+    <span className="relative">🎉 Feature Launching Soon!</span>
+  </div>
+</section>
+
+{/* Fashion Brands - Coming Soon */}
+<section className="container mx-auto px-4 py-12">
+  <div className="relative">
+    <h2 className="text-2xl font-bold text-navy text-center mb-8">
+      Popular Fashion Brands
+    </h2>
+    <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
+      <span className="bg-gradient-to-r from-pink-500 to-purple-500 text-white text-xs font-bold px-3 py-1 rounded-full animate-pulse">
+        LAUNCHING SOON
+      </span>
+    </div>
+  </div>
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+    {[1, 2, 3, 4].map((i) => (
+      <div key={i} className="relative overflow-hidden rounded-xl group">
+        <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 h-48 flex flex-col items-center justify-center border-2 border-dashed border-gray-300">
+          <div className="text-4xl mb-3 animate-bounce" style={{ animationDelay: `${i * 0.2}s` }}>
+            👗
+          </div>
+          <div className="h-3 bg-gray-300 rounded w-2/3 mb-2 animate-pulse"></div>
+          <div className="h-2 bg-gray-300 rounded w-1/2 animate-pulse"></div>
+        </div>
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
+          <div className="text-white text-center">
+            <div className="text-sm font-bold mb-1">Launching Soon</div>
+            <div className="text-xs">Stay tuned!</div>
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+</section>
+
+{/* App Download Banner - Coming Soon */}
+<section className="bg-gradient-to-r from-gray-700 to-gray-900 text-white py-12 relative overflow-hidden">
+  <div className="absolute inset-0">
+    <div className="absolute top-0 left-0 w-32 h-32 bg-blue-500/10 rounded-full -translate-x-16 -translate-y-16"></div>
+    <div className="absolute bottom-0 right-0 w-40 h-40 bg-purple-500/10 rounded-full translate-x-20 translate-y-20"></div>
+  </div>
+  <div className="container mx-auto px-4 text-center relative">
+    <div className="inline-block mb-4">
+      <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full">
+        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+        <span className="text-sm font-bold">APP COMING SOON</span>
+        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
+      </div>
+    </div>
+    <h2 className="text-3xl font-bold mb-4 animate-pulse">Download Our App</h2>
+    <p className="text-lg mb-6 max-w-2xl mx-auto text-gray-300">
+      Our mobile app is currently in development. Get ready for an amazing shopping experience!
+    </p>
+    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+      <Button className="bg-gray-600 text-gray-300 font-semibold px-8 py-3 relative overflow-hidden group cursor-not-allowed">
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+        <span className="relative">📱 iOS - Coming Soon</span>
+      </Button>
+      <Button className="bg-gray-600 text-gray-300 font-semibold px-8 py-3 relative overflow-hidden group cursor-not-allowed">
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" style={{ animationDelay: '0.5s' }}></div>
+        <span className="relative">🤖 Android - Coming Soon</span>
+      </Button>
+    </div>
+    <div className="mt-6 text-sm text-gray-400">
+      <div className="inline-flex items-center gap-2">
+        <div className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce"></div>
+        Estimated Launch: Q1 2024
+        <div className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{/* Add to your global CSS or Tailwind config */}
+<style jsx global>{`
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  .animate-shimmer {
+    animation: shimmer 2s infinite;
+  }
+`}</style>
 
       <Footer />
     </div>
