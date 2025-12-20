@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
-import { Copy, Share2, Gift, Users, Loader2, Wallet, TrendingUp, Percent, Award, Coins, UserPlus, DollarSign, BarChart, Network } from "lucide-react";
+import { Copy, Share2, Gift, Users, Loader2, Wallet, TrendingUp, Percent, Award, Coins, UserPlus, DollarSign, BarChart, Network, User } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,12 +18,16 @@ interface ReferralStats {
   // Multi-level tracking
   totalDirectReferrals: number;
   totalIndirectReferrals: number;
+  totalLevel3Referrals: number; // NEW
   completedDirectReferrals: number;
   completedIndirectReferrals: number;
+  completedLevel3Referrals: number; // NEW
   pendingDirectReferrals: number;
   pendingIndirectReferrals: number;
+  pendingLevel3Referrals: number; // NEW
   directEarnings: number;
   indirectEarnings: number;
+  level3Earnings: number; // NEW
   signupBonusTotal: number;
   purchaseCommissionTotal: number;
   userLevel: number;
@@ -33,8 +37,8 @@ interface ReferralStats {
   vendorIncentives?: number;
   franchiserIncentives?: number;
   firstPurchaseIncentives?: number;
-  totalLevel3Referrals?: number;
   // Level-specific counts
+  level0Count?: number;
   level1Count?: number;
   level2Count?: number;
   level3Count?: number;
@@ -56,6 +60,7 @@ interface ReferralStats {
     totalMembers: number;
     totalEarnings: number;
     levels: {
+      level0?: number;
       level1?: number;
       level2?: number;
       level3?: number;
@@ -112,6 +117,7 @@ interface EarningsSummary {
     totals: {
       direct: number;
       indirect: number;
+      level3?: number; // NEW
       signup: number;
       purchase: number;
       total: number;
@@ -142,6 +148,9 @@ interface NetworkData {
     totalMembers: number;
     totalEarnings: number;
     levels: Record<string, number>;
+    level1Count: number;
+    level2Count: number;
+    level3Count: number;
   };
 }
 
@@ -157,12 +166,16 @@ const Referrals = () => {
     walletBalance: 0,
     totalDirectReferrals: 0,
     totalIndirectReferrals: 0,
+    totalLevel3Referrals: 0, // NEW
     completedDirectReferrals: 0,
     completedIndirectReferrals: 0,
+    completedLevel3Referrals: 0, // NEW
     pendingDirectReferrals: 0,
     pendingIndirectReferrals: 0,
+    pendingLevel3Referrals: 0, // NEW
     directEarnings: 0,
     indirectEarnings: 0,
+    level3Earnings: 0, // NEW
     signupBonusTotal: 0,
     purchaseCommissionTotal: 0,
     userLevel: 0,
@@ -171,7 +184,7 @@ const Referrals = () => {
     vendorIncentives: 0,
     franchiserIncentives: 0,
     firstPurchaseIncentives: 0,
-    totalLevel3Referrals: 0,
+    level0Count: 0,
     level1Count: 0,
     level2Count: 0,
     level3Count: 0,
@@ -196,16 +209,12 @@ const Referrals = () => {
     // APEX Wallet = Purchase commissions only
     const apexWallet = stats.purchaseCommissionTotal || 0;
     
-    // APEX Bonus = All bonuses and incentives
+    // APEX Bonus = All bonuses and incentives (including Level 3)
     const apexBonus = (stats.signupBonusTotal || 0) + 
                      (stats.directEarnings || 0) + 
-                     (stats.indirectEarnings || 0) +
-                     (stats.membershipIncentives || 0) +
-                     (stats.vendorIncentives || 0) +
-                     (stats.franchiserIncentives || 0) +
-                     (stats.firstPurchaseIncentives || 0);
+                     (stats.indirectEarnings || 0)
+                    
     
-    // Total Earnings = APEX Wallet + APEX Bonus
     const totalEarnings = apexWallet + apexBonus;
     
     return { apexWallet, apexBonus, totalEarnings };
@@ -213,18 +222,19 @@ const Referrals = () => {
 
   const apexValues = calculateApexValues(stats);
 
-  // Calculate network size: Level 1 + Level 2 + Level 3
-  const calculateNetworkSize = () => {
-   return (stats.level1Count || 0) + 
-         (stats.level2Count || 0) + 
-         (stats.level3Count || 0);
-    // Fallback to stats if network data not available
-    return (stats.level1Count || 0) + (stats.level2Count || 0) + (stats.level3Count || 0);
+  // Calculate total indirect referrals: Level 2 + Level 3
+  const calculateTotalIndirectReferrals = () => {
+    return (stats.totalIndirectReferrals || 0) + (stats.totalLevel3Referrals || 0);
   };
 
-  // Calculate indirect referrals: Level 2 + Level 3
-  const calculateIndirectReferrals = () => {
-    return (stats.totalIndirectReferrals || 0) + (stats.totalLevel3Referrals || 0);
+  // Calculate completed indirect referrals: Level 2 + Level 3
+  const calculateCompletedIndirectReferrals = () => {
+    return (stats.completedIndirectReferrals || 0) + (stats.completedLevel3Referrals || 0);
+  };
+
+  // Calculate network size: Level 1 + Level 2 + Level 3
+  const calculatePersonalNetworkSize = () => {
+    return (stats.level1Count || 0) + (stats.level2Count || 0) + (stats.level3Count || 0);
   };
 
   useEffect(() => {
@@ -261,7 +271,7 @@ const Referrals = () => {
       setReferralCode(codeData.referralCode);
       setReferralLink(codeData.referralLink);
 
-      // Fetch enhanced stats
+      // Fetch enhanced stats with Level 3 support
       setLoadingSections(prev => ({ ...prev, stats: true }));
       const statsRes = await fetch("https://api.apexbee.in/api/referrals/stats", {
         headers: {
@@ -278,11 +288,12 @@ const Referrals = () => {
       setStats(prev => ({
         ...prev,
         ...statsData,
-        completedDirectReferrals: statsData.completedDirectReferrals || 0,
-        completedIndirectReferrals: statsData.completedIndirectReferrals || 0,
-        pendingDirectReferrals: statsData.pendingDirectReferrals || 0,
-        pendingIndirectReferrals: statsData.pendingIndirectReferrals || 0,
-        // Map APEX values
+        // Ensure all level 3 fields are included
+        totalLevel3Referrals: statsData.totalLevel3Referrals || 0,
+        completedLevel3Referrals: statsData.completedLevel3Referrals || 0,
+        pendingLevel3Referrals: statsData.pendingLevel3Referrals || 0,
+        level3Earnings: statsData.level3Earnings || 0,
+        // Map other APEX values
         purchaseCommissionTotal: statsData.purchaseCommissionTotal || 0,
         signupBonusTotal: statsData.signupBonusTotal || 0,
         directEarnings: statsData.directEarnings || 0,
@@ -292,15 +303,15 @@ const Referrals = () => {
         vendorIncentives: statsData.vendorIncentives || 0,
         franchiserIncentives: statsData.franchiserIncentives || 0,
         firstPurchaseIncentives: statsData.firstPurchaseIncentives || 0,
-        // Level 3 support
-        totalLevel3Referrals: statsData.totalLevel3Referrals || 0,
+        // Level-specific counts for personal network
+        level0Count: statsData.level0Count || 0,
         level1Count: statsData.level1Count || 0,
         level2Count: statsData.level2Count || 0,
         level3Count: statsData.level3Count || 0,
       }));
       setLoadingSections(prev => ({ ...prev, stats: false }));
 
-      // Fetch referral history with enhanced details
+      // Fetch referral history with Level 3 support
       setLoadingSections(prev => ({ ...prev, history: true }));
       const historyRes = await fetch(
         "https://api.apexbee.in/api/referrals/history?limit=50",
@@ -359,11 +370,11 @@ const Referrals = () => {
         setLoadingSections(prev => ({ ...prev, earnings: false }));
       }
 
-      // Fetch network data
+      // Fetch network data with depth=3 for Level 3 support
       try {
         setLoadingSections(prev => ({ ...prev, network: true }));
         const networkRes = await fetch(
-          "https://api.apexbee.in/api/referrals/network?depth=2",
+          "https://api.apexbee.in/api/referrals/network?depth=3", // Changed to depth=3
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -464,7 +475,7 @@ const Referrals = () => {
   const getTypeBadge = (type?: string, level?: number) => {
     if (!type && !level) return null;
 
-    const finalType = type || (level === 1 ? "direct" : "indirect");
+    const finalType = type || (level === 1 ? "direct" : level === 2 ? "indirect" : "level3");
     
     const config: Record<string, { label: string; className: string }> = {
       "signup-bonus": {
@@ -491,6 +502,10 @@ const Referrals = () => {
         label: "Indirect",
         className: "bg-orange-100 text-orange-800 border-orange-200",
       },
+      "level3": {
+        label: "Level 3",
+        className: "bg-purple-100 text-purple-800 border-purple-200",
+      },
     };
 
     const configItem = config[finalType] || {
@@ -515,54 +530,49 @@ const Referrals = () => {
         return <Coins className="h-4 w-4" />;
     }
   };
-const calculatePersonalDirectReferrals = () => {
-  // Use stats from the API response
-  return stats.totalDirectReferrals || 0;
-};
 
-const calculatePersonalIndirectReferrals = () => {
-  // Level 2 referrals
-  return stats.totalIndirectReferrals || 0;
-};
+  const calculatePersonalDirectReferrals = () => {
+    return stats.totalDirectReferrals || 0;
+  };
 
-const calculatePersonalLevel3Referrals = () => {
-  // Level 3 referrals
-  return stats.totalLevel3Referrals || 0;
-};
+  const calculatePersonalIndirectReferrals = () => {
+    return stats.totalIndirectReferrals || 0;
+  };
 
-const calculatePersonalNetworkSize = () => {
-  // Sum of all levels in personal network
-  return calculatePersonalDirectReferrals() + 
-         calculatePersonalIndirectReferrals() + 
-         calculatePersonalLevel3Referrals();
-};
+  const calculatePersonalLevel3Referrals = () => {
+    return stats.totalLevel3Referrals || 0;
+  };
 
-// Render only personal network tree
-const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
-  if (!node || depth > 2) return null; // Limit depth to Level 3
+  // Render personal network tree with Level 0 to Level 3
+  const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
+    if (!node || depth > 3) return null; // Limit depth to Level 3
 
-  return (
-    <div className="ml-4 border-l-2 border-gray-200 pl-4">
-      <div className="flex items-center gap-2 mb-2 p-2 bg-white rounded-lg border">
-        <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-          <UserPlus className="h-4 w-4 text-blue-600" />
+    return (
+      <div className={`${depth > 0 ? 'ml-4 border-l-2 border-gray-200 pl-4' : ''}`}>
+        <div className={`flex items-center gap-2 mb-2 p-2 rounded-lg border ${depth === 0 ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'}`}>
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${depth === 0 ? 'bg-blue-100' : 'bg-gray-100'}`}>
+            {depth === 0 ? (
+              <User className="h-4 w-4 text-blue-600" />
+            ) : (
+              <UserPlus className="h-4 w-4 text-blue-600" />
+            )}
+          </div>
+          <div>
+            <p className="font-medium text-sm">{node.name || "Unknown User"}</p>
+            <p className="text-xs text-gray-500">{node.email || "No email"}</p>
+          </div>
+          <Badge className={`ml-auto ${depth === 0 ? 'bg-blue-100 text-blue-800 hover:bg-blue-100' : ''}`}>
+            {depth === 0 ? "You" : `Level ${depth}`}
+          </Badge>
         </div>
-        <div>
-          <p className="font-medium text-sm">{node.name || "Unknown User"}</p>
-          <p className="text-xs text-gray-500">{node.email || "No email"}</p>
-        </div>
-        <Badge className="ml-auto">
-          Level {depth + 1}
-        </Badge>
+        {node.referrals?.map((referral: any, index: number) => (
+          <div key={index}>
+            {renderPersonalNetworkTree(referral, depth + 1)}
+          </div>
+        ))}
       </div>
-      {node.referrals?.map((referral: any, index: number) => (
-        <div key={index}>
-          {renderPersonalNetworkTree(referral, depth + 1)}
-        </div>
-      ))}
-    </div>
-  );
-};
+    );
+  };
 
   // Calculate totals from commission history
   const calculateCommissionTotals = () => {
@@ -586,7 +596,7 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
 
   const commissionTotals = calculateCommissionTotals();
 
-  // 6 Overview Cards as per APEX requirements
+  // 6 Overview Cards - Updated for Level 3
   const mainStatsCards = [
     {
       label: "Total Earnings",
@@ -618,14 +628,14 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
     },
     {
       label: "Direct Referrals",
-      value: (stats.totalDirectReferrals || 0).toString(),
+      value: calculatePersonalDirectReferrals().toString(),
       icon: Users,
       description: "Level 1 team members",
       color: "text-green-700",
     },
     {
       label: "Indirect Referrals",
-      value: calculateIndirectReferrals().toString(),
+      value: calculateTotalIndirectReferrals().toString(),
       icon: Users,
       description: "Level 2 & Level 3 Team",
       color: "text-blue-700",
@@ -648,33 +658,6 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
     return Array(count).fill(0).map((_, i) => (
       <Skeleton key={i} className="h-32 w-full" />
     ));
-  };
-
-  // Render network tree
-  const renderNetworkTree = (node: any, depth: number = 0) => {
-    if (!node) return null;
-
-    return (
-      <div className="ml-4 border-l-2 border-gray-200 pl-4">
-        <div className="flex items-center gap-2 mb-2 p-2 bg-white rounded-lg border">
-          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-            <UserPlus className="h-4 w-4 text-blue-600" />
-          </div>
-          <div>
-            <p className="font-medium text-sm">{node.name}</p>
-            <p className="text-xs text-gray-500">{node.email}</p>
-          </div>
-          <Badge className="ml-auto">
-            Level {node.level}
-          </Badge>
-        </div>
-        {node.referrals?.map((referral: any, index: number) => (
-          <div key={index}>
-            {renderNetworkTree(referral, depth + 1)}
-          </div>
-        ))}
-      </div>
-    );
   };
 
   if (loading) {
@@ -712,7 +695,7 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
           <div>
             <h1 className="text-3xl font-bold text-navy">Refer & Earn Dashboard</h1>
             <p className="text-muted-foreground mt-2">
-              Level {stats.userLevel} • {stats.hasParent ? `Referred by ${stats.parentInfo?._id || 'someone'}` : "No referrer"}
+              Level {stats.userLevel} • {stats.hasParent ? `Referred by ${stats.parentInfo?.name || 'someone'}` : "No referrer"}
             </p>
             {stats.parentInfo && (
               <p className="text-sm text-gray-600 mt-1">
@@ -731,13 +714,13 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
           </Button>
         </div>
 
-        {/* Hero Section - Updated with APEX messaging */}
+        {/* Hero Section - Updated with Level 3 messaging */}
         <div className="bg-gradient-to-r from-navy to-accent rounded-3xl p-8 mb-8 text-white">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="text-center md:text-left mb-6 md:mb-0">
               <h2 className="text-3xl font-bold mb-2">Refer. Earn. Be APEX Always.</h2>
               <p className="text-lg mb-2">
-                Earn ₹50 for Direct Referrals + ₹25 for Indirect Referrals + 10% Commission on Purchases
+                Earn ₹50 for Direct Referrals 
               </p>
               <p className="text-lg mb-2">Introduce Your Friends & Earn Unlimited Income</p>
               <p className="text-lg font-semibold mb-4">"No Boss – No Limits – Just Earnings"</p>
@@ -746,14 +729,7 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                   <p className="text-sm">Direct Referral Bonus</p>
                   <p className="text-xl font-semibold">Rs. 50</p>
                 </div>
-                <div className="bg-white/20 rounded-lg p-3">
-                  <p className="text-sm">Indirect Referral Bonus</p>
-                  <p className="text-xl font-semibold">Rs. 25</p>
-                </div>
-                <div className="bg-white/20 rounded-lg p-3">
-                  <p className="text-sm">Purchase Commission</p>
-                  <p className="text-xl font-semibold">10% / 5%</p>
-                </div>
+                
                 <div className="bg-white/20 rounded-lg p-3">
                   <p className="text-sm">Network Members</p>
                   <p className="text-xl font-semibold">{calculatePersonalNetworkSize()}</p>
@@ -901,7 +877,7 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
             )}
           </TabsContent>
 
-          {/* Earnings Breakdown Tab - 8 Fields */}
+          {/* Earnings Breakdown Tab - Updated with Level 3 */}
           <TabsContent value="earnings" className="space-y-6">
             <div className="grid lg:grid-cols-3 gap-6">
               <Card className="lg:col-span-2">
@@ -916,34 +892,15 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                   ) : (
                     <div className="space-y-3">
                       {/* Direct Referral Bonus */}
-                      <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg border border-green-200">
-                        <div>
-                          <p className="font-medium text-green-800">Direct Referral Bonus</p>
-                          <p className="text-sm text-green-600">Level 1 signup bonuses</p>
-                        </div>
-                        <p className="text-xl font-bold text-green-800">
-                          Rs. {Math.round(stats.directEarnings || 0)}
-                        </p>
-                      </div>
-                      
-                      {/* Indirect Referral Bonus */}
-                      <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg border border-blue-200">
-                        <div>
-                          <p className="font-medium text-blue-800">Indirect Referral Bonus</p>
-                          <p className="text-sm text-blue-600">Level 2 & 3 signup bonuses</p>
-                        </div>
-                        <p className="text-xl font-bold text-blue-800">
-                          Rs. {Math.round(stats.indirectEarnings || 0)}
-                        </p>
-                      </div>
-                      
+                  
+                     
                       {/* Signup Bonus (Total) */}
-                      <div className="flex justify-between items-center p-3 bg-purple-50 rounded-lg border border-purple-200">
+                      <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-lg border border-indigo-200">
                         <div>
-                          <p className="font-medium text-purple-800">Signup Bonus</p>
-                          <p className="text-sm text-purple-600">All level signup bonuses</p>
+                          <p className="font-medium text-indigo-800">Total Signup Bonus</p>
+                          <p className="text-sm text-indigo-600">All level signup bonuses</p>
                         </div>
-                        <p className="text-xl font-bold text-purple-800">
+                        <p className="text-xl font-bold text-indigo-800">
                           Rs. {Math.round(stats.signupBonusTotal || 0)}
                         </p>
                       </div>
@@ -959,48 +916,44 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                         </p>
                       </div>
                       
-                      {/* Membership Incentives */}
-                      <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg border border-red-200">
-                        <div>
-                          <p className="font-medium text-red-800">Membership Incentives</p>
-                          <p className="text-sm text-red-600">Membership upgrades</p>
+                      {/* Additional Incentives */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg border border-red-200">
+                          <div>
+                            <p className="font-medium text-red-800">Membership</p>
+                            <p className="text-sm text-red-600">Incentives</p>
+                          </div>
+                          <p className="font-bold text-red-800">
+                            Rs. {Math.round(stats.membershipIncentives || 0)}
+                          </p>
                         </div>
-                        <p className="text-xl font-bold text-red-800">
-                          Rs. {Math.round(stats.membershipIncentives || 0)}
-                        </p>
-                      </div>
-                      
-                      {/* Vendor Enroll Incentives */}
-                      <div className="flex justify-between items-center p-3 bg-pink-50 rounded-lg border border-pink-200">
-                        <div>
-                          <p className="font-medium text-pink-800">Vendor Enroll Incentives</p>
-                          <p className="text-sm text-pink-600">Vendor enrollment</p>
+                        <div className="flex justify-between items-center p-3 bg-pink-50 rounded-lg border border-pink-200">
+                          <div>
+                            <p className="font-medium text-pink-800">Vendor</p>
+                            <p className="text-sm text-pink-600">Incentives</p>
+                          </div>
+                          <p className="font-bold text-pink-800">
+                            Rs. {Math.round(stats.vendorIncentives || 0)}
+                          </p>
                         </div>
-                        <p className="text-xl font-bold text-pink-800">
-                          Rs. {Math.round(stats.vendorIncentives || 0)}
-                        </p>
-                      </div>
-                      
-                      {/* Franchiser Enroll Incentives */}
-                      <div className="flex justify-between items-center p-3 bg-teal-50 rounded-lg border border-teal-200">
-                        <div>
-                          <p className="font-medium text-teal-800">Franchiser Enroll Incentives</p>
-                          <p className="text-sm text-teal-600">Franchiser enrollment</p>
+                        <div className="flex justify-between items-center p-3 bg-teal-50 rounded-lg border border-teal-200">
+                          <div>
+                            <p className="font-medium text-teal-800">Franchiser</p>
+                            <p className="text-sm text-teal-600">Incentives</p>
+                          </div>
+                          <p className="font-bold text-teal-800">
+                            Rs. {Math.round(stats.franchiserIncentives || 0)}
+                          </p>
                         </div>
-                        <p className="text-xl font-bold text-teal-800">
-                          Rs. {Math.round(stats.franchiserIncentives || 0)}
-                        </p>
-                      </div>
-                      
-                      {/* 1st Purchase Incentives */}
-                      <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-lg border border-indigo-200">
-                        <div>
-                          <p className="font-medium text-indigo-800">1st Purchase Incentives</p>
-                          <p className="text-sm text-indigo-600">First purchase bonuses</p>
+                        <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                          <div>
+                            <p className="font-medium text-indigo-800">1st Purchase</p>
+                            <p className="text-sm text-indigo-600">Incentives</p>
+                          </div>
+                          <p className="font-bold text-indigo-800">
+                            Rs. {Math.round(stats.firstPurchaseIncentives || 0)}
+                          </p>
                         </div>
-                        <p className="text-xl font-bold text-indigo-800">
-                          Rs. {Math.round(stats.firstPurchaseIncentives || 0)}
-                        </p>
                       </div>
                       
                       {/* Total Summary */}
@@ -1061,10 +1014,7 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                         Level 2 (Indirect Referrals)
                       </h4>
                       <ul className="space-y-2 text-sm">
-                        <li className="flex justify-between">
-                          <span>Signup Bonus:</span>
-                          <span className="font-semibold">Rs. 25</span>
-                        </li>
+                       
                         <li className="flex justify-between">
                           <span>Purchase Commission:</span>
                           <span className="font-semibold">5% of product commission</span>
@@ -1073,40 +1023,40 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                     </div>
                     <div className="p-4 bg-gray-50 rounded-lg border">
                       <h4 className="font-semibold text-navy mb-2">
-                        Additional Incentives
+                        Level 3 (Extended Network)
                       </h4>
                       <ul className="space-y-2 text-sm">
+                      
                         <li className="flex justify-between">
-                          <span>Membership Upgrade:</span>
-                          <span className="font-semibold">Variable</span>
-                        </li>
-                        <li className="flex justify-between">
-                          <span>Vendor Enrollment:</span>
-                          <span className="font-semibold">Variable</span>
-                        </li>
-                        <li className="flex justify-between">
-                          <span>Franchiser Enrollment:</span>
-                          <span className="font-semibold">Variable</span>
-                        </li>
-                        <li className="flex justify-between">
-                          <span>1st Purchase Bonus:</span>
-                          <span className="font-semibold">Variable</span>
+                          <span>Purchase Commission:</span>
+                          <span className="font-semibold">5% of product commission</span>
                         </li>
                       </ul>
                     </div>
                     <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
                       <h4 className="font-semibold text-blue-800 mb-2">Current Status</h4>
-                      <p className="text-sm mb-1">
-                        Your Level: <span className="font-semibold">{stats.userLevel || 0}</span>
-                      </p>
-                      <p className="text-sm mb-1">
-                        Referrer: <span className="font-semibold">{stats.hasParent ? "Yes" : "No"}</span>
-                      </p>
-                      {stats.pendingCommissionsCount && (
+                      <div className="space-y-2">
                         <p className="text-sm">
-                          Pending Commissions: <span className="font-semibold">{stats.pendingCommissionsCount}</span>
+                          Your Level: <span className="font-semibold">{stats.userLevel || 0}</span>
                         </p>
-                      )}
+                        <p className="text-sm">
+                          Referrer: <span className="font-semibold">{stats.hasParent ? "Yes" : "No"}</span>
+                        </p>
+                        <div className="grid grid-cols-3 gap-2 mt-2">
+                          <div className="text-center">
+                            <p className="text-xs text-gray-600">Level 1</p>
+                            <p className="font-bold">{calculatePersonalDirectReferrals()}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs text-gray-600">Level 2</p>
+                            <p className="font-bold">{calculatePersonalIndirectReferrals()}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs text-gray-600">Level 3</p>
+                            <p className="font-bold">{calculatePersonalLevel3Referrals()}</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -1150,19 +1100,32 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
             )}
           </TabsContent>
 
-          {/* Referral History Tab */}
+          {/* Referral History Tab - Updated with Level 3 */}
           <TabsContent value="referrals" className="space-y-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle>Referral History</CardTitle>
                   <p className="text-sm text-muted-foreground mt-1">
-                    {stats.totalDirectReferrals || 0} direct referrals • {calculateIndirectReferrals()} indirect referrals
+                    {calculatePersonalDirectReferrals()} direct • {calculatePersonalIndirectReferrals()} indirect • {calculatePersonalLevel3Referrals()} level 3
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline">Direct Only</Button>
-                  <Button size="sm" variant="outline">Indirect Only</Button>
+                  <Button size="sm" variant="outline" onClick={() => {
+                    // Filter by direct
+                    const filtered = referralHistory.filter(r => r.level === 1);
+                    // Update display logic here
+                  }}>Direct Only</Button>
+                  <Button size="sm" variant="outline" onClick={() => {
+                    // Filter by indirect
+                    const filtered = referralHistory.filter(r => r.level === 2);
+                    // Update display logic here
+                  }}>Indirect Only</Button>
+                  <Button size="sm" variant="outline" onClick={() => {
+                    // Filter by level 3
+                    const filtered = referralHistory.filter(r => r.level === 3);
+                    // Update display logic here
+                  }}>Level 3 Only</Button>
                 </div>
               </CardHeader>
               <CardContent>
@@ -1185,76 +1148,100 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {referralHistory.map((ref) => (
-                      <div
-                        key={ref._id}
-                        className="p-4 border rounded-lg hover:bg-gray-50 transition-colors"
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h4 className="font-semibold text-navy">
-                              {ref.referredUser?.name || "Unknown User"}
-                            </h4>
-                            <p className="text-sm text-muted-foreground">
-                              {ref.referredUser?.email || "No email"}
-                              {ref.referredUser?.phone && ` • ${ref.referredUser.phone}`}
-                            </p>
-                          </div>
-                          <div className="flex flex-col items-end gap-2">
-                            <p className="font-bold text-lg text-navy">
-                             {ref.commissionDetails && (
-                              <span className="text-green-600">
-                                {ref.commissionDetails.amount && `Rs. ${Math.round(ref.commissionDetails.amount)}`}
-                              </span>
-                            )}
-                            </p>
-                            <div className="flex gap-2">
-                              {getTypeBadge(ref.commissionType || ref.type, ref.level)}
-                              <Badge className={getStatusColor(ref.status)}>
-                                {getStatusText(ref.status)}
-                              </Badge>
+                    {referralHistory.map((ref) => {
+                      // Determine level color based on level
+                      const getLevelColor = (level?: number) => {
+                        switch(level) {
+                          case 1: return "text-green-600";
+                          case 2: return "text-blue-600";
+                          case 3: return "text-purple-600";
+                          default: return "text-gray-600";
+                        }
+                      };
+
+                      const getLevelLabel = (level?: number) => {
+                        switch(level) {
+                          case 1: return "Direct";
+                          case 2: return "Indirect";
+                          case 3: return "Level 3";
+                          default: return "Unknown";
+                        }
+                      };
+
+                      return (
+                        <div
+                          key={ref._id}
+                          className="p-4 border rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h4 className="font-semibold text-navy">
+                                {ref.referredUser?.name || "Unknown User"}
+                              </h4>
+                              <p className="text-sm text-muted-foreground">
+                                {ref.referredUser?.email || "No email"}
+                                {ref.referredUser?.phone && ` • ${ref.referredUser.phone}`}
+                              </p>
                             </div>
-                          </div>
-                        </div>
-                        <div className="flex justify-between items-center text-sm">
-                          <div className="flex gap-3">
-                            <span className="text-muted-foreground">
-                              Level: {ref.level || 1} • {ref.levelName || "Direct"}
-                            </span>
-                            {ref.commissionDetails && (
-                              <span className="text-green-600">
-                                Credited: {ref.commissionDetails.amount && `Rs. ${Math.round(ref.commissionDetails.amount)}`}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-muted-foreground">
-                            {formatDate(ref.createdAt)}
-                          </span>
-                        </div>
-                        {ref.orderDetails && (
-                          <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-100">
-                            <div className="flex justify-between text-sm">
-                              <span className="font-medium">
-                                Order #{ref.orderDetails.orderNumber}
-                              </span>
-                              <span className="font-bold">
-                                Rs. {Math.round(ref.orderDetails.total)}
-                              </span>
-                            </div>
-                            {ref.orderDetails.paymentMethod && (
-                              <div className="text-xs text-blue-600 mt-1">
-                                Payment: {ref.orderDetails.paymentMethod}
+                            <div className="flex flex-col items-end gap-2">
+                              <p className="font-bold text-lg text-navy">
+                                {ref.commissionDetails && (
+                                  <span className="text-green-600">
+                                    {ref.commissionDetails.amount && `Rs. ${Math.round(ref.commissionDetails.amount)}`}
+                                  </span>
+                                )}
+                              </p>
+                              <div className="flex gap-2">
+                                <Badge className={`${getLevelColor(ref.level)} bg-opacity-20`}>
+                                  {getLevelLabel(ref.level)}
+                                </Badge>
+                                {getTypeBadge(ref.commissionType || ref.type, ref.level)}
+                                <Badge className={getStatusColor(ref.status)}>
+                                  {getStatusText(ref.status)}
+                                </Badge>
                               </div>
-                            )}
+                            </div>
                           </div>
-                        )}
-                        {ref.completedAt && (
-                          <div className="text-xs text-gray-500 mt-2">
-                            Completed on: {formatDate(ref.completedAt)}
+                          <div className="flex justify-between items-center text-sm">
+                            <div className="flex gap-3">
+                              <span className={`font-medium ${getLevelColor(ref.level)}`}>
+                                Level {ref.level} • {getLevelLabel(ref.level)}
+                              </span>
+                              {ref.commissionDetails && (
+                                <span className="text-green-600">
+                                  Credited: {ref.commissionDetails.amount && `Rs. ${Math.round(ref.commissionDetails.amount)}`}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-muted-foreground">
+                              {formatDate(ref.createdAt)}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          {ref.orderDetails && (
+                            <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-100">
+                              <div className="flex justify-between text-sm">
+                                <span className="font-medium">
+                                  Order #{ref.orderDetails.orderNumber}
+                                </span>
+                                <span className="font-bold">
+                                  Rs. {Math.round(ref.orderDetails.total)}
+                                </span>
+                              </div>
+                              {ref.orderDetails.paymentMethod && (
+                                <div className="text-xs text-blue-600 mt-1">
+                                  Payment: {ref.orderDetails.paymentMethod}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {ref.completedAt && (
+                            <div className="text-xs text-gray-500 mt-2">
+                              Completed on: {formatDate(ref.completedAt)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
@@ -1348,7 +1335,12 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                               <span className="font-medium capitalize">
                                 {commission.commissionType} Commission
                               </span>
-                              <Badge variant="outline">
+                              <Badge variant="outline" className={
+                                commission.level === 1 ? 'bg-green-50 text-green-800' :
+                                commission.level === 2 ? 'bg-blue-50 text-blue-800' :
+                                commission.level === 3 ? 'bg-purple-50 text-purple-800' :
+                                'bg-gray-50'
+                              }>
                                 Level {commission.level}
                               </Badge>
                               {commission.source === "product-commission" && commission.percentage && (
@@ -1408,119 +1400,164 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
           </TabsContent>
 
           {/* Network Tab - Updated with Level 3 */}
-<TabsContent value="network" className="space-y-6">
-  <Card>
-    <CardHeader>
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-        <div>
-          <CardTitle>Your APEX Referral Network</CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">
-            Total members in your network: {calculatePersonalNetworkSize()} • 
-            Your earnings: Rs. {Math.round(apexValues.totalEarnings)}
-          </p>
-        </div>
-        {networkData && (
-          <div className="flex gap-2">
-            <Badge className="bg-green-100 text-green-800">
-              Level 1: {calculatePersonalDirectReferrals()}
-            </Badge>
-            <Badge className="bg-blue-100 text-blue-800">
-              Level 2: {calculatePersonalIndirectReferrals()}
-            </Badge>
-            <Badge className="bg-purple-100 text-purple-800">
-              Level 3: {calculatePersonalLevel3Referrals()}
-            </Badge>
-          </div>
-        )}
-      </div>
-    </CardHeader>
-    <CardContent>
-      {loadingSections.network ? (
-        <div className="space-y-4">
-          {Array(3).fill(0).map((_, i) => (
-            <div key={i} className="space-y-2">
-              <Skeleton className="h-10 w-full" />
-              <div className="ml-4 space-y-2">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : !networkData ? (
-        <div className="text-center py-12">
-          <Network className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-          <h4 className="text-lg font-semibold text-navy mb-2">Network data unavailable</h4>
-          <p className="text-muted-foreground">
-            Network data will appear here as you build your referral network
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {/* Current User */}
-          <div className="p-4 bg-gradient-to-r from-navy/10 to-accent/10 rounded-lg border-2 border-navy">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-navy text-white rounded-full flex items-center justify-center">
-                <span className="text-lg font-bold">You</span>
-              </div>
-              <div>
-                <h3 className="font-bold text-navy">{networkData.user.name}</h3>
-                <p className="text-sm text-gray-600">{networkData.user.email}</p>
-                <p className="text-xs text-gray-500">
-                  Level: {networkData.user.referralLevel} • 
-                  Code: {networkData.user.referralCode}
-                </p>
-              </div>
-              {networkData.user.referredBy && (
-                <div className="ml-auto text-right">
-                  <p className="text-sm text-gray-600">Referred by</p>
-                  <p className="font-medium">{networkData.user.referredBy.name}</p>
+          <TabsContent value="network" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                  <div>
+                    <CardTitle>Your APEX Referral Network</CardTitle>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Total members in your network: {calculatePersonalNetworkSize()} • 
+                      Your earnings: Rs. {Math.round(apexValues.totalEarnings)}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Badge className="bg-green-100 text-green-800">
+                      Level 1: {calculatePersonalDirectReferrals()}
+                    </Badge>
+                    <Badge className="bg-blue-100 text-blue-800">
+                      Level 2: {calculatePersonalIndirectReferrals()}
+                    </Badge>
+                    <Badge className="bg-purple-100 text-purple-800">
+                      Level 3: {calculatePersonalLevel3Referrals()}
+                    </Badge>
+                  </div>
                 </div>
-              )}
-            </div>
-          </div>
+              </CardHeader>
+              <CardContent>
+                {loadingSections.network ? (
+                  <div className="space-y-4">
+                    {Array(3).fill(0).map((_, i) => (
+                      <div key={i} className="space-y-2">
+                        <Skeleton className="h-10 w-full" />
+                        <div className="ml-4 space-y-2">
+                          <Skeleton className="h-8 w-full" />
+                          <Skeleton className="h-8 w-full" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : !networkData ? (
+                  <div className="text-center py-12">
+                    <Network className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                    <h4 className="text-lg font-semibold text-navy mb-2">Network data unavailable</h4>
+                    <p className="text-muted-foreground">
+                      Network data will appear here as you build your referral network
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Current User */}
+                    <div className="p-4 bg-gradient-to-r from-navy/10 to-accent/10 rounded-lg border-2 border-navy">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 bg-navy text-white rounded-full flex items-center justify-center">
+                          <span className="text-lg font-bold">You</span>
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-navy">{networkData.user.name}</h3>
+                          <p className="text-sm text-gray-600">{networkData.user.email}</p>
+                          <p className="text-xs text-gray-500">
+                            Level: {networkData.user.referralLevel} • 
+                            Code: {networkData.user.referralCode}
+                          </p>
+                        </div>
+                        {networkData.user.referredBy && (
+                          <div className="ml-auto text-right">
+                            <p className="text-sm text-gray-600">Referred by</p>
+                            <p className="font-medium">{networkData.user.referredBy.name}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
-          {/* Network Tree - Only shows actual network */}
-          <div className="border rounded-lg p-4 bg-gray-50">
-            <h4 className="font-semibold text-navy mb-4">Your Network Tree</h4>
-            {renderPersonalNetworkTree(networkData.network)}
-          </div>
+                    {/* Network Tree - Shows up to Level 3 */}
+                    <div className="border rounded-lg p-4 bg-gray-50">
+                      <div className="flex justify-between items-center mb-4">
+                        <h4 className="font-semibold text-navy">Your Network Tree (Up to Level 3)</h4>
+                        <div className="flex gap-2">
+                          <Badge variant="outline" className="bg-green-50 text-green-700">Level 1</Badge>
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700">Level 2</Badge>
+                          <Badge variant="outline" className="bg-purple-50 text-purple-700">Level 3</Badge>
+                        </div>
+                      </div>
+                      {renderPersonalNetworkTree(networkData.network)}
+                    </div>
 
-          {/* Personal Network Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
-            <div className="p-4 bg-white border rounded-lg">
-              <h4 className="font-semibold text-navy mb-3">Your Personal Network Statistics</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Total Personal Network</span>
-                  <span className="font-semibold">{calculatePersonalNetworkSize()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Direct Referrals (Level 1)</span>
-                  <span className="font-semibold">{calculatePersonalDirectReferrals()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Indirect Referrals (Level 2)</span>
-                  <span className="font-semibold">{calculatePersonalIndirectReferrals()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Extended Network (Level 3)</span>
-                  <span className="font-semibold">{calculatePersonalLevel3Referrals()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Your Total Earnings</span>
-                  <span className="font-semibold">Rs. {Math.round(apexValues.totalEarnings || 0)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </CardContent>
-  </Card>
-</TabsContent>
+                    {/* Personal Network Stats */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-white border rounded-lg">
+                        <h4 className="font-semibold text-navy mb-3">Network Distribution</h4>
+                        <div className="space-y-3">
+                          <div className="space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">Direct Referrals (Level 1)</span>
+                              <span className="font-semibold">{calculatePersonalDirectReferrals()}</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div 
+                                className="bg-green-500 h-2 rounded-full" 
+                                style={{ width: `${(calculatePersonalDirectReferrals() / calculatePersonalNetworkSize()) * 100 || 0}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">Indirect Referrals (Level 2)</span>
+                              <span className="font-semibold">{calculatePersonalIndirectReferrals()}</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div 
+                                className="bg-blue-500 h-2 rounded-full" 
+                                style={{ width: `${(calculatePersonalIndirectReferrals() / calculatePersonalNetworkSize()) * 100 || 0}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">Extended Network (Level 3)</span>
+                              <span className="font-semibold">{calculatePersonalLevel3Referrals()}</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div 
+                                className="bg-purple-500 h-2 rounded-full" 
+                                style={{ width: `${(calculatePersonalLevel3Referrals() / calculatePersonalNetworkSize()) * 100 || 0}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="p-4 bg-white border rounded-lg">
+                        <h4 className="font-semibold text-navy mb-3">Earnings Summary</h4>
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">Direct Earnings (Level 1)</span>
+                            <span className="font-semibold">Rs. {Math.round(stats.directEarnings || 0)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">Indirect Earnings (Level 2)</span>
+                            <span className="font-semibold">Rs. {Math.round(stats.indirectEarnings || 0)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">Extended Earnings (Level 3)</span>
+                            <span className="font-semibold">Rs. {Math.round(stats.level3Earnings || 0)}</span>
+                          </div>
+                          <div className="pt-2 border-t">
+                            <div className="flex justify-between">
+                              <span className="text-sm font-medium text-gray-700">Total Network Earnings</span>
+                              <span className="font-bold text-lg text-navy">Rs. {Math.round(apexValues.totalEarnings || 0)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-          {/* Analytics Tab */}
+          {/* Analytics Tab - Updated with Level 3 */}
           <TabsContent value="analytics" className="space-y-6">
             <div className="grid lg:grid-cols-2 gap-6">
               <Card>
@@ -1529,35 +1566,96 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-6">
-                    {/* Conversion Rate */}
+                    {/* Conversion Rate by Level */}
                     <div>
-                      <h4 className="font-semibold text-navy mb-2">APEX Conversion Rate</h4>
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-sm text-gray-600">Direct Referrals</span>
-                          <span className="font-semibold">{stats.totalDirectReferrals || 0}</span>
+                      <h4 className="font-semibold text-navy mb-2">Conversion Rate by Level</h4>
+                      <div className="space-y-3">
+                        {/* Level 1 */}
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <span className="text-sm text-gray-600">Direct Referrals (Level 1)</span>
+                            <span className="text-sm font-medium">
+                              {stats.totalDirectReferrals > 0 
+                                ? `${((stats.completedDirectReferrals / stats.totalDirectReferrals) * 100).toFixed(1)}%` 
+                                : "0%"}
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-green-500 h-2 rounded-full" 
+                              style={{ 
+                                width: `${stats.totalDirectReferrals > 0 
+                                  ? ((stats.completedDirectReferrals / stats.totalDirectReferrals) * 100) 
+                                  : 0}%` 
+                              }}
+                            ></div>
+                          </div>
+                          <div className="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>{stats.completedDirectReferrals || 0} completed</span>
+                            <span>{stats.totalDirectReferrals || 0} total</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-sm text-gray-600">Completed Direct Referrals</span>
-                          <span className="font-semibold">{stats.completedDirectReferrals || 0}</span>
+                        
+                        {/* Level 2 */}
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <span className="text-sm text-gray-600">Indirect Referrals (Level 2)</span>
+                            <span className="text-sm font-medium">
+                              {stats.totalIndirectReferrals > 0 
+                                ? `${((stats.completedIndirectReferrals / stats.totalIndirectReferrals) * 100).toFixed(1)}%` 
+                                : "0%"}
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-blue-500 h-2 rounded-full" 
+                              style={{ 
+                                width: `${stats.totalIndirectReferrals > 0 
+                                  ? ((stats.completedIndirectReferrals / stats.totalIndirectReferrals) * 100) 
+                                  : 0}%` 
+                              }}
+                            ></div>
+                          </div>
+                          <div className="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>{stats.completedIndirectReferrals || 0} completed</span>
+                            <span>{stats.totalIndirectReferrals || 0} total</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-sm text-gray-600">Direct Conversion Rate</span>
-                          <span className="font-semibold text-green-600">
-                            {stats.totalDirectReferrals > 0 
-                              ? `${((stats.completedDirectReferrals / stats.totalDirectReferrals) * 100).toFixed(1)}%` 
-                              : "0%"}
-                          </span>
+                        
+                        {/* Level 3 */}
+                        <div>
+                          <div className="flex justify-between mb-1">
+                            <span className="text-sm text-gray-600">Extended Network (Level 3)</span>
+                            <span className="text-sm font-medium">
+                              {stats.totalLevel3Referrals > 0 
+                                ? `${((stats.completedLevel3Referrals / stats.totalLevel3Referrals) * 100).toFixed(1)}%` 
+                                : "0%"}
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-purple-500 h-2 rounded-full" 
+                              style={{ 
+                                width: `${stats.totalLevel3Referrals > 0 
+                                  ? ((stats.completedLevel3Referrals / stats.totalLevel3Referrals) * 100) 
+                                  : 0}%` 
+                              }}
+                            ></div>
+                          </div>
+                          <div className="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>{stats.completedLevel3Referrals || 0} completed</span>
+                            <span>{stats.totalLevel3Referrals || 0} total</span>
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    {/* Average Earnings */}
+                    {/* Average Earnings per Level */}
                     <div>
-                      <h4 className="font-semibold text-navy mb-2">Average APEX Earnings</h4>
+                      <h4 className="font-semibold text-navy mb-2">Average Earnings per Level</h4>
                       <div className="space-y-2">
                         <div className="flex justify-between">
-                          <span className="text-sm text-gray-600">Per Direct Referral</span>
+                          <span className="text-sm text-gray-600">Per Direct Referral (Level 1)</span>
                           <span className="font-semibold">
                             Rs. {stats.totalDirectReferrals > 0 
                               ? Math.round(stats.directEarnings / stats.totalDirectReferrals) 
@@ -1565,29 +1663,53 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-sm text-gray-600">Per Indirect Referral</span>
+                          <span className="text-sm text-gray-600">Per Indirect Referral (Level 2)</span>
                           <span className="font-semibold">
-                            Rs. {calculateIndirectReferrals() > 0 
-                              ? Math.round(stats.indirectEarnings / calculateIndirectReferrals()) 
+                            Rs. {stats.totalIndirectReferrals > 0 
+                              ? Math.round(stats.indirectEarnings / stats.totalIndirectReferrals) 
+                              : 0}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">Per Level 3 Referral</span>
+                          <span className="font-semibold">
+                            Rs. {stats.totalLevel3Referrals > 0 
+                              ? Math.round(stats.level3Earnings / stats.totalLevel3Referrals) 
                               : 0}
                           </span>
                         </div>
                       </div>
                     </div>
 
-                    {/* APEX Earnings Breakdown */}
+                    {/* APEX Earnings Composition */}
                     <div>
                       <h4 className="font-semibold text-navy mb-2">APEX Earnings Composition</h4>
                       <div className="space-y-1">
                         <div className="flex justify-between">
-                          <span className="text-sm text-gray-600">APEX Bonus</span>
+                          <span className="text-sm text-gray-600">Direct Earnings (Level 1)</span>
                           <span className="font-semibold">
                             {apexValues.totalEarnings > 0 
-                              ? `${((apexValues.apexBonus / apexValues.totalEarnings) * 100).toFixed(1)}%` 
+                              ? `${((stats.directEarnings / apexValues.totalEarnings) * 100).toFixed(1)}%` 
                               : "0%"}
                           </span>
                         </div>
                         <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">Indirect Earnings (Level 2)</span>
+                          <span className="font-semibold">
+                            {apexValues.totalEarnings > 0 
+                              ? `${((stats.indirectEarnings / apexValues.totalEarnings) * 100).toFixed(1)}%` 
+                              : "0%"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">Level 3 Earnings</span>
+                          <span className="font-semibold">
+                            {apexValues.totalEarnings > 0 
+                              ? `${((stats.level3Earnings / apexValues.totalEarnings) * 100).toFixed(1)}%` 
+                              : "0%"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between pt-2 border-t">
                           <span className="text-sm text-gray-600">APEX Wallet</span>
                           <span className="font-semibold">
                             {apexValues.totalEarnings > 0 
@@ -1637,7 +1759,15 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                           <span className="text-sm text-gray-600">Indirect referrals per month</span>
                           <span className="font-semibold">
                             {referralHistory.length > 0 
-                              ? Math.round(referralHistory.filter(r => r.level && r.level > 1).length / 30) 
+                              ? Math.round(referralHistory.filter(r => r.level === 2).length / 30) 
+                              : 0}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">Level 3 referrals per month</span>
+                          <span className="font-semibold">
+                            {referralHistory.length > 0 
+                              ? Math.round(referralHistory.filter(r => r.level === 3).length / 30) 
                               : 0}
                           </span>
                         </div>
@@ -1651,11 +1781,14 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                         {stats.totalDirectReferrals < 5 && (
                           <li>• Focus on getting your first 5 direct referrals for APEX bonus</li>
                         )}
+                        {stats.totalLevel3Referrals === 0 && stats.totalIndirectReferrals > 0 && (
+                          <li>• Ask your Level 2 referrals to refer others to build Level 3 network</li>
+                        )}
                         {apexValues.apexWallet < apexValues.apexBonus && (
                           <li>• Encourage your referrals to make purchases for APEX Wallet growth</li>
                         )}
-                        {calculateIndirectReferrals() === 0 && (
-                          <li>• Ask your direct referrals to share your code to build Level 2 & 3 team</li>
+                        {stats.completedDirectReferrals < stats.totalDirectReferrals && (
+                          <li>• Follow up with pending direct referrals to complete their first purchase</li>
                         )}
                         {stats.membershipIncentives === 0 && (
                           <li>• Explore membership upgrade incentives in APEX system</li>
@@ -1669,7 +1802,7 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
           </TabsContent>
         </Tabs>
 
-        {/* How it Works - Updated for APEX */}
+        {/* How it Works - Updated for Level 3 */}
         <div className="mt-8 bg-white rounded-lg p-6 shadow-sm border border-gray-100">
           <h3 className="text-xl font-bold text-navy mb-6">
             How Our APEX Multi-Level System Works
@@ -1692,23 +1825,28 @@ const renderPersonalNetworkTree = (node: any, depth: number = 0) => {
                 2
               </div>
               <h4 className="font-semibold text-navy mb-3 text-lg">
-                Indirect Referrals (Level 2 & 3)
+                Indirect Referrals (Level 2)
               </h4>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Earn <strong>Rs. 25</strong> APEX bonus + <strong>5%</strong> of product
-                commission from friends referred by your referrals (Level 2 & 3)
+                Earn <strong>5%</strong> of product
+                commission from friends referred by your Level 1 referrals
               </p>
             </div>
             <div className="text-center">
               <div className="w-16 h-16 bg-purple-500 text-white rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4 shadow-md">
-                ∞
+                3
               </div>
-              <h4 className="font-semibold text-navy mb-3 text-lg">APEX Unlimited Earnings</h4>
+              <h4 className="font-semibold text-navy mb-3 text-lg">Extended Network (Level 3)</h4>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Earn APEX Wallet on every purchase + APEX Bonus on signups, memberships,
-                vendor/franchiser enrollments, and more!
+                Earn <strong>5%</strong> of product
+                commission from friends referred by your Level 2 referrals
               </p>
             </div>
+          </div>
+          <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+            <p className="text-center text-sm text-blue-700">
+              <strong>Total Potential:</strong> Earn up to <strong>Rs. 100</strong> per signup across all levels!
+            </p>
           </div>
         </div>
 
