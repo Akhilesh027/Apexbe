@@ -108,7 +108,7 @@ const Navbar = () => {
 
       if (response.ok) {
         const data = await response.json();
-        setWalletBalance(data.walletBalance || 0);
+        setWalletBalance(data.totalEarnings || 0);
       } else if (response.status === 401) {
         handleLogout();
       }

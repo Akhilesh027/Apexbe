@@ -205,20 +205,16 @@ const Referrals = () => {
   });
 
   // Helper function to calculate APEX values
-  const calculateApexValues = (stats: ReferralStats) => {
-    // APEX Wallet = Purchase commissions only
-    const apexWallet = stats.purchaseCommissionTotal || 0;
-    
-    // APEX Bonus = All bonuses and incentives (including Level 3)
-    const apexBonus = (stats.signupBonusTotal || 0) + 
-                     (stats.directEarnings || 0) + 
-                     (stats.indirectEarnings || 0)
-                    
-    
-    const totalEarnings = apexWallet + apexBonus;
-    
-    return { apexWallet, apexBonus, totalEarnings };
-  };
+const calculateApexValues = (stats: ReferralStats) => {
+  // APEX Wallet = Purchase commissions only
+  const apexWallet = stats.purchaseCommissionTotal || 0;
+
+  // APEX Bonus = only bonuses/incentives (NO purchase commissions)
+  const apexBonus = (stats.signupBonusTotal || 0) 
+  const totalEarnings = apexWallet + apexBonus;
+
+  return { apexWallet, apexBonus, totalEarnings };
+};
 
   const apexValues = calculateApexValues(stats);
 
@@ -233,9 +229,14 @@ const Referrals = () => {
   };
 
   // Calculate network size: Level 1 + Level 2 + Level 3
-  const calculatePersonalNetworkSize = () => {
-    return (stats.level1Count || 0) + (stats.level2Count || 0) + (stats.level3Count || 0);
-  };
+ const calculatePersonalNetworkSize = () => {
+  return (
+    (stats.totalDirectReferrals || 0) +
+    (stats.totalIndirectReferrals || 0) +
+    (stats.totalLevel3Referrals || 0)
+  );
+};
+
 
   useEffect(() => {
     fetchReferralData();
@@ -614,7 +615,7 @@ const Referrals = () => {
     },
     {
       label: "APEX Bonus",
-      value: `Rs. ${Math.round(apexValues.apexBonus)}`,
+      value: `Rs. ${Math.round(stats.signupBonusTotal)}`,
       icon: Award,
       description: "Signup & referral bonuses",
       color: "text-purple-600",
