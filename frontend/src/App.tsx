@@ -24,6 +24,7 @@ import Checkout from "./pages/Checkout";
 import OrderSuccess from "./components/OrderSuccess";
 import Profile from "./pages/Profile";
 import Wishlist from "./pages/Wishlist";
+import Register from "./pages/Register";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,8 @@ const App = () => (
           <Route path="/furniture" element={<Furniture />} />
           <Route path="/product/:id" element={<ProductDetail />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+
           <Route path="/account" element={<Account />} />
           <Route path="/vendors" element={<Vendors />} />
           <Route path="/order-success" element={<OrderSuccess />} />

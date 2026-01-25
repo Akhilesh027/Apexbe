@@ -156,124 +156,114 @@ app.get("/api/vendor/:vendorId", async (req, res) => {
     res.status(500).json({ error: "Server Error" });
   }
 });
-
 const userSchema = new mongoose.Schema(
   {
-    name: {
+    name: { type: String, required: true, trim: true },
+
+    email: {
       type: String,
-      required: true,
-      trim: true
+      unique: true,
+      sparse: true,
+      trim: true,
+      lowercase: true,
+      index: true,
     },
-    email: { 
-      type: String, 
-      unique: true, 
-      sparse: true 
+
+    phone: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+      index: true,
     },
-    phone: { 
-      type: String, 
-      unique: true, 
-      sparse: true 
-    },
-    password: String,
-    dateOfBirth: {
-      type: Date
-    },
+
+    password: { type: String, select: false },
+
+    dateOfBirth: { type: Date },
+
     gender: {
       type: String,
-      enum: ['male', 'female', 'other', 'prefer-not-to-say'],
-      default: 'prefer-not-to-say'
+      enum: ["male", "female", "other", "prefer-not-to-say"],
+      default: "prefer-not-to-say",
     },
-    bio: {
-      type: String,
-      maxlength: 500
-    },
-    avatar: {
-      type: String,
-      default: ''
-    },
+
+    bio: { type: String, maxlength: 500 },
+
+    avatar: { type: String, default: "" },
+
     referralCode: {
       type: String,
       unique: true,
-      sparse: true
+      sparse: true,
+      index: true,
     },
+
     referredBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+      ref: "User",
+      index: true,
+      default: null,
     },
+
     referralLevel: {
       type: Number,
-      default: 0 // 0 = root level, 1 = direct referral, 2 = indirect referral
+      default: 0, // 0 = root, 1 = direct, 2 = indirect, 3 = sub-indirect
+      index: true,
     },
-    walletBalance: {
-      type: Number,
-      default: 0
-    },
-    totalEarnings: {
-      type: Number,
-      default: 0
-    },
-    // Track referred users
-   directReferrals: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    }],
-    indirectReferrals: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    }],
-    // NEW: Add level 3 referrals tracking
-    level3Referrals: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    }],
-    
-    // Add level-specific counts for easier querying
-    level0Count: {
-      type: Number,
-      default: 0
-    },
-    level1Count: {
-      type: Number,
-      default: 0
-    },
-    level2Count: {
-      type: Number,
-      default: 0
-    },
-    level3Count: {
-      type: Number,
-      default: 0
-    }
 
+    // ✅ Recommended for "first purchase commission" logic
+    firstOrderCompleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    walletBalance: { type: Number, default: 0 },
+    totalEarnings: { type: Number, default: 0 },
+
+    // Optional arrays (fast populate / display)
+    directReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
+    indirectReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
+    level3Referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
+
+    // Level-specific counts
+    level0Count: { type: Number, default: 0 },
+    level1Count: { type: Number, default: 0 },
+    level2Count: { type: Number, default: 0 },
+    level3Count: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
+
+// ✅ Normalize email/phone
+userSchema.pre("save", function (next) {
+  if (this.email) this.email = String(this.email).trim().toLowerCase();
+  if (this.phone) this.phone = String(this.phone).trim();
+  next();
+});
+
+// ✅ Helper: refresh counts + arrays (Level 1/2/3)
 userSchema.methods.updateLevelCounts = async function () {
   const userId = this._id;
 
-  // Level 1: direct referrals
-  const level1Users = await User.find({ referredBy: userId }).select("_id");
-  const level1Ids = level1Users.map(u => u._id);
+  const level1Users = await this.constructor.find({ referredBy: userId }).select("_id");
+  const level1Ids = level1Users.map((u) => u._id);
 
-  // Level 2: referrals of level 1 users
   const level2Users = level1Ids.length
-    ? await User.find({ referredBy: { $in: level1Ids } }).select("_id referredBy")
+    ? await this.constructor.find({ referredBy: { $in: level1Ids } }).select("_id")
     : [];
-  const level2Ids = level2Users.map(u => u._id);
+  const level2Ids = level2Users.map((u) => u._id);
 
-  // Level 3: referrals of level 2 users
   const level3Users = level2Ids.length
-    ? await User.find({ referredBy: { $in: level2Ids } }).select("_id")
+    ? await this.constructor.find({ referredBy: { $in: level2Ids } }).select("_id")
     : [];
-  const level3Ids = level3Users.map(u => u._id);
+  const level3Ids = level3Users.map((u) => u._id);
 
-  // Save counts
   this.level0Count = 1;
   this.level1Count = level1Ids.length;
   this.level2Count = level2Ids.length;
   this.level3Count = level3Ids.length;
 
-  // (Optional) keep arrays in sync (only if you really need them)
   this.directReferrals = level1Ids;
   this.indirectReferrals = level2Ids;
   this.level3Referrals = level3Ids;
@@ -281,57 +271,115 @@ userSchema.methods.updateLevelCounts = async function () {
   return this.save();
 };
 
-
+// ✅ Helpful indexes for network queries
+userSchema.index({ referredBy: 1, createdAt: -1 });
+userSchema.index({ referralCode: 1 }); // quick lookup
 
 const User = mongoose.model("User", userSchema);
-const commissionSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  orderId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Order',
-    required: true
-  },
-  amount: {
-    type: Number,
-    required: true
-  },
-  commissionType: {
-    type: String,
-    enum: ['signup', 'purchase', 'recurring'],
-    required: true
-  },
-  level: {
-    type: Number,
-    enum: [1, 2, 3], // Now includes level 3
-    required: true
-  },
-  source: {
-    type: String,
-    enum: ['product-commission', 'order-commission', 'signup-bonus']
-  },
-  percentage: {
-    type: Number,
-    description: "Percentage used for calculation"
-  },
-  productCommissionAmount: {
-    type: Number,
-    description: "Total product commission available"
-  },
-  status: {
-    type: String,
-    enum: ['pending', 'credited', 'reversed'],
-    default: 'credited'
-  },
-  notes: String
-}, {
-  timestamps: true
-});
 
-const Commission = mongoose.model('Commission', commissionSchema);
+/* =========================================================
+ * COMMISSION SCHEMA
+ * =======================================================*/
+const commissionSchema = new mongoose.Schema(
+  {
+    // ✅ receiver of the commission (who earns)
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+// ✅ Add this in Commission schema
+buyerId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+  index: true,
+},
+
+    // ✅ buyer order (required only for purchase/recurring)
+    orderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+      index: true,
+    },
+
+    // ✅ Optional: who generated the commission (recommended)
+    // (Add this if you want accurate level breakdown by buyer without relying on notes)
+    // referredUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true },
+
+    amount: { type: Number, required: true },
+
+    commissionType: {
+      type: String,
+      enum: ["signup", "purchase", "recurring"],
+      required: true,
+      index: true,
+    },
+
+    level: {
+      type: Number,
+      enum: [1, 2, 3],
+      required: true,
+      index: true,
+    },
+
+    source: {
+      type: String,
+      enum: ["product-commission", "order-commission", "signup-bonus"],
+      default: "order-commission",
+      index: true,
+    },
+
+    // ✅ Tracks first purchase commissions (your backend can set this)
+    isFirstPurchase: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    percentage: Number,
+    productCommissionAmount: Number,
+
+    status: {
+      type: String,
+      enum: ["pending", "credited", "reversed"],
+      default: "credited",
+      index: true,
+    },
+
+    notes: String,
+  },
+  { timestamps: true }
+);
+
+// ✅ Validation: orderId required ONLY for purchase/recurring
+commissionSchema.pre("validate", function (next) {
+  const needsOrder = this.commissionType === "purchase" || this.commissionType === "recurring";
+  if (needsOrder && !this.orderId) {
+    return next(new Error("orderId is required for purchase/recurring commissions"));
+  }
+  next();
+});
+// ✅ Prevent duplicate "first purchase" reward per buyer
+commissionSchema.index(
+  { buyerId: 1, commissionType: 1, isFirstPurchase: 1, notes: 1 },
+  { unique: true, partialFilterExpression: { isFirstPurchase: true } }
+);
+
+// ✅ Prevent duplicate credits
+// - For PURCHASE/RECURRING: enforce uniqueness per (userId, orderId, commissionType, level, source)
+// - For SIGNUP: orderId is null; uniqueness becomes (userId, null, signup, level, source)
+commissionSchema.index(
+  { userId: 1, orderId: 1, commissionType: 1, level: 1, source: 1 },
+  { unique: true }
+);
+
+// ✅ Fast query index for your dashboard lists (recent commissions)
+commissionSchema.index({ userId: 1, status: 1, createdAt: -1 });
+commissionSchema.index({ userId: 1, commissionType: 1, level: 1, createdAt: -1 });
+
+const Commission = mongoose.model("Commission", commissionSchema);
 
 const generateReferralCode = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -387,8 +435,6 @@ const auth = async (req, res, next) => {
     res.status(401).json({ error: 'Token is not valid' });
   }
 };
-// Process Referral with THREE-level support
-// Process Referral with THREE-level support
 
 const debugReferralsForUser = async (userId) => {
   try {
@@ -718,19 +764,33 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // ✅ Basic validation
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
-    const user = await User.findOne({ email });
+    // ✅ IMPORTANT: If your schema has `password: { select: false }`
+    // then password won't come unless you do .select("+password")
+    const user = await User.findOne({ email }).select("+password");
+
     if (!user) {
       return res.status(400).json({ error: "Invalid credentials" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    // ✅ Prevent bcrypt crash if DB password missing
+    if (!user.password) {
+      return res.status(500).json({
+        error: "Account password is missing. Please reset your password.",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(String(password), user.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid credentials" });
     }
+
+    // ✅ (Optional) remove password from memory before sending anything
+    user.password = undefined;
 
     res.json({
       message: "Login successful",
@@ -740,15 +800,16 @@ app.post("/api/auth/login", async (req, res) => {
         email: user.email,
         phone: user.phone,
         referralCode: user.referralCode,
-        walletBalance: user.walletBalance
+        walletBalance: user.walletBalance,
       },
       token: createToken(user),
     });
   } catch (err) {
-    console.error('Login error:', err);
+    console.error("Login error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 app.get("/api/referrals/code", auth, async (req, res) => {
   try {
     console.log('Getting referral code for user:', req.user?._id);
@@ -770,18 +831,20 @@ app.get("/api/referrals/code", auth, async (req, res) => {
 
     res.json({
       referralCode: user.referralCode,
-      referralLink: `https://apexbee.in/login?ref=${user.referralCode}`
+      referralLink: `https://apexbee.in/register?ref=${user.referralCode}`
     });
   } catch (error) {
     console.error('Get referral code error:', error);
     res.status(500).json({ error: 'Failed to get referral code' });
   }
 });
+
 app.get("/api/referrals/stats", auth, async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ error: "User not authenticated" });
 
     const userId = req.user._id;
+    const userObjectId = new mongoose.Types.ObjectId(userId);
 
     const user = await User.findById(userId)
       .populate("referredBy", "name email referralCode")
@@ -794,19 +857,16 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
 
     // ----------------------------------------------------
-    // ✅ NETWORK COUNTS FROM USER TREE (works always)
+    // ✅ NETWORK COUNTS FROM USER TREE
     // ----------------------------------------------------
-    // Level 1 users
     const level1Users = await User.find({ referredBy: userId }).select("_id");
     const level1Ids = level1Users.map((u) => u._id);
 
-    // Level 2 users
     const level2Users = level1Ids.length
       ? await User.find({ referredBy: { $in: level1Ids } }).select("_id")
       : [];
     const level2Ids = level2Users.map((u) => u._id);
 
-    // Level 3 users
     const level3Users = level2Ids.length
       ? await User.find({ referredBy: { $in: level2Ids } }).select("_id")
       : [];
@@ -816,61 +876,92 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
     const totalIndirectReferrals = level2Ids.length;
     const totalLevel3Referrals = level3Ids.length;
 
-    // Total network referrals (L1+L2+L3)
     const totalReferrals = totalDirectReferrals + totalIndirectReferrals + totalLevel3Referrals;
 
     // ----------------------------------------------------
-    // ✅ DIRECT referral status counts (from Referral table)
-    // (because you definitely have level 1 referral docs)
+    // ✅ DIRECT referral status counts (signup bonus records)
     // ----------------------------------------------------
-    const [
-      completedDirectReferrals,
-      pendingDirectReferrals,
-    ] = await Promise.all([
-      Referral.countDocuments({ referrer: userId, level: 1, status: "credited" }),
-      Referral.countDocuments({ referrer: userId, level: 1, status: "pending" }),
+    const [completedDirectReferrals, pendingDirectReferrals] = await Promise.all([
+      Referral.countDocuments({
+        referrer: userId,
+        level: 1,
+        status: "credited",
+        commissionType: "signup-bonus",
+      }),
+      Referral.countDocuments({
+        referrer: userId,
+        level: 1,
+        status: "pending",
+        commissionType: "signup-bonus",
+      }),
     ]);
 
     // ----------------------------------------------------
-    // ✅ INDIRECT/L3 "completed" based on Purchase commissions
-    // (since level2/level3 referral docs may not exist)
+    // ✅ FULL PURCHASE COMMISSIONS BY LEVEL (Commission table)
     // ----------------------------------------------------
-    const purchaseCompletedByLevel = await Commission.aggregate([
+    const purchaseAgg = await Commission.aggregate([
       {
         $match: {
-          userId: new mongoose.Types.ObjectId(userId),
+          userId: userObjectId,
           status: "credited",
           commissionType: "purchase",
+          level: { $in: [1, 2, 3] },
         },
       },
-      { $group: { _id: "$level", count: { $sum: 1 }, total: { $sum: "$amount" } } },
+      {
+        $group: {
+          _id: "$level",
+          totalAmount: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
     ]);
 
-    let completedIndirectReferrals = 0;
-    let completedLevel3Referrals = 0;
+    let level1PurchaseCommission = 0;
+    let level2PurchaseCommission = 0;
+    let level3PurchaseCommission = 0;
 
-    let directEarnings = 0;
-    let indirectEarnings = 0;
-    let level3Earnings = 0;
+    for (const row of purchaseAgg) {
+      if (row._id === 1) level1PurchaseCommission = row.totalAmount || 0;
+      if (row._id === 2) level2PurchaseCommission = row.totalAmount || 0;
+      if (row._id === 3) level3PurchaseCommission = row.totalAmount || 0;
+    }
 
-    purchaseCompletedByLevel.forEach((row) => {
-      if (row._id === 1) {
-        directEarnings = row.total || 0;
-      } else if (row._id === 2) {
-        completedIndirectReferrals = row.count || 0;
-        indirectEarnings = row.total || 0;
-      } else if (row._id === 3) {
-        completedLevel3Referrals = row.count || 0;
-        level3Earnings = row.total || 0;
-      }
-    });
+    const purchaseCommissionTotal =
+      level1PurchaseCommission + level2PurchaseCommission + level3PurchaseCommission;
 
-    // Pending for indirect/L3 = total users in that level - completed purchase events
-    // (This is a practical definition: completed = at least one credited purchase commission)
+    // ✅ Keep these for your frontend (full totals)
+    const directEarnings = level1PurchaseCommission;
+    const indirectEarnings = level2PurchaseCommission;
+    const level3Earnings = level3PurchaseCommission;
+
+    // ----------------------------------------------------
+    // ✅ COMPLETED USERS BY PURCHASE (orderId proxy)
+    // ----------------------------------------------------
+    const [level2OrderIds, level3OrderIds] = await Promise.all([
+      Commission.distinct("orderId", {
+        userId: userObjectId,
+        status: "credited",
+        commissionType: "purchase",
+        level: 2,
+      }),
+      Commission.distinct("orderId", {
+        userId: userObjectId,
+        status: "credited",
+        commissionType: "purchase",
+        level: 3,
+      }),
+    ]);
+
+    const completedIndirectReferrals =
+      level2OrderIds.length > 0 ? Math.min(totalIndirectReferrals, level2OrderIds.length) : 0;
+
+    const completedLevel3Referrals =
+      level3OrderIds.length > 0 ? Math.min(totalLevel3Referrals, level3OrderIds.length) : 0;
+
     const pendingIndirectReferrals = Math.max(0, totalIndirectReferrals - completedIndirectReferrals);
     const pendingLevel3Referrals = Math.max(0, totalLevel3Referrals - completedLevel3Referrals);
 
-    // Combined totals
     const completedReferrals =
       completedDirectReferrals + completedIndirectReferrals + completedLevel3Referrals;
 
@@ -878,14 +969,14 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
       pendingDirectReferrals + pendingIndirectReferrals + pendingLevel3Referrals;
 
     // ----------------------------------------------------
-    // ✅ Signup bonus ONLY from Referral table
+    // ✅ Signup bonus total (Referral table)
     // ----------------------------------------------------
     const signupAgg = await Referral.aggregate([
       {
         $match: {
-          referrer: new mongoose.Types.ObjectId(userId),
+          referrer: userObjectId,
           status: "credited",
-          commissionType: { $in: ["signup", "signup-bonus"] },
+          commissionType: "signup-bonus",
         },
       },
       { $group: { _id: null, total: { $sum: "$rewardAmount" } } },
@@ -893,31 +984,43 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
     const signupBonusTotal = signupAgg?.[0]?.total || 0;
 
     // ----------------------------------------------------
-    // ✅ Purchase commission total from Commission table
+    // ✅ ONLY LEVEL-1 FIRST ORDER COMMISSION (Commission table)
     // ----------------------------------------------------
-    const purchaseAgg = await Commission.aggregate([
-      {
-        $match: {
-          userId: new mongoose.Types.ObjectId(userId),
-          status: "credited",
-          commissionType: "purchase",
-        },
-      },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]);
-    const purchaseCommissionTotal = purchaseAgg?.[0]?.total || 0;
+   const firstDirectPurchaseAgg = await Commission.aggregate([
+  {
+    $match: {
+      userId: userObjectId,
+      status: "credited",
+      commissionType: "purchase",
+      isFirstPurchase: true,
+      level: { $in: [1, "1"] }, // ✅ handles int + string
+    },
+  },
+  {
+    $group: {
+      _id: null,
+      totalAmount: { $sum: "$amount" },
+    },
+  },
+]);
 
-    const totalEarnings = signupBonusTotal + purchaseCommissionTotal;
+const level1FirstPurchaseCommission = firstDirectPurchaseAgg?.[0]?.totalAmount || 0;
 
-    // Latest commissions
-    const recentCommissions = await Commission.find({ userId })
+    const totalFirstPurchaseCommission = level1FirstPurchaseCommission;
+
+    // ✅ Total earnings (keep full wallet) + bonus
+    const totalEarnings = signupBonusTotal + purchaseCommissionTotal + totalFirstPurchaseCommission;
+
+    // ----------------------------------------------------
+    // ✅ Recent commissions + pending counts
+    // ----------------------------------------------------
+    const recentCommissions = await Commission.find({ userId: userId, status: "credited" })
       .sort({ createdAt: -1 })
       .limit(5)
-      .populate("orderId", "orderNumber total");
+      .populate("orderId", "orderNumber totalAmount total createdAt");
 
-    // Pending commissions count
     const pendingCommissionsCount = await Commission.countDocuments({
-      userId,
+      userId: userId,
       status: "pending",
     });
 
@@ -929,12 +1032,12 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
       totalEarnings,
       walletBalance: user.walletBalance || 0,
 
-      // Multi-level totals (✅ correct)
+      // Multi-level totals
       totalDirectReferrals,
       totalIndirectReferrals,
       totalLevel3Referrals,
 
-      // Completed/pending (direct = referral table, indirect/L3 = purchase activity)
+      // Completed/pending
       completedDirectReferrals,
       completedIndirectReferrals,
       completedLevel3Referrals,
@@ -943,13 +1046,25 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
       pendingIndirectReferrals,
       pendingLevel3Referrals,
 
-      // Earnings breakdown
+      // ✅ FULL purchase commissions (existing frontend keys)
       directEarnings,
       indirectEarnings,
       level3Earnings,
 
+      // Bonus + wallet totals
       signupBonusTotal,
       purchaseCommissionTotal,
+
+      // Full purchase commission fields
+      level1PurchaseCommission,
+      level2PurchaseCommission,
+      level3PurchaseCommission,
+
+      // ✅ First purchase commission fields (ONLY level 1)
+      level1FirstPurchaseCommission,
+      level2FirstPurchaseCommission: 0,
+      level3FirstPurchaseCommission: 0,
+      totalFirstPurchaseCommission,
 
       // User info
       userLevel: user.referralLevel || 0,
@@ -958,17 +1073,14 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
         ? { name: user.referredBy.name, referralCode: user.referredBy.referralCode }
         : null,
 
-      // Quick stats
       recentCommissionsCount: recentCommissions.length,
       pendingCommissionsCount,
 
-      // Level counts for personal network
       level0Count: 1,
       level1Count: totalDirectReferrals,
       level2Count: totalIndirectReferrals,
       level3Count: totalLevel3Referrals,
 
-      // Direct referrals preview (from user array; if you want 100% consistent, we can fetch from User.find({referredBy:userId}).limit(5))
       recentDirectReferrals:
         user.directReferrals?.map((ref) => ({
           name: ref.name,
@@ -977,12 +1089,10 @@ app.get("/api/referrals/stats", auth, async (req, res) => {
         })) || [],
     });
   } catch (error) {
-    console.error("Get enhanced referral stats error:", error);
+    console.error("Get referral stats error:", error);
     res.status(500).json({ error: "Failed to get referral stats" });
   }
 });
-
-
 
 app.get("/api/referrals/history", auth, async (req, res) => {
   try {
@@ -2388,6 +2498,8 @@ app.get("/api/wishlist/status", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+
 app.get("/api/wishlist/:userId", async (req, res) => {
   const { userId } = req.params;
 
@@ -2535,6 +2647,189 @@ app.post("/api/user/address", auth, async (req, res) => {
     });
   }
 });
+async function getUplineChain(buyerId) {
+  const buyer = await User.findById(buyerId).select("referredBy referralCode");
+  if (!buyer?.referredBy) return [];
+
+  const l1 = await User.findById(buyer.referredBy).select("_id referredBy referralCode");
+  if (!l1) return [];
+
+  const chain = [{ level: 1, referrerId: l1._id }];
+
+  if (l1.referredBy) {
+    const l2 = await User.findById(l1.referredBy).select("_id referredBy referralCode");
+    if (l2) chain.push({ level: 2, referrerId: l2._id });
+
+    if (l2?.referredBy) {
+      const l3 = await User.findById(l2.referredBy).select("_id referralCode");
+      if (l3) chain.push({ level: 3, referrerId: l3._id });
+    }
+  }
+
+  return chain;
+}
+
+// Stronger than isFirstOrder: prevents duplicate rewards even if orders deleted
+async function isFirstPurchaseCommissionAlreadyDone(buyerId) {
+  const exists = await Referral.exists({
+    referredUser: buyerId,
+    commissionType: "purchase-commission",
+    status: "credited",
+  });
+  return !!exists;
+}
+
+// Creates 1st purchase commission (once) for L1/L2/L3 and stores also in Commission table
+async function createFirstPurchaseCommission({ buyerId, order, orderAmount }) {
+  const already = await isFirstPurchaseCommissionAlreadyDone(buyerId);
+  if (already) return { created: false, reason: "already_rewarded" };
+
+  const upline = await getUplineChain(buyerId);
+  if (!upline.length) return { created: false, reason: "no_upline" };
+
+  // Uses your Referral schema static helper
+  const commissions = Referral.calculateCommissions(orderAmount, "purchase-commission");
+  // L1=10% L2=5% L3=5%
+
+  const createdDocs = [];
+
+  for (const node of upline) {
+    const amount =
+      node.level === 1
+        ? commissions.level1
+        : node.level === 2
+        ? commissions.level2
+        : node.level === 3
+        ? commissions.level3
+        : 0;
+
+    if (!amount || amount <= 0) continue;
+
+    const levelName =
+      node.level === 1 ? "direct" : node.level === 2 ? "indirect" : "sub-indirect";
+
+    // ✅ Create Referral doc (unique index prevents duplicates)
+    const referralDoc = await Referral.create({
+      referrer: node.referrerId,
+      referredUser: buyerId,
+      referralCode: "system", // (optional) if you store used referral code elsewhere, put it here
+      status: "credited",
+      level: node.level,
+      levelName,
+      commissionType: "purchase-commission",
+      rewardAmount: amount,
+
+      commissions: {
+        level1: node.level === 1 ? amount : 0,
+        level2: node.level === 2 ? amount : 0,
+        level3: node.level === 3 ? amount : 0,
+        adminCommission: 0,
+      },
+
+      // Order info
+      orderId: order._id,
+      orderAmount: orderAmount,
+      orderNumber: order.orderNumber || String(order._id),
+
+      completedAt: new Date(),
+      isDirect: node.level === 1,
+      parentReferrer: null,
+    });
+
+    createdDocs.push(referralDoc);
+
+    // ✅ Store in Commission (easier for frontend analytics totals)
+    await Commission.create({
+      userId: node.referrerId,
+      orderId: order._id,
+      amount: amount,
+      commissionType: "purchase",
+      level: node.level,
+      source: "order-commission",
+      percentage: node.level === 1 ? 10 : 5,
+      status: "credited",
+      notes: "First purchase commission",
+    });
+
+    // ✅ Credit wallet/earnings
+    await User.findByIdAndUpdate(node.referrerId, {
+      $inc: {
+        walletBalance: amount,
+        totalEarnings: amount,
+      },
+    });
+  }
+
+  return { created: true, docsCount: createdDocs.length };
+}
+
+/** -------------------------------------------------------
+ * ✅ HELPERS: WISH LINK PURCHASE INCENTIVE
+ * ------------------------------------------------------*/
+
+// We will support BOTH: metadata.wishLinkOwnerId OR metadata.wishLinkReferralCode
+async function resolveWishLinkOwner(metadata) {
+  const ownerId = metadata?.wishLinkOwnerId;
+  if (ownerId) return ownerId;
+
+  const code = metadata?.wishLinkReferralCode;
+  if (code) {
+    const u = await User.findOne({ referralCode: code }).select("_id");
+    if (u?._id) return u._id;
+  }
+
+  return null;
+}
+
+async function processWishLinkIncentive({ buyerId, order, orderAmount, metadata }) {
+  const wishOwnerId = await resolveWishLinkOwner(metadata);
+  if (!wishOwnerId) return { applied: false, reason: "no_wish_link" };
+
+  // ✅ No self benefit
+  if (String(wishOwnerId) === String(buyerId)) {
+    return { applied: false, reason: "self_purchase_not_eligible" };
+  }
+
+  // ✅ Example: 2% incentive (change as needed)
+  const percent = 2;
+  const amount = (orderAmount * percent) / 100;
+
+  if (!amount || amount <= 0) return { applied: false, reason: "invalid_amount" };
+
+  // Prevent duplicate wish incentive for same order+same owner
+  const duplicate = await Commission.exists({
+    userId: wishOwnerId,
+    orderId: order._id,
+    notes: "Wish Link purchase incentive",
+  });
+  if (duplicate) return { applied: false, reason: "duplicate_for_order" };
+
+  await Commission.create({
+    userId: wishOwnerId,
+    orderId: order._id,
+    amount,
+    commissionType: "purchase",
+    level: 1,
+    source: "product-commission",
+    percentage: percent,
+    status: "credited",
+    notes: "Wish Link purchase incentive",
+  });
+
+  await User.findByIdAndUpdate(wishOwnerId, {
+    $inc: {
+      walletBalance: amount,
+      totalEarnings: amount,
+    },
+  });
+
+  return { applied: true, amount, percent };
+}
+
+/** -------------------------------------------------------
+ * ✅ UPDATED ORDER API (your code + changes only in referral part)
+ * ------------------------------------------------------*/
+
 app.post("/api/orders", auth, async (req, res) => {
   try {
     const {
@@ -2545,7 +2840,7 @@ app.post("/api/orders", auth, async (req, res) => {
       orderItems: rawItems,
       orderSummary: frontendSummary,
       metadata,
-      paymentProof // New field for UPI payment proof
+      paymentProof, // New field for UPI payment proof
     } = req.body;
 
     console.log("Received order data:", {
@@ -2553,72 +2848,71 @@ app.post("/api/orders", auth, async (req, res) => {
       paymentMethod: paymentDetails?.method,
       paymentStatus: paymentDetails?.status,
       hasPaymentProof: !!paymentProof,
-      rawItems: rawItems?.map(item => ({
+      rawItems: rawItems?.map((item) => ({
         name: item.name,
         price: item.price,
         quantity: item.quantity,
-        productId: item.productId
+        productId: item.productId,
       })),
-      frontendSummary
+      frontendSummary,
     });
 
     // Validate required fields
     if (!userId || !shippingAddress || !rawItems || rawItems.length === 0) {
-      return res.status(400).json({ success: false, message: "Missing required order fields" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required order fields" });
     }
 
     // Verify user authorization
     if (req.user._id.toString() !== userId) {
-      return res.status(403).json({ success: false, message: "Not authorized to create order for this user" });
+      return res
+        .status(403)
+        .json({ success: false, message: "Not authorized to create order for this user" });
     }
 
-    // Check if this is user's first order
+    // Check if this is user's first order (keep this, but not used for commission safety)
     const orderCount = await Order.countDocuments({ userId });
     const isFirstOrder = orderCount === 0;
 
     // Map frontend products to backend orderItems & calculate totals
     const orderItems = [];
     let subtotal = 0;
-    let totalDiscount = 0;
 
     for (const item of rawItems) {
       const productId = item.productId || item._id;
-      
+
       if (!productId) {
-        return res.status(400).json({ 
-          success: false, 
-          message: `Product ID missing for item: ${item.name}` 
+        return res.status(400).json({
+          success: false,
+          message: `Product ID missing for item: ${item.name}`,
         });
       }
 
       const product = await Products.findById(productId);
       if (!product) {
-        return res.status(400).json({ 
-          success: false, 
-          message: `Product "${item.name}" not found` 
+        return res.status(400).json({
+          success: false,
+          message: `Product "${item.name}" not found`,
         });
       }
 
       const quantity = Number(item.quantity) || 1;
-      
-      // **CRITICAL FIX: Use the price sent from frontend, not recalculate**
       const price = Number(item.price) || 0;
-      
+
       if (price <= 0) {
         return res.status(400).json({
           success: false,
-          message: `Invalid price for product "${item.name}"`
+          message: `Invalid price for product "${item.name}"`,
         });
       }
 
-      // Calculate item totals based on frontend price
       const itemTotal = price * quantity;
-      
-      // Check stock
+
       if (product.openStock < quantity) {
-        return res.status(400).json({ 
-          success: false, 
-          message: `Insufficient stock for "${item.name}". Available: ${product.openStock}, Requested: ${quantity}` 
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock for "${item.name}". Available: ${product.openStock}, Requested: ${quantity}`,
         });
       }
 
@@ -2627,111 +2921,103 @@ app.post("/api/orders", auth, async (req, res) => {
       orderItems.push({
         productId: product._id,
         name: item.name || product.name,
-        price: price, // Use the price from frontend
-        quantity: quantity,
+        price,
+        quantity,
         originalPrice: product.salesPrice || price,
         image: item.image || product.images?.[0] || "https://via.placeholder.com/150",
         vendorId: product.vendorId,
-        itemTotal: itemTotal,
-        // Include color/size if available
-        color: item.color || 'default',
-        size: item.size || 'One Size'
+        itemTotal,
+        color: item.color || "default",
+        size: item.size || "One Size",
       });
     }
 
-    // **CRITICAL FIX: Use frontend summary OR calculate consistently**
     const orderSummary = {
       itemsCount: orderItems.reduce((acc, item) => acc + item.quantity, 0),
       subtotal: frontendSummary?.subtotal || subtotal,
       discount: frontendSummary?.discount || 0,
       shipping: frontendSummary?.shipping || 0,
       tax: frontendSummary?.tax || 0,
-      total: frontendSummary?.total || (subtotal + (frontendSummary?.shipping || 0)),
-      grandTotal: frontendSummary?.total || (subtotal + (frontendSummary?.shipping || 0))
+      total: frontendSummary?.total || subtotal + (frontendSummary?.shipping || 0),
+      grandTotal: frontendSummary?.total || subtotal + (frontendSummary?.shipping || 0),
     };
 
     console.log("Final order summary:", orderSummary);
 
-    // **ENHANCED PAYMENT HANDLING**
+    // ENHANCED PAYMENT HANDLING
     let paymentStatus = "pending";
     let orderStatus = "pending";
     let upiDetails = null;
     let paymentProofData = null;
 
-    // Handle different payment methods
     switch (paymentDetails?.method) {
       case "cod":
         paymentStatus = "completed";
         orderStatus = "confirmed";
         break;
-        
+
       case "wallet":
         paymentStatus = "completed";
         orderStatus = "confirmed";
         break;
-        
+
       case "upi":
-        // For UPI, require payment proof and set to pending verification
         if (!paymentProof || !paymentDetails?.transactionId) {
           return res.status(400).json({
             success: false,
-            message: "UPI payment requires screenshot and transaction ID"
+            message: "UPI payment requires screenshot and transaction ID",
           });
         }
-        
+
         paymentStatus = "pending_verification";
         orderStatus = "payment_pending";
-        
-        // Create UPI details object
+
         upiDetails = {
           upiId: paymentDetails.upiId || "9177176969-2@ybl",
           screenshot: paymentProof.url || paymentProof.screenshot || paymentProof,
           transactionId: paymentDetails.transactionId,
           verified: false,
-          uploadedAt: new Date()
+          uploadedAt: new Date(),
         };
-        
-        // Create payment proof object
+
         paymentProofData = {
-          type: paymentProof.type || 'upi_screenshot',
+          type: paymentProof.type || "upi_screenshot",
           url: paymentProof.url || paymentProof.screenshot || paymentProof,
           transactionReference: paymentDetails.transactionId,
           upiId: paymentDetails.upiId || "9177176969-2@ybl",
           fileName: paymentProof.fileName || `payment_proof_${Date.now()}`,
           fileSize: paymentProof.fileSize,
-          mimeType: paymentProof.mimeType || 'image/jpeg'
+          mimeType: paymentProof.mimeType || "image/jpeg",
         };
         break;
-        
+
       case "card":
         paymentStatus = "completed";
         orderStatus = "confirmed";
         break;
-        
+
       default:
         paymentStatus = "pending";
         orderStatus = "pending";
     }
 
-    // Create enhanced payment details object
     const enhancedPaymentDetails = {
       method: paymentDetails?.method || "cod",
       status: paymentStatus,
       amount: orderSummary.total,
       transactionId: paymentDetails?.transactionId,
       paymentDate: paymentStatus === "completed" ? new Date() : null,
-      upiDetails: upiDetails,
-      paymentProof: paymentProofData
+      upiDetails,
+      paymentProof: paymentProofData,
     };
 
-    // Create order
     const orderData = {
       userId,
       userDetails: userDetails || {
         userId: req.user._id,
         name: req.user.name || req.user.username,
         email: req.user.email,
-        phone: shippingAddress.phone
+        phone: shippingAddress.phone,
       },
       shippingAddress,
       paymentDetails: enhancedPaymentDetails,
@@ -2739,23 +3025,25 @@ app.post("/api/orders", auth, async (req, res) => {
       orderSummary,
       orderStatus: {
         currentStatus: orderStatus,
-        timeline: [{
-          status: orderStatus,
-          timestamp: new Date(),
-          description: getStatusDescription(orderStatus),
-          updatedBy: 'system'
-        }]
+        timeline: [
+          {
+            status: orderStatus,
+            timestamp: new Date(),
+            description: getStatusDescription(orderStatus),
+            updatedBy: "system",
+          },
+        ],
       },
       deliveryDetails: {
         expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        shippingMethod: "Standard Delivery"
+        shippingMethod: "Standard Delivery",
       },
       metadata: {
         ...metadata,
         isFirstOrder,
-        source: 'cart',
-        requiresPaymentVerification: paymentDetails?.method === 'upi'
-      }
+        source: "cart",
+        requiresPaymentVerification: paymentDetails?.method === "upi",
+      },
     };
 
     const order = new Order(orderData);
@@ -2763,37 +3051,36 @@ app.post("/api/orders", auth, async (req, res) => {
 
     console.log(`Order created with status: ${orderStatus}, Payment: ${paymentStatus}`);
 
-    // **STOCK MANAGEMENT - Only decrement for confirmed orders**
+    // STOCK MANAGEMENT
     if (orderStatus === "confirmed" || paymentStatus === "completed") {
       for (const item of orderItems) {
-        await Products.findByIdAndUpdate(
-          item.productId, 
-          { $inc: { openStock: -item.quantity } }
-        );
+        await Products.findByIdAndUpdate(item.productId, { $inc: { openStock: -item.quantity } });
       }
       console.log("Stock decremented for confirmed order");
     } else {
       console.log("Stock NOT decremented - order pending payment verification");
     }
 
-    // **WALLET DEDUCTION - Only for completed payments**
+    // WALLET DEDUCTION
     if (paymentDetails?.method === "wallet" && paymentStatus === "completed") {
       try {
-        const walletRes = await fetch(`https://api.apexbee.in/api/user/wallet/deduct/${userId}`, {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json", 
-            Authorization: `Bearer ${req.headers.authorization?.split(" ")[1]}` 
-          },
-          body: JSON.stringify({ 
-            amount: orderSummary.total,
-            orderId: order._id 
-          })
-        });
-        
+        const walletRes = await fetch(
+          `https://api.apexbee.in/api/user/wallet/deduct/${userId}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${req.headers.authorization?.split(" ")[1]}`,
+            },
+            body: JSON.stringify({
+              amount: orderSummary.total,
+              orderId: order._id,
+            }),
+          }
+        );
+
         if (!walletRes.ok) {
           console.warn("Wallet deduction failed but order was placed");
-          // Optionally update order status to reflect wallet issue
         } else {
           console.log("Wallet deduction successful");
         }
@@ -2802,56 +3089,85 @@ app.post("/api/orders", auth, async (req, res) => {
       }
     }
 
-    // **REFERRAL REWARD - Only for completed payments**
-    let referralResult = null;
-    if (isFirstOrder && (paymentStatus === "completed" || paymentDetails?.method === "cod")) {
+    /** ✅✅ UPDATED REFERRAL SECTION
+     *  - First purchase commission: L1/L2/L3 ONLY ON FIRST TIME
+     *  - Wish link incentive: can apply on any order if metadata has wish link
+     */
+    const isPaymentDone =
+      paymentStatus === "completed" || paymentDetails?.method === "cod";
+
+    let firstPurchaseCommission = null;
+    let wishLinkIncentive = null;
+
+    if (isPaymentDone) {
+      // 1) First purchase commission (ONLY once, based on Referral table)
       try {
-        referralResult = await completeReferral(userId, orderSummary.total);
-        if (referralResult) {
-          order.metadata.referralCompleted = true;
-          order.metadata.referralId = referralResult._id;
-          order.metadata.rewardAmount = referralResult.rewardAmount;
+        firstPurchaseCommission = await createFirstPurchaseCommission({
+          buyerId: userId,
+          order,
+          orderAmount: orderSummary.total,
+        });
+
+        if (firstPurchaseCommission?.created) {
+          order.metadata.firstPurchaseCommissionCreated = true;
           await order.save();
-          console.log("Referral reward processed");
+          console.log("✅ First purchase commission credited (L1/L2/L3)");
+        } else {
+          console.log("ℹ️ First purchase commission skipped:", firstPurchaseCommission?.reason);
         }
       } catch (err) {
-        console.error("Error completing referral:", err);
+        console.error("❌ First purchase commission error:", err);
+      }
+
+      // 2) Wish link purchase incentive (if metadata has wishLinkOwnerId OR wishLinkReferralCode)
+      try {
+        wishLinkIncentive = await processWishLinkIncentive({
+          buyerId: userId,
+          order,
+          orderAmount: orderSummary.total,
+          metadata: order.metadata,
+        });
+
+        if (wishLinkIncentive?.applied) {
+          order.metadata.wishLinkIncentiveApplied = true;
+          order.metadata.wishLinkIncentiveAmount = wishLinkIncentive.amount;
+          await order.save();
+          console.log("✅ Wish Link incentive credited:", wishLinkIncentive.amount);
+        } else {
+          console.log("ℹ️ Wish Link incentive skipped:", wishLinkIncentive?.reason);
+        }
+      } catch (err) {
+        console.error("❌ Wish Link incentive error:", err);
       }
     }
 
-    // **SEND NOTIFICATIONS**
+    // SEND NOTIFICATIONS
     try {
-      // Notify admin about pending UPI verification
       if (paymentDetails?.method === "upi") {
         await notifyAdminForUPIVerification(order);
       }
-      
-      // Send order confirmation to user
+
       await sendOrderConfirmation(order, req.user);
     } catch (notificationError) {
       console.error("Notification error:", notificationError);
-      // Don't fail the order if notifications fail
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: getOrderSuccessMessage(paymentDetails?.method, paymentStatus),
       order,
-      requiresVerification: paymentDetails?.method === 'upi',
-      referral: isFirstOrder && (paymentStatus === "completed" || paymentDetails?.method === "cod")
-        ? { 
-            completed: !!referralResult, 
-            message: referralResult ? "Referral reward credited!" : "No referral found" 
-          }
-        : null
+      requiresVerification: paymentDetails?.method === "upi",
+      referral: {
+        firstPurchaseCommission,
+        wishLinkIncentive,
+      },
     });
-
   } catch (error) {
     console.error("Error creating order:", error);
-    res.status(500).json({ 
-      success: false, 
+    return res.status(500).json({
+      success: false,
       message: "Server error while creating order",
-      error: error.message 
+      error: error.message,
     });
   }
 });
@@ -4006,130 +4322,125 @@ app.put('/api/user/profile/:userId', auth, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-const processMultiLevelReferralForOrder = async (order) => {
-  // Prevent duplicate processing
-  if (order.metadata?.referralCompleted) {
-    console.log(`Referral already processed for order ${order._id}`);
-    return null;
+async function processFirstPurchaseCommissionL1(order) {
+  const User = mongoose.model("User");
+  const Commission = mongoose.model("Commission");
+
+  const buyerId = order.userId;
+
+  // ✅ already created once for this buyer?
+  const already = await Commission.exists({
+    buyerId,
+    commissionType: "purchase",
+    isFirstPurchase: true,
+    status: "credited",
+    notes: "First purchase commission",
+  });
+
+  if (already) {
+    return { created: false, reason: "already_rewarded" };
   }
 
-  // Ensure both conditions are met for referral
-  const isPaymentCompleted = order.paymentDetails.status === 'completed';
-  const isOrderDelivered = order.orderStatus.currentStatus === 'delivered';
-  
+  const buyer = await User.findById(buyerId).select("referredBy");
+  if (!buyer?.referredBy) return { created: false, reason: "no_referrer" };
+
+  const l1ReferrerId = buyer.referredBy;
+
+  const percent = 10; // ✅ your rule
+  const orderAmount = Number(order?.orderSummary?.total || 0);
+  const amount = (orderAmount * percent) / 100;
+
+  if (!amount || amount <= 0) return { created: false, reason: "invalid_amount" };
+
+  // ✅ create commission
+  await Commission.create({
+    userId: l1ReferrerId,     // receiver
+    buyerId: buyerId,         // ✅ important
+    orderId: order._id,
+    amount,
+    commissionType: "purchase",
+    level: 1,
+    source: "order-commission",
+    percentage: percent,
+    status: "credited",
+    notes: "First purchase commission",
+    isFirstPurchase: true,
+    productCommissionAmount: null,
+  });
+
+  // ✅ credit wallet
+  await User.findByIdAndUpdate(l1ReferrerId, {
+    $inc: { walletBalance: amount, totalEarnings: amount },
+  });
+
+  return { created: true, amount, percent, referrerId: l1ReferrerId };
+}
+
+const processMultiLevelReferralForOrder = async (order) => {
+  const isPaymentCompleted = order.paymentDetails.status === "completed";
+  const isOrderDelivered = order.orderStatus.currentStatus === "delivered";
+
   if (!isPaymentCompleted || !isOrderDelivered) {
-    console.log(`Referral conditions not met for order ${order._id}:`, {
-      paymentStatus: order.paymentDetails.status,
-      orderStatus: order.orderStatus.currentStatus
-    });
     return null;
   }
 
   try {
-    // Count completed AND delivered orders for this user (excluding current order)
-    const completedOrders = await Order.countDocuments({
-      userId: order.userId,
-      "paymentDetails.status": "completed",
-      "orderStatus.currentStatus": "delivered",
-      _id: { $ne: order._id } // Exclude current order
-    });
+    // reload fresh order for safe metadata
+    const Order = mongoose.model("Order");
+    order = await Order.findById(order._id)
+      .populate({ path: "orderItems.productId", select: "name commission finalAmount price" });
 
-    console.log(`Completed orders count for user ${order.userId}: ${completedOrders}`);
+    order.metadata = order.metadata || {};
 
     const allResults = [];
 
-    // Process signup bonuses for first order only
-    if (completedOrders === 0) { // This is the first completed & delivered order
-      console.log(`Processing signup bonus for first completed order ${order._id}`);
-      
-      const signupBonusResult = await completeMultiLevelReferral(
-        order.userId, 
-        order.orderSummary.total
-      );
+    // ✅ 1) Signup bonus (optional)
+    const signupRes = await processSignupBonusIfFirstCompletedDelivered(order);
+    if (signupRes?.applied && signupRes.signupResult) {
+      allResults.push(...signupRes.signupResult);
+    }
 
-      if (signupBonusResult) {
-        allResults.push(...signupBonusResult);
+    // ✅ 2) Purchase commission (every order)
+    const purchaseRes = await processPurchaseCommission(order);
+    if (purchaseRes?.applied && purchaseRes.results?.length) {
+      allResults.push(...purchaseRes.results);
+    }
+
+    // ✅ 3) First purchase commission ONLY L1 (once per buyer)
+    if (!order.metadata.firstPurchaseCommissionProcessed) {
+      const firstRes = await processFirstPurchaseCommissionL1(order);
+
+      order.metadata.firstPurchaseCommissionProcessed = true;
+      order.metadata.firstPurchaseCommissionProcessedAt = new Date();
+      order.metadata.firstPurchaseCommissionAmount = firstRes?.amount || 0;
+      order.metadata.firstPurchaseCommissionStatus = firstRes?.created ? "created" : "skipped";
+      order.metadata.firstPurchaseCommissionReason = firstRes?.reason || null;
+
+      await order.save();
+
+      if (firstRes?.created) {
+        allResults.push({
+          referrer: firstRes.referrerId,
+          level: 1,
+          rewardAmount: firstRes.amount,
+          type: "first-purchase-commission",
+        });
       }
-    } else {
-      console.log(`Not first completed order for user ${order.userId}. Only purchase commissions apply.`);
     }
 
-    // Process purchase commissions for every order
-    console.log(`Processing purchase commissions for order ${order._id}`);
-    const purchaseCommissionResult = await processPurchaseCommission(order);
+    // ✅ summary metadata
+    order.metadata.referralProcessedAt = new Date();
+    order.metadata.totalCommissionPaid = allResults.reduce((s, r) => s + (Number(r.rewardAmount) || 0), 0);
 
-    if (purchaseCommissionResult) {
-      allResults.push(...purchaseCommissionResult);
-    }
+    await order.save();
 
-    if (allResults.length > 0) {
-      // Initialize metadata if not exists
-      order.metadata = order.metadata || {};
-      
-      // Update order with multi-level referral info
-      order.metadata.referralCompleted = true;
-      order.metadata.referralType = 'multi-level';
-      order.metadata.referralProcessedAt = new Date();
-      
-      // Store all commission recipients
-      order.metadata.commissionRecipients = allResults.map(result => ({
-        userId: result.referrer,
-        level: result.level,
-        amount: result.rewardAmount,
-        type: result.type || 'signup-bonus'
-      }));
-      
-      // Calculate totals by type
-      const signupBonuses = allResults.filter(r => !r.type || r.type === 'signup-bonus');
-      const purchaseCommissions = allResults.filter(r => r.type === 'purchase-commission');
-      
-      order.metadata.totalCommissionPaid = allResults.reduce((sum, r) => sum + r.rewardAmount, 0);
-      order.metadata.signupBonusTotal = signupBonuses.reduce((sum, r) => sum + r.rewardAmount, 0);
-      order.metadata.purchaseCommissionTotal = purchaseCommissions.reduce((sum, r) => sum + r.rewardAmount, 0);
-      order.metadata.directCommission = allResults.find(r => r.level === 1)?.rewardAmount || 0;
-      order.metadata.indirectCommission = allResults.filter(r => r.level === 2 || r.level === 3).reduce((sum, r) => sum + r.rewardAmount, 0);
-      
-      // Calculate level-wise totals for purchase commissions
-      const level1Commissions = purchaseCommissions.filter(r => r.level === 1);
-      const level2Commissions = purchaseCommissions.filter(r => r.level === 2);
-      const level3Commissions = purchaseCommissions.filter(r => r.level === 3);
-      
-      order.metadata.purchaseCommissionLevel1 = level1Commissions.reduce((sum, r) => sum + r.rewardAmount, 0);
-      order.metadata.purchaseCommissionLevel2 = level2Commissions.reduce((sum, r) => sum + r.rewardAmount, 0);
-      order.metadata.purchaseCommissionLevel3 = level3Commissions.reduce((sum, r) => sum + r.rewardAmount, 0);
-      
-      // Save order with updated metadata
-      await Order.findByIdAndUpdate(order._id, {
-        $set: {
-          'metadata': order.metadata,
-          'updatedAt': new Date()
-        }
-      });
-      
-      console.log(`✅ Multi-level referral processed for order ${order._id}`, {
-        totalResults: allResults.length,
-        signupBonuses: signupBonuses.length,
-        purchaseCommissions: purchaseCommissions.length,
-        totalCommission: order.metadata.totalCommissionPaid,
-        signupBonusTotal: order.metadata.signupBonusTotal,
-        purchaseCommissionTotal: order.metadata.purchaseCommissionTotal,
-        purchaseByLevel: {
-          level1: order.metadata.purchaseCommissionLevel1,
-          level2: order.metadata.purchaseCommissionLevel2,
-          level3: order.metadata.purchaseCommissionLevel3
-        }
-      });
-      
-      return allResults;
-    } else {
-      console.log(`No commissions to process for order ${order._id}`);
-    }
+    return allResults;
   } catch (err) {
-    console.error(`❌ Multi-level referral processing error for order ${order._id}:`, err);
+    console.error(`❌ processMultiLevelReferralForOrder error:`, err);
+    return null;
   }
-  
-  return null;
 };
+
 
 // ========== FIXED COMPLETE MULTI LEVEL REFERRAL ==========
 const completeMultiLevelReferral = async (userId, orderAmount) => {
@@ -4235,348 +4546,355 @@ const completeMultiLevelReferral = async (userId, orderAmount) => {
 };
 
 // ========== UPDATED PROCESS PURCHASE COMMISSION WITH LEVEL 3 ==========
-const processPurchaseCommission = async (order) => {
-  try {
-    const User = mongoose.model('User');
-    const user = await User.findById(order.userId);
-    
-    if (!user || !user.referredBy) {
-      console.log('User not found or not referred by anyone');
-      return null;
-    }
+async function processPurchaseCommission(order) {
+  const User = mongoose.model("User");
+  const Commission = mongoose.model("Commission");
+  const Products = mongoose.model("Products");
 
-    const results = [];
-    
-    // Calculate total product commission from order items
-    let totalProductCommission = 0;
-    
-    if (order.orderItems && order.orderItems.length > 0) {
-      for (const item of order.orderItems) {
-        // Need to populate product commission if not already populated
-        let product;
-        if (item.productId && typeof item.productId === 'object' && item.productId.commission) {
-          product = item.productId;
-        } else {
-          product = await Products.findById(item.productId).select('commission finalAmount name');
-        }
-        
-        if (product && product.commission) {
-          const itemPrice = item.price || product.finalAmount || 0;
-          const itemCommission = (itemPrice * item.quantity * product.commission) / 100;
-          totalProductCommission += itemCommission;
-          
-          console.log(`Product ${product.name} commission: ${product.commission}% of ₹${itemPrice} × ${item.quantity} = ₹${itemCommission}`);
-        }
-      }
-    }
-    
-    console.log(`Total product commission available: ₹${totalProductCommission}`);
-    
-    // If no product commission found in items, use default 5% of order
-    if (totalProductCommission <= 0 && order.orderSummary?.total > 0) {
-      console.log('No product commission found, using default 5% of order');
-      totalProductCommission = order.orderSummary.total * 0.05;
-    }
-    
-    // If we have commission to distribute
-    if (totalProductCommission > 0) {
-      let currentUserId = user.referredBy;
-      let level = 1;
-      
-      // Calculate purchase commissions for up to 3 levels
-      while (currentUserId && level <= 3) {
-        const referrer = await User.findById(currentUserId);
-        if (!referrer) break;
-        
-        let commissionPercentage = 0;
-        if (level === 1) {
-          commissionPercentage = 0.10; // 10% of product commission for Level 1 (direct referrer)
-        } else if (level === 2) {
-          commissionPercentage = 0.05; // 5% of product commission for Level 2
-        } else if (level === 3) {
-          commissionPercentage = 0.05; // 5% of product commission for Level 3 (NEW)
-        }
-        
-        const commissionAmount = totalProductCommission * commissionPercentage;
-        
-        if (commissionAmount > 0) {
-          // Credit commission to referrer's wallet
-          await User.findByIdAndUpdate(referrer._id, {
-            $inc: {
-              walletBalance: commissionAmount,
-              totalEarnings: commissionAmount
-            }
-          });
-          
-          // Create commission record
-          await Commission.create({
-            userId: referrer._id,
-            orderId: order._id,
-            amount: commissionAmount,
-            commissionType: 'purchase',
-            level: level,
-            source: 'product-commission',
-            percentage: commissionPercentage * 100,
-            productCommissionAmount: totalProductCommission,
-            status: 'credited',
-            notes: `From order ${order.orderNumber || order._id}`
-          });
-          
-          results.push({
-            referrer: referrer._id,
-            level: level,
-            rewardAmount: commissionAmount,
-            type: 'purchase-commission',
-            percentage: commissionPercentage * 100,
-            fromProductCommission: totalProductCommission
-          });
-          
-          console.log(`✅ Purchase commission credited: Level ${level}, ${commissionPercentage * 100}% of ₹${totalProductCommission} = ₹${commissionAmount} to user ${referrer._id}`);
-        }
-        
-        // Move to next level
-        currentUserId = referrer.referredBy;
-        level++;
-      }
-    }
-    
-    return results;
-  } catch (error) {
-    console.error('Error processing purchase commission:', error);
-    return null;
+  // ✅ prevent duplicate per order (purchase commission)
+  if (order.metadata?.purchaseCommissionProcessed) {
+    return { applied: false, reason: "already_processed" };
   }
-};
 
-app.put('/api/admin/orders/:orderId/status', async (req, res) => {
+  const buyer = await User.findById(order.userId).select("referredBy");
+  if (!buyer?.referredBy) return { applied: false, reason: "no_upline" };
+
+  // 1) Calculate total product commission pool
+  let totalProductCommission = 0;
+
+  for (const item of order.orderItems || []) {
+    let product = null;
+
+    if (item.productId && typeof item.productId === "object" && item.productId.commission != null) {
+      product = item.productId;
+    } else {
+      product = await Products.findById(item.productId).select("commission finalAmount name");
+    }
+
+    const commissionPercent = Number(product?.commission || 0);
+    if (commissionPercent <= 0) continue;
+
+    const price = Number(item.price || product.finalAmount || 0);
+    const qty = Number(item.quantity || 1);
+
+    const itemCommission = (price * qty * commissionPercent) / 100;
+    totalProductCommission += itemCommission;
+  }
+
+  // fallback if no product commissions
+  if (totalProductCommission <= 0) {
+    const total = Number(order?.orderSummary?.total || 0);
+    totalProductCommission = total * 0.05; // fallback 5%
+  }
+
+  if (totalProductCommission <= 0) return { applied: false, reason: "no_commission_pool" };
+
+  // 2) Distribute to upline up to 3 levels
+  const percents = { 1: 10, 2: 5, 3: 5 }; // ✅ your rule
+  const results = [];
+
+  let currentReferrerId = buyer.referredBy;
+  let level = 1;
+
+  while (currentReferrerId && level <= 3) {
+    const referrer = await User.findById(currentReferrerId).select("_id referredBy");
+    if (!referrer) break;
+
+    const pct = percents[level];
+    const amount = (totalProductCommission * pct) / 100;
+
+    if (amount > 0) {
+      // ✅ create Commission row (NOT isFirstPurchase)
+      await Commission.create({
+        userId: referrer._id,
+        buyerId: order.userId,     // ✅ track buyer
+        orderId: order._id,
+        amount,
+        commissionType: "purchase",
+        level,
+        source: "product-commission",
+        percentage: pct,
+        productCommissionAmount: totalProductCommission,
+        status: "credited",
+        notes: `From order ${order.orderNumber || order._id}`,
+        isFirstPurchase: false,
+      });
+
+      await User.findByIdAndUpdate(referrer._id, {
+        $inc: { walletBalance: amount, totalEarnings: amount },
+      });
+
+      results.push({ referrer: referrer._id, level, rewardAmount: amount, type: "purchase-commission" });
+    }
+
+    currentReferrerId = referrer.referredBy;
+    level++;
+  }
+
+  // ✅ mark processed
+  order.metadata = order.metadata || {};
+  order.metadata.purchaseCommissionProcessed = true;
+  order.metadata.purchaseCommissionProcessedAt = new Date();
+
+  await order.save();
+
+  return { applied: true, totalProductCommission, results };
+}
+async function processSignupBonusIfFirstCompletedDelivered(order) {
+  const Order = mongoose.model("Order");
+
+  if (order.metadata?.signupBonusProcessed) {
+    return { applied: false, reason: "already_processed" };
+  }
+
+  const buyerId = order.userId;
+
+  // ✅ count previous delivered+paid orders excluding current
+  const previous = await Order.countDocuments({
+    userId: buyerId,
+    "paymentDetails.status": "completed",
+    "orderStatus.currentStatus": "delivered",
+    _id: { $ne: order._id },
+  });
+
+  if (previous !== 0) {
+    return { applied: false, reason: "not_first_completed_delivered" };
+  }
+
+  // ✅ your existing pending referral logic
+  const signupResult = await completeMultiLevelReferral(buyerId, order.orderSummary.total);
+
+  order.metadata = order.metadata || {};
+  order.metadata.signupBonusProcessed = true;
+  order.metadata.signupBonusProcessedAt = new Date();
+  await order.save();
+
+  return { applied: true, signupResult };
+}
+
+
+// ✅ Admin: Update ORDER STATUS
+app.put("/api/admin/orders/:orderId/status", async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { status } = req.body;
+    const { status, note } = req.body;
 
     if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status is required'
-      });
+      return res.status(400).json({ success: false, message: "Status is required" });
     }
 
     const validStatuses = [
-      'pending', 'confirmed', 'processing',
-      'shipped', 'out_for_delivery',
-      'delivered', 'cancelled', 'returned'
+      "pending",
+      "confirmed",
+      "processing",
+      "shipped",
+      "out_for_delivery",
+      "delivered",
+      "cancelled",
+      "returned",
     ];
 
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status. Valid statuses: ' + validStatuses.join(', ')
+        message: "Invalid status. Valid statuses: " + validStatuses.join(", "),
       });
     }
 
     const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
+    const previousStatus = order.orderStatus?.currentStatus;
 
-    const previousStatus = order.orderStatus.currentStatus;
-
-    // Update order status
-    const updatedOrder = await Order.findByIdAndUpdate(
+    // ✅ Update order status
+    await Order.findByIdAndUpdate(
       orderId,
       {
         $set: {
-          'orderStatus.currentStatus': status,
-          'updatedAt': new Date()
+          "orderStatus.currentStatus": status,
+          updatedAt: new Date(),
         },
         $push: {
-          'orderStatus.history': {
+          "orderStatus.history": {
             status,
             changedAt: new Date(),
-            notes: `Status changed from ${previousStatus} to ${status}`,
-            changedBy: 'admin'
-          }
-        }
+            notes: note || `Status changed from ${previousStatus} to ${status}`,
+            changedBy: "admin",
+          },
+        },
       },
       { new: true, runValidators: true }
     );
 
-    if (!updatedOrder) {
-      throw new Error('Failed to update order');
-    }
-
-    // ============= MULTI-LEVEL REFERRAL TRIGGER WHEN ORDER DELIVERED =============
+    // ✅ If delivered: set deliveredAt + actualDeliveryDate
     if (status === "delivered") {
-      // Update delivery details
       await Order.findByIdAndUpdate(orderId, {
         $set: {
-          'deliveryDetails.actualDeliveryDate': new Date(),
-          'deliveredAt': new Date()
-        }
+          "deliveryDetails.actualDeliveryDate": new Date(),
+          deliveredAt: new Date(),
+          updatedAt: new Date(),
+        },
       });
 
-      // Auto verify payment if still pending verification
-      if (order.paymentDetails.status === "pending_verification" ||
-          order.paymentDetails.status === "requires_verification") {
+      // ✅ IMPORTANT: DO NOT auto-mark payment completed here
+      // Payment should be verified via payment-status endpoint.
+      // Otherwise you will credit commissions for unpaid UPI orders.
+      // If you still want auto-complete ONLY for COD, keep below block:
+      const fresh = await Order.findById(orderId).select("paymentDetails metadata userId");
+
+      const isCOD = fresh?.paymentDetails?.method === "cod";
+      const isAlreadyPaid = fresh?.paymentDetails?.status === "completed";
+
+      if (isCOD && !isAlreadyPaid) {
         await Order.findByIdAndUpdate(orderId, {
           $set: {
-            'paymentDetails.status': "completed",
-            'paymentDetails.paymentDate': new Date()
-          }
+            "paymentDetails.status": "completed",
+            "paymentDetails.paymentDate": new Date(),
+            updatedAt: new Date(),
+          },
         });
-        console.log(`Auto-updated payment status to completed for order ${orderId}`);
       }
 
-      // Check if payment is completed to process multi-level referral
-      const updatedOrderWithPayment = await Order.findById(orderId);
-      
-      if (updatedOrderWithPayment.paymentDetails.status === "completed") {
-        console.log(`Processing referral for delivered order ${orderId}`);
-        
+      // ✅ Trigger referral ONLY when BOTH: delivered + payment completed
+      const ready = await Order.findById(orderId)
+        .populate({ path: "orderItems.productId", select: "name commission finalAmount price" })
+        .populate("userId", "name email phone");
+
+      const isPaymentCompleted = ready?.paymentDetails?.status === "completed";
+      const isOrderDelivered = ready?.orderStatus?.currentStatus === "delivered";
+
+      if (isPaymentCompleted && isOrderDelivered) {
         try {
-          // Populate product details for commission calculation
-          const populatedOrder = await Order.findById(orderId)
-            .populate({
-              path: 'orderItems.productId',
-              select: 'name commission finalAmount price'
-            })
-            .populate('userId', 'name email phone');
-          
-          if (populatedOrder) {
-            const referralResult = await processMultiLevelReferralForOrder(populatedOrder);
-            if (referralResult) {
-              console.log(`✅ Referral processed for order ${orderId}: ${referralResult.length} commissions`);
-            }
-          }
-        } catch (referralError) {
-          console.error(`❌ Error processing referral for order ${orderId}:`, referralError);
+          const referralResult = await processMultiLevelReferralForOrder(ready);
+          console.log(`✅ Referral processed for order ${orderId}:`, referralResult?.length || 0);
+        } catch (e) {
+          console.error(`❌ Referral error for delivered order ${orderId}:`, e);
         }
+      } else {
+        console.log(`ℹ️ Referral skipped for order ${orderId} (not ready):`, {
+          paymentStatus: ready?.paymentDetails?.status,
+          orderStatus: ready?.orderStatus?.currentStatus,
+        });
       }
     }
 
-    // Get final updated order - FIXED POPULATION
+    // ✅ Return final updated order
     const finalOrder = await Order.findById(orderId)
-      .populate('userId', 'name email phone')
-      .populate('orderItems.productId', 'name sku commission')
-      .populate('metadata.commissionRecipients.userId', 'name email'); // This should now work
+      .populate("userId", "name email phone")
+      .populate("orderItems.productId", "name sku commission");
 
     return res.json({
       success: true,
       message: `Order status updated to ${status}`,
-      order: finalOrder
+      order: finalOrder,
     });
-
   } catch (error) {
     console.error("Update status error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 });
-// ========== UPDATED PAYMENT STATUS ENDPOINT ==========
-app.put('/api/admin/orders/:orderId/payment-status', async (req, res) => {
+
+
+// ✅ Admin: Update PAYMENT STATUS
+app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { status } = req.body;
-
-    console.log(`Updating payment status for order ${orderId} to ${status}`);
+    const { status, note } = req.body;
 
     if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payment status is required'
-      });
+      return res.status(400).json({ success: false, message: "Payment status is required" });
     }
 
     const validPaymentStatuses = [
-      'pending', 'processing', 'completed',
-      'failed', 'refunded', 'partially_refunded',
-      'pending_verification', 'requires_verification'
+      "pending",
+      "processing",
+      "completed",
+      "failed",
+      "refunded",
+      "partially_refunded",
+      "pending_verification",
+      "requires_verification",
     ];
 
     if (!validPaymentStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid payment status. Valid statuses: ' + validPaymentStatuses.join(', ')
+        message: "Invalid payment status. Valid statuses: " + validPaymentStatuses.join(", "),
       });
     }
 
     const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
+    const previousPaymentStatus = order.paymentDetails?.status;
 
-    const previousPaymentStatus = order.paymentDetails.status;
-
-    // Update payment status
+    // ✅ Update payment status
     const updateData = {
       $set: {
-        'paymentDetails.status': status,
-        'updatedAt': new Date()
-      }
+        "paymentDetails.status": status,
+        updatedAt: new Date(),
+      },
+      $push: {
+        "paymentDetails.history": {
+          status,
+          changedAt: new Date(),
+          notes: note || `Payment status changed from ${previousPaymentStatus} to ${status}`,
+          changedBy: "admin",
+        },
+      },
     };
 
     if (status === "completed") {
-      updateData.$set['paymentDetails.paymentDate'] = new Date();
-      updateData.$set['requiresVerification'] = false;
+      updateData.$set["paymentDetails.paymentDate"] = new Date();
+      updateData.$set["requiresVerification"] = false;
     } else if (status === "pending_verification" || status === "requires_verification") {
-      updateData.$set['requiresVerification'] = true;
+      updateData.$set["requiresVerification"] = true;
     }
 
-    const updatedOrder = await Order.findByIdAndUpdate(
-      orderId,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    const updatedOrder = await Order.findByIdAndUpdate(orderId, updateData, {
+      new: true,
+      runValidators: true,
+    });
 
-    if (!updatedOrder) {
-      throw new Error('Failed to update order');
-    }
+    // ✅ Trigger referral ONLY when BOTH: payment completed + delivered
+    const ready = await Order.findById(orderId)
+      .populate({ path: "orderItems.productId", select: "name commission finalAmount price" })
+      .populate("userId", "name email phone");
 
-    // Check if order is delivered to process multi-level referral
-    if (status === "completed" && order.orderStatus.currentStatus === "delivered") {
-      console.log(`Payment completed and order delivered for ${orderId}, processing referral`);
-      
+    const isPaymentCompleted = ready?.paymentDetails?.status === "completed";
+    const isOrderDelivered = ready?.orderStatus?.currentStatus === "delivered";
+
+    if (status === "completed" && isOrderDelivered) {
       try {
-        // Populate product details
-        const populatedOrder = await Order.findById(orderId)
-          .populate({
-            path: 'orderItems.productId',
-            select: 'name commission finalAmount price'
-          });
-        
-        if (populatedOrder) {
-          const referralResult = await processMultiLevelReferralForOrder(populatedOrder);
-          if (referralResult) {
-            console.log(`✅ Referral processed: ${referralResult.length} commissions`);
-          }
-        }
-      } catch (referralError) {
-        console.error(`❌ Error processing referral:`, referralError);
+        const referralResult = await processMultiLevelReferralForOrder(ready);
+        console.log(`✅ Referral processed for order ${orderId}:`, referralResult?.length || 0);
+      } catch (e) {
+        console.error(`❌ Referral error for payment completed order ${orderId}:`, e);
       }
+    } else {
+      console.log(`ℹ️ Referral skipped for order ${orderId} (not ready):`, {
+        paymentStatus: ready?.paymentDetails?.status,
+        orderStatus: ready?.orderStatus?.currentStatus,
+      });
     }
 
     return res.json({
       success: true,
       message: `Payment status updated to ${status}`,
       order: updatedOrder,
-      previousStatus: previousPaymentStatus
+      previousStatus: previousPaymentStatus,
+      referralTriggered: status === "completed" && isOrderDelivered,
     });
-
   } catch (error) {
     console.error("Update payment status error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -5451,7 +5769,6 @@ app.post('/api/orders/:id/verify-payment', auth, async (req, res) => {
   }
 });
 
-// Get orders pending verification (admin endpoint)
 app.get('/api/orders/pending-verification', auth, async (req, res) => {
   try {
     const orders = await Order.find({
@@ -5478,7 +5795,4 @@ app.get('/api/orders/pending-verification', auth, async (req, res) => {
 
 app.use("/uploads", express.static("uploads"));
 
-// ----------------------
-// START SERVER
-// ----------------------
 app.listen(5000, () => console.log("Server running on port 5000"));

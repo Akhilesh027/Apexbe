@@ -1,18 +1,21 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { Eye, EyeOff, Loader2, ShieldCheck, Mail } from "lucide-react";
+import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 
 const API_BASE = "https://api.apexbee.in/api";
 
-const Login = () => {
+const Register = () => {
   const [formData, setFormData] = useState({
+    name: "",
     email: "",
+    phone: "",
     password: "",
+    referralCode: "",
   });
 
   const [error, setError] = useState("");
@@ -23,12 +26,17 @@ const Login = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // Referral support
   const urlReferralCode = searchParams.get("ref");
+
+  useEffect(() => {
+    if (urlReferralCode) {
+      setFormData((prev) => ({ ...prev, referralCode: urlReferralCode }));
+    }
+  }, [urlReferralCode]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((p) => ({ ...p, [name]: value }));
     setError("");
   };
 
@@ -38,24 +46,32 @@ const Login = () => {
     setLoading(true);
 
     try {
-      if (!formData.email || !formData.password) {
-        setError("Please enter both email and password.");
+      if (!formData.name || !formData.email || !formData.phone || !formData.password) {
+        setError("Please fill in all required fields.");
         return;
       }
 
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      if (formData.password.length < 6) {
+        setError("Password must be at least 6 characters long.");
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          name: formData.name,
           email: formData.email,
+          phone: formData.phone,
           password: formData.password,
+          referralCode: formData.referralCode || undefined,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data?.error || "Login failed.");
+        setError(data?.error || "Registration failed. Please try again.");
         return;
       }
 
@@ -63,13 +79,13 @@ const Login = () => {
       localStorage.setItem("token", data.token);
 
       toast({
-        title: "Welcome back!",
-        description: "You have successfully logged in.",
+        title: "Account created!",
+        description: "Your account has been created successfully.",
       });
 
       setTimeout(() => navigate("/"), 800);
     } catch (err) {
-      console.error("Login error:", err);
+      console.error("Register error:", err);
       setError("Server error, try again later.");
     } finally {
       setLoading(false);
@@ -80,7 +96,7 @@ const Login = () => {
     <div className="min-h-screen bg-background">
       <Navbar />
 
-      {/* Hero */}
+      {/* Hero (same style/background as Login) */}
       <section className="relative overflow-hidden bg-navy-dark">
         <div className="absolute inset-0 opacity-20">
           <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full bg-accent blur-3xl" />
@@ -89,66 +105,58 @@ const Login = () => {
 
         <div className="relative container mx-auto px-4 py-14">
           <div className="max-w-5xl mx-auto grid lg:grid-cols-2 gap-10 items-center">
-            {/* Left info */}
+            {/* Left info (match login tone) */}
             <div className="text-white">
               <div className="inline-flex items-center gap-2 bg-white/10 border border-white/15 px-3 py-1 rounded-full text-sm">
                 <ShieldCheck className="w-4 h-4" />
-                Secure login • Encrypted sessions
+                Create account • Secure signup
               </div>
 
               <h1 className="text-3xl md:text-4xl font-bold mt-5 leading-tight">
-                Welcome back to ApexBee
+                Create your ApexBee account
               </h1>
 
               <p className="text-white/80 mt-3 max-w-md">
-                Access your dashboard, manage referrals, track rewards, and
-                explore everything waiting for you inside your account.
+                Set up your profile, access member features, and start tracking your
+                activity in one place.
               </p>
 
               <ul className="mt-6 space-y-3 text-sm text-white/90">
-                <li className="flex items-center gap-2">
-                  ✅ Private & protected account access
-                </li>
-                <li className="flex items-center gap-2">
-                  ✅ Track referrals and performance
-                </li>
-                <li className="flex items-center gap-2">
-                  ✅ Personalized tools & insights
-                </li>
+                <li className="flex items-center gap-2">✅ Quick signup in under a minute</li>
+                <li className="flex items-center gap-2">✅ Secure access with token-based login</li>
+                <li className="flex items-center gap-2">✅ Referral support built-in</li>
               </ul>
 
               {urlReferralCode && (
                 <div className="mt-7 p-4 rounded-xl bg-white/10 border border-white/15">
                   <p className="text-sm text-white/90">
-                    You arrived through a referral invitation. New here? Create
-                    an account to get started with your friend.
+                    Referral detected! Your code will be applied automatically when you sign up.
                   </p>
-
-                  <Link
-                    to={`/register?ref=${encodeURIComponent(urlReferralCode)}`}
-                    className="inline-block mt-3 text-sm font-semibold text-white underline underline-offset-4"
-                  >
-                    Create your account with referral →
-                  </Link>
+                  <p className="text-xs text-white/70 mt-2">
+                    Code: <span className="font-semibold text-white">{urlReferralCode}</span>
+                  </p>
                 </div>
               )}
             </div>
 
-            {/* Right card */}
+            {/* Right card (same structure as login card) */}
             <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
               <div className="p-6 md:p-8">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-xl font-semibold text-navy">
-                    Welcome Back
-                  </h2>
-                  <div className="flex gap-2 text-sm text-muted-foreground">
-                    <Mail className="w-4 h-4" />
-                    Email Login
-                  </div>
+                  <h2 className="text-xl font-semibold text-navy">Create Account</h2>
+                  {urlReferralCode ? (
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">
+                      Referral Applied
+                    </span>
+                  ) : (
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-secondary/60 text-muted-foreground border border-gray-200">
+                      New User
+                    </span>
+                  )}
                 </div>
 
                 <p className="text-sm text-muted-foreground mt-2">
-                  Enter your email and password to continue.
+                  Enter your details to get started.
                 </p>
 
                 <form onSubmit={handleSubmit} className="mt-6">
@@ -163,6 +171,16 @@ const Login = () => {
 
                   <div className="space-y-3">
                     <Input
+                      type="text"
+                      name="name"
+                      placeholder="Full name"
+                      value={formData.name}
+                      onChange={handleInputChange}
+                      className="w-full"
+                      required
+                    />
+
+                    <Input
                       type="email"
                       name="email"
                       placeholder="Email address"
@@ -172,17 +190,27 @@ const Login = () => {
                       required
                     />
 
+                    <Input
+                      type="tel"
+                      name="phone"
+                      placeholder="Phone number"
+                      value={formData.phone}
+                      onChange={handleInputChange}
+                      className="w-full"
+                      required
+                    />
+
                     <div className="relative">
                       <Input
                         type={showPassword ? "text" : "password"}
                         name="password"
-                        placeholder="Password"
+                        placeholder="Password (min 6 characters)"
                         value={formData.password}
                         onChange={handleInputChange}
                         className="w-full pr-10"
                         required
+                        minLength={6}
                       />
-
                       <Button
                         type="button"
                         variant="ghost"
@@ -198,14 +226,15 @@ const Login = () => {
                       </Button>
                     </div>
 
-                    <div className="text-right">
-                      <Link
-                        to="/forgot-password"
-                        className="text-sm text-accent hover:underline"
-                      >
-                        Forgot Password?
-                      </Link>
-                    </div>
+                    {/* referral is optional; auto-filled from URL if present */}
+                    <Input
+                      type="text"
+                      name="referralCode"
+                      placeholder="Referral code (optional)"
+                      value={formData.referralCode}
+                      onChange={handleInputChange}
+                      className="w-full"
+                    />
                   </div>
 
                   <Button
@@ -216,26 +245,17 @@ const Login = () => {
                     {loading ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Logging in...
+                        Creating account...
                       </>
                     ) : (
-                      "Login"
+                      "Create Account"
                     )}
                   </Button>
 
                   <div className="text-center text-sm mt-6">
-                    <span className="text-muted-foreground">New here? </span>
-                    <Link
-                      to={
-                        urlReferralCode
-                          ? `/register?ref=${encodeURIComponent(
-                              urlReferralCode
-                            )}`
-                          : "/register"
-                      }
-                      className="text-accent hover:underline font-medium"
-                    >
-                      Create an account
+                    <span className="text-muted-foreground">Already have an account? </span>
+                    <Link to="/login" className="text-accent hover:underline font-medium">
+                      Login
                     </Link>
                   </div>
                 </form>
@@ -243,7 +263,7 @@ const Login = () => {
 
               <div className="px-6 md:px-8 py-4 bg-secondary/30 border-t border-gray-200">
                 <p className="text-xs text-muted-foreground text-center">
-                  By continuing, you agree to our Terms & Privacy Policy.
+                  By creating an account, you agree to our Terms & Privacy Policy.
                 </p>
               </div>
             </div>
@@ -269,4 +289,4 @@ const Login = () => {
   );
 };
 
-export default Login;
+export default Register;
