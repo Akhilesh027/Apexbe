@@ -245,7 +245,7 @@ const Referrals = () => {
     // APEX Bonus = only bonuses/incentives (NO purchase commissions)
     const apexBonus = s.signupBonusTotal || 0;
 
-    const totalEarnings = apexWallet + apexBonus + (s.level1FirstPurchaseCommission || 0);
+    const totalEarnings = apexWallet + apexBonus;
     return { apexWallet, apexBonus, totalEarnings };
   };
 
