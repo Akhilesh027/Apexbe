@@ -1009,7 +1009,7 @@ const level1FirstPurchaseCommission = firstDirectPurchaseAgg?.[0]?.totalAmount |
     const totalFirstPurchaseCommission = level1FirstPurchaseCommission;
 
     // ✅ Total earnings (keep full wallet) + bonus
-    const totalEarnings = signupBonusTotal + purchaseCommissionTotal + totalFirstPurchaseCommission;
+    const totalEarnings = signupBonusTotal + purchaseCommissionTotal ;
 
     // ----------------------------------------------------
     // ✅ Recent commissions + pending counts

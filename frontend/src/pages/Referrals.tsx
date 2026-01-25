@@ -934,7 +934,7 @@ const Referrals = () => {
                     <Badge className="bg-green-100 text-green-800 hover:bg-green-100">L1</Badge>
                   </div>
                   <p className="text-2xl font-extrabold text-green-900 mt-2">
-                    Rs. {Math.round(purchaseByLevel.level1 || 0)}
+                    Rs. {Math.round(purchaseByLevel.level1 - stats.level1FirstPurchaseCommission || 0)}
                   </p>
                   <p className="text-xs text-green-700 mt-1">
                     Earned from purchases by your direct referrals
