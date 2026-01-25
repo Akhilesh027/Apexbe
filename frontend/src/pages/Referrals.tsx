@@ -1014,7 +1014,7 @@ const Referrals = () => {
               </div>
             </div>
 
-            {/* ✅ Wish Link purchase incentive */}
+            {/* ✅ Wish Link purchase incentive 
             <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
               <div className="flex items-center justify-between gap-4">
                 <div>
@@ -1030,7 +1030,7 @@ const Referrals = () => {
                   Rs. {Math.round(wishLinkIncentive || 0)}
                 </p>
               </div>
-            </div>
+            </div>*/}
 
             {/* ✅ Signup Bonus (Total) */}
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">

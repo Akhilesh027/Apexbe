@@ -382,12 +382,10 @@ commissionSchema.index({ userId: 1, commissionType: 1, level: 1, createdAt: -1 }
 const Commission = mongoose.model("Commission", commissionSchema);
 
 const generateReferralCode = () => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = '';
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  const prefix = "APX";
+  const randomNumber = Math.floor(1000 + Math.random() * 9000); // 4-digit number
+
+  return `${prefix}-${randomNumber}`;
 };
 
 const createToken = (user) => {
@@ -475,50 +473,48 @@ export const processReferral = async (referredUserId, referralCode) => {
     console.log(`Processing referral for user ${referredUserId} with code ${referralCode}`);
 
     // Find direct referrer
-    const directReferrer = await User.findOne({ referralCode });
+    const directReferrer = await User.findOne({ referralCode }).select("_id referralCode referredBy");
     if (!directReferrer) {
       console.log("Direct referrer not found for code:", referralCode);
-      return null;
+      return { ok: false, reason: "invalid_code" };
     }
 
     // Load referred user
-    const referredUser = await User.findById(referredUserId);
+    const referredUser = await User.findById(referredUserId).select("_id referredBy");
     if (!referredUser) {
       console.log("Referred user not found:", referredUserId);
-      return null;
+      return { ok: false, reason: "referred_user_not_found" };
     }
 
     // Prevent self-referral
     if (String(directReferrer._id) === String(referredUser._id)) {
       console.log("Self referral blocked");
-      return null;
+      return { ok: false, reason: "self_referral" };
     }
 
     // If already has referredBy, don’t re-assign
     if (referredUser.referredBy) {
       console.log("User already has referredBy. Skipping referral assignment.");
-      return {
-        alreadyReferred: true,
-      };
+      return { ok: true, alreadyReferred: true };
     }
 
     // Level 2 parent
     const level2Referrer = directReferrer.referredBy
-      ? await User.findById(directReferrer.referredBy)
+      ? await User.findById(directReferrer.referredBy).select("_id referralCode referredBy")
       : null;
 
     // Level 3 parent
     const level3Referrer = level2Referrer?.referredBy
-      ? await User.findById(level2Referrer.referredBy)
+      ? await User.findById(level2Referrer.referredBy).select("_id referralCode")
       : null;
 
-    // Update referred user record
+    // ✅ Assign tree link to referred user
     await User.findByIdAndUpdate(referredUserId, {
       referredBy: directReferrer._id,
       referralLevel: 1,
     });
 
-    // Build referral chain
+    // Build referral chain (just metadata)
     const referralChain = [
       {
         userId: directReferrer._id,
@@ -549,17 +545,14 @@ export const processReferral = async (referredUserId, referralCode) => {
       });
     }
 
-    // Helper upsert
-    const upsertReferral = async ({
+    // ✅ Helper upsert (ALWAYS pending on register)
+    const upsertReferralPending = async ({
       referrerId,
       level,
       levelName,
       parentReferrerId,
       rewardAmount,
     }) => {
-      // status credited if amount > 0 else pending
-      const status = rewardAmount > 0 ? "credited" : "pending";
-
       return Referral.findOneAndUpdate(
         {
           referrer: referrerId,
@@ -571,39 +564,43 @@ export const processReferral = async (referredUserId, referralCode) => {
           $setOnInsert: {
             referrer: referrerId,
             referredUser: referredUserId,
-            referralCode, // keep SAME code for all levels (simple)
-            status,
+            referralCode, // same code stored
+            status: "pending",               // ✅ ALWAYS pending here
             rewardAmount,
             level,
             levelName,
             isDirect: level === 1,
             parentReferrer: parentReferrerId || null,
+
             commissions: {
               level1: level === 1 ? rewardAmount : 0,
               level2: level === 2 ? rewardAmount : 0,
               level3: level === 3 ? rewardAmount : 0,
               adminCommission: 0,
             },
+
             commissionRecipients: [
               {
                 userId: referrerId,
                 level,
                 amount: rewardAmount,
                 commissionType: "signup-bonus",
-                status: status === "credited" ? "credited" : "pending",
-                creditedAt: status === "credited" ? new Date() : null,
+                status: "pending",           // ✅ pending
+                creditedAt: null,
               },
             ],
+
             referralChain,
-            completedAt: status === "credited" ? new Date() : null,
+            completedAt: null,              // ✅ not completed at register
+            createdAt: new Date(),
           },
         },
         { upsert: true, new: true }
       );
     };
 
-    // Create level 1
-    const directReferral = await upsertReferral({
+    // Create level 1 pending
+    const directReferral = await upsertReferralPending({
       referrerId: directReferrer._id,
       level: 1,
       levelName: "direct",
@@ -611,9 +608,9 @@ export const processReferral = async (referredUserId, referralCode) => {
       rewardAmount: SIGNUP_BONUS_L1,
     });
 
-    // Create level 2
+    // Create level 2 pending
     const level2Referral = level2Referrer
-      ? await upsertReferral({
+      ? await upsertReferralPending({
           referrerId: level2Referrer._id,
           level: 2,
           levelName: "indirect",
@@ -622,9 +619,9 @@ export const processReferral = async (referredUserId, referralCode) => {
         })
       : null;
 
-    // Create level 3
+    // Create level 3 pending
     const level3Referral = level3Referrer
-      ? await upsertReferral({
+      ? await upsertReferralPending({
           referrerId: level3Referrer._id,
           level: 3,
           levelName: "sub-indirect",
@@ -633,28 +630,31 @@ export const processReferral = async (referredUserId, referralCode) => {
         })
       : null;
 
-    // ✅ Recalculate counts/arrays properly (avoid manual $inc mismatch)
+    // ✅ Update counts (optional)
     await directReferrer.updateLevelCounts();
     if (level2Referrer) await level2Referrer.updateLevelCounts();
     if (level3Referrer) await level3Referrer.updateLevelCounts();
 
-    console.log("✅ Referral processing complete", {
+    console.log("✅ Referral processing complete (PENDING signup bonuses)", {
       direct: !!directReferral,
       level2: !!level2Referral,
       level3: !!level3Referral,
     });
 
     return {
+      ok: true,
       directReferral,
       level2Referral,
       level3Referral,
       referralChain,
+      referredBy: directReferrer._id,
     };
   } catch (error) {
     console.error("❌ Error processing referral:", error);
-    return null;
+    return { ok: false, reason: "server_error" };
   }
 };
+
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, phone, password, referralCode } = req.body;
@@ -4347,7 +4347,7 @@ async function processFirstPurchaseCommissionL1(order) {
   const l1ReferrerId = buyer.referredBy;
 
   const percent = 10; // ✅ your rule
-  const orderAmount = Number(order?.orderSummary?.total || 0);
+  const orderAmount = Number(order?.orderSummary?.total - order?.orderSummary?.shipping || 0);
   const amount = (orderAmount * percent) / 100;
 
   if (!amount || amount <= 0) return { created: false, reason: "invalid_amount" };
