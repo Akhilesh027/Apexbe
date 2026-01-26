@@ -46,10 +46,12 @@ app.post("/api/register", async (req, res) => {
       cell,
       password,
       confirmPassword,
-      address = {}, // street, city, state, zip, country
+      address = {}, // street, city, state, zip OR pincode, country
     } = req.body;
 
-    // Validate required fields
+    // -----------------------
+    // Validation
+    // -----------------------
     if (!name || !email || !cell || !password || !confirmPassword) {
       return res.status(400).json({ error: "All fields are required" });
     }
@@ -58,39 +60,63 @@ app.post("/api/register", async (req, res) => {
       return res.status(400).json({ error: "Passwords do not match" });
     }
 
+    // Normalize email
+    const normalizedEmail = email.toLowerCase().trim();
+
     // Check if email already exists
-    const existingVendor = await Vendor.findOne({ email });
+    const existingVendor = await Vendor.findOne({ email: normalizedEmail });
     if (existingVendor) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // Hash the password
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new vendor
+    // -----------------------
+    // Extract PINCODE
+    // -----------------------
+    const pincode =
+      address.pincode ||
+      address.zip || // backward compatibility
+      "";
+
+    // -----------------------
+    // Create Vendor
+    // -----------------------
     const vendor = new Vendor({
-      name,
-      email,
-      cell,
+      name: name.trim(),
+      email: normalizedEmail,
+      cell: cell.trim(),
       password: hashedPassword,
+
       address: {
-        street: address.street || "",
-        city: address.city || "",
-        state: address.state || "",
-        zip: address.zip || "",
-        country: address.country || "",
+        street: address.street?.trim() || "",
+        city: address.city?.trim() || "",
+        state: address.state?.trim() || "",
+        pincode: String(pincode).trim(), // ✅ stored ONLY here
+        country: address.country?.trim() || "India",
       },
-      status: "pending", // default status
+
+      status: "pending",
     });
 
     await vendor.save();
 
-    return res.json({ message: "Registration successful", vendorId: vendor._id });
+    return res.json({
+      success: true,
+      message: "Registration successful",
+      vendorId: vendor._id,
+    });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server Error" });
+    console.error("Vendor register error:", err);
+
+    return res.status(500).json({
+      success: false,
+      error: "Server Error",
+    });
   }
 });
+
 // ----------------------
 // LOGIN VENDOR
 // ----------------------
@@ -141,6 +167,71 @@ app.post("/api/login", async (req, res) => {
     return res.status(500).json({ error: "Server Error" });
   }
 });
+app.get("/api/business/by-pincode", async (req, res) => {
+  try {
+    const { pincode, limit = 50 } = req.query;
+
+    if (!pincode) {
+      return res.status(400).json({
+        success: false,
+        message: "pincode is required",
+      });
+    }
+
+    const businesses = await Bussiness.find({
+      status: "approved",
+      pinCode: String(pincode).trim(),
+    })
+      .select(
+        "businessName phone email logo address city state pinCode businessTypes industryType createdAt"
+      )
+      .sort({ createdAt: -1 })
+      .limit(Math.min(Number(limit), 100))
+      .lean();
+
+    return res.json({
+      success: true,
+      count: businesses.length,
+      data: businesses,
+    });
+  } catch (err) {
+    console.error("GET business by pincode error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+app.get("/api/business/:id", async (req, res) => {
+  try {
+    const business = await Bussiness.findById(req.params.id).lean();
+    if (!business) return res.status(404).json({ success: false, message: "Store not found" });
+
+    res.json({ success: true, data: business });
+  } catch (e) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+app.get("/api/products/vendor/:vendorId", async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    const products = await Products.find({
+      vendorId,
+      status: { $in: ["Approved", "Admin Approved"] },
+    })
+      .populate("category", "name image") // to show category name
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ success: true, data: products });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // GET /api/vendor/:vendorId
 app.get("/api/vendor/:vendorId", async (req, res) => {
   try {

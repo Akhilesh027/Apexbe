@@ -1132,15 +1132,7 @@ const Referrals = () => {
               </p>
             </div>
 
-            <div className="rounded-2xl border bg-white p-4">
-              <p className="text-xs text-muted-foreground">First Purchase (Level 1 only)</p>
-              <p className="text-2xl font-extrabold text-green-900 mt-1">
-                Rs. {Math.round(stats.level1FirstPurchaseCommission || 0)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-2">
-                One-time commission triggered only when your direct referral makes their very first purchase.
-              </p>
-            </div>
+          
 
             <div className="rounded-2xl border bg-slate-50 p-4">
               <p className="text-xs text-muted-foreground">Total Earnings</p>

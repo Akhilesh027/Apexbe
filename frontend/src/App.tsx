@@ -17,7 +17,7 @@ import Vendors from "./pages/Vendors";
 import Cart from "./pages/Cart";
 import MyOrders from "./pages/MyOrders";
 import Sale from "./pages/Sale";
-import SuperVendor from "./pages/SuperVendor";
+import SuperVendor from "./pages/LocalStores";
 import Referrals from "./pages/Referrals";
 import NotFound from "./pages/NotFound";
 import Checkout from "./pages/Checkout";
@@ -25,6 +25,8 @@ import OrderSuccess from "./components/OrderSuccess";
 import Profile from "./pages/Profile";
 import Wishlist from "./pages/Wishlist";
 import Register from "./pages/Register";
+import StorePage from "./pages/Vendors";
+import ProductsPage from "./pages/Product";
 
 const queryClient = new QueryClient();
 
@@ -48,14 +50,15 @@ const App = () => (
           <Route path="/register" element={<Register />} />
 
           <Route path="/account" element={<Account />} />
-          <Route path="/vendors" element={<Vendors />} />
+          <Route path="/business/:id" element={<StorePage />} />
           <Route path="/order-success" element={<OrderSuccess />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/my-orders" element={<MyOrders />} />
           <Route path="/sale" element={<Sale />} />
           <Route path="/profile" element={<Profile />} />
-          <Route path="/super-vendor" element={<SuperVendor />} />
+          <Route path="/products" element={<ProductsPage />} />
+          <Route path="/local-stores" element={<SuperVendor />} />
           <Route path="/referrals" element={<Referrals />} />
 <Route path="/categories" element={<Fashion />} />
 <Route path="/category/:categoryName" element={<Fashion />} />
