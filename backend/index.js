@@ -15,6 +15,9 @@ import Order from "./models/Order.js";
 import Wishlist from "./models/Wishlist.js";
 import Category from "./models/Category.js";
 import Subcategory from "./models/Subcategory.js";
+import BankDetails from "./models/BankDetails.js";
+import Withdrawal from "./models/Withdrawal.js";
+
 import path from "path";
 import fs from "fs";
 
@@ -116,10 +119,6 @@ app.post("/api/register", async (req, res) => {
     });
   }
 });
-
-// ----------------------
-// LOGIN VENDOR
-// ----------------------
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -474,10 +473,12 @@ const Commission = mongoose.model("Commission", commissionSchema);
 
 const generateReferralCode = () => {
   const prefix = "APX";
-  const randomNumber = Math.floor(1000 + Math.random() * 9000); // 4-digit number
+  const roleLetter = "C"; 
+  const randomNumber = Math.floor(10000 + Math.random() * 90000);
 
-  return `${prefix}-${randomNumber}`;
+  return `${prefix}${roleLetter}${randomNumber}`;
 };
+
 
 const createToken = (user) => {
   return jwt.sign(
@@ -1705,6 +1706,310 @@ app.post("/api/referrals/complete", auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to complete referral' });
   }
 });
+// ===============================
+// WALLET - WITHDRAWALS
+// base: /api/wallet
+// ===============================
+// helpers
+const round2 = (n) => {
+  const num = Number(n);
+  if (isNaN(num)) return 0;
+  return Math.round(num * 100) / 100;
+};
+app.get("/api/admin/withdrawals", async (req, res) => {
+  try {
+    const status = (req.query.status || "").toString();
+    const filter = status ? { status } : {};
+
+    const list = await Withdrawal.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .populate("userId", "name email phone referralCode") // ✅ add this
+      .lean();
+
+    return res.json({ withdrawals: list });
+  } catch {
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.get("/api/wallet/withdrawals", auth, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit || "25", 10), 100));
+
+    const withdrawals = await Withdrawal.find({ userId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    return res.json({ withdrawals });
+  } catch (e) {
+    console.error("GET withdrawals error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.post("/api/wallet/withdrawals", auth, async (req, res) => {
+  try {
+    const amount = round2(req.body?.amount);
+    const note = (req.body?.note || "").trim();
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+
+    // ✅ bank details required
+    const bank = await BankDetails.findOne({ userId: req.user.id }).lean();
+    if (!bank) {
+      return res.status(400).json({ message: "Please save your bank details first" });
+    }
+
+    // ✅ user balance check
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const available = Number(user.walletBalance ?? user.purchaseCommissionTotal ?? 0);
+
+    if (amount > available) {
+      return res.status(400).json({ message: "Insufficient wallet balance" });
+    }
+
+    // ✅ Deduct immediately
+    if (user.walletBalance != null) user.walletBalance = round2(available - amount);
+    else if (user.purchaseCommissionTotal != null)
+      user.purchaseCommissionTotal = round2(available - amount);
+
+    await user.save();
+
+    const withdrawal = await Withdrawal.create({
+      userId: req.user.id,
+      amount,
+      note,
+      status: "pending",
+      bankSnapshot: {
+        accountHolderName: bank.accountHolderName,
+        bankName: bank.bankName,
+        accountNumber: bank.accountNumber,
+        ifsc: bank.ifsc,
+        upiId: bank.upiId || "",
+      },
+    });
+
+    return res.status(201).json({ message: "Withdrawal request created", withdrawal });
+  } catch (e) {
+    console.error("POST withdrawals error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+const getWallet = (user) => {
+  if (user.walletBalance != null) return Number(user.walletBalance || 0);
+  if (user.purchaseCommissionTotal != null) return Number(user.purchaseCommissionTotal || 0);
+  return 0;
+};
+
+const setWallet = (user, value) => {
+  const v = round2(value);
+  if (user.walletBalance != null) user.walletBalance = v;
+  else user.purchaseCommissionTotal = v; // fallback
+};
+
+app.patch("/api/admin/withdrawals/:id", async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    const { status, referenceId, rejectReason } = req.body;
+
+    const allowed = ["pending", "approved", "rejected", "paid"];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    await session.withTransaction(async () => {
+      const w = await Withdrawal.findById(req.params.id).session(session);
+      if (!w) throw new Error("NOT_FOUND");
+
+      const prevStatus = w.status;
+
+      // 🚫 don't allow changing paid (optional but safest)
+      if (prevStatus === "paid" && status !== "paid") {
+        throw new Error("CANNOT_CHANGE_PAID");
+      }
+
+      const user = await User.findById(w.userId).session(session);
+      if (!user) throw new Error("USER_NOT_FOUND");
+
+      const amount = round2(w.amount);
+
+      // ✅ Wallet adjustment based on transition
+      // If money was reserved (deducted on POST), then:
+      // - On REJECTED => refund
+      // - On leaving REJECTED => deduct again
+      const wasRejected = prevStatus === "rejected";
+      const willBeRejected = status === "rejected";
+
+      if (!wasRejected && willBeRejected) {
+        // refund back
+        const wallet = getWallet(user);
+        setWallet(user, wallet + amount);
+        await user.save({ session });
+      }
+
+      if (wasRejected && !willBeRejected) {
+        // deduct again (because previously refunded)
+        const wallet = getWallet(user);
+        if (amount > wallet) throw new Error("INSUFFICIENT_WALLET_FOR_REDEDUCT");
+        setWallet(user, wallet - amount);
+        await user.save({ session });
+      }
+
+      // update withdrawal fields
+      w.status = status;
+      w.processedAt = new Date();
+
+      if (referenceId != null) w.referenceId = String(referenceId || "");
+      if (status === "rejected") w.rejectReason = String(rejectReason || "Rejected by admin");
+
+      await w.save({ session });
+    });
+
+    const updated = await Withdrawal.findById(req.params.id).lean();
+    return res.json({ message: "Updated", withdrawal: updated });
+  } catch (e) {
+    const msg = String(e?.message || "");
+
+    if (msg === "NOT_FOUND") return res.status(404).json({ message: "Not found" });
+    if (msg === "USER_NOT_FOUND") return res.status(404).json({ message: "User not found" });
+    if (msg === "CANNOT_CHANGE_PAID") return res.status(400).json({ message: "Paid withdrawals cannot be changed" });
+    if (msg === "INSUFFICIENT_WALLET_FOR_REDEDUCT")
+      return res.status(400).json({ message: "User wallet is not enough to re-apply this withdrawal" });
+
+    return res.status(500).json({ message: "Server error" });
+  } finally {
+    session.endSession();
+  }
+});
+
+// ✅ ADMIN (optional)
+app.get("/api/wallet/admin/withdrawals", auth, async (req, res) => {
+  try {
+    const status = (req.query.status || "").toString();
+    const filter = status ? { status } : {};
+
+    const withdrawals = await Withdrawal.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
+
+    return res.json({ withdrawals });
+  } catch (e) {
+    console.error("ADMIN GET withdrawals error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+app.patch("/api/admin/withdrawals/:id", async (req, res) => {
+  try {
+    const { status, referenceId, rejectReason } = req.body;
+
+    const allowed = ["pending", "approved", "rejected", "paid"];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const w = await Withdrawal.findById(req.params.id);
+    if (!w) return res.status(404).json({ success: false, message: "Withdrawal not found" });
+
+    // ✅ prevent double-processing (important)
+    // Once rejected/paid, don’t allow status changes again (to avoid double refund or weird states)
+    if (["rejected", "paid"].includes(w.status) && w.status !== status) {
+      return res.status(400).json({
+        success: false,
+        message: `This withdrawal is already ${w.status.toUpperCase()} and cannot be changed.`,
+      });
+    }
+
+    // ✅ Option A wallet behavior:
+    // Wallet was deducted at creation, so:
+    // - approved: no wallet change
+    // - paid: no wallet change
+    // - rejected: refund wallet ONCE
+    if (status === "rejected" && w.status !== "rejected") {
+      const user = await User.findById(w.userId);
+      if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+      // refund wallet
+      const current = Number(user.walletBalance || 0);
+      user.walletBalance = round2(current + Number(w.amount || 0));
+      await user.save();
+    }
+
+    // update withdrawal fields
+    w.status = status;
+    w.processedAt = new Date();
+
+    if (referenceId !== undefined) w.referenceId = String(referenceId || "");
+    if (rejectReason !== undefined) w.rejectReason = String(rejectReason || "");
+
+    await w.save();
+
+    return res.json({
+      success: true,
+      message: "Updated",
+      withdrawal: w,
+      // ✅ helpful hint for frontend toast
+      walletDeductedAtCreate: true,
+    });
+  } catch (err) {
+    console.error("Admin withdrawal update error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
+// ===============================
+// USER - BANK DETAILS
+// base: /api/user
+// ===============================
+
+app.get("/api/user/bank-details", auth, async (req, res) => {
+  try {
+    const bankDetails = await BankDetails.findOne({ userId: req.user.id }).lean();
+    return res.json({ bankDetails: bankDetails || null });
+  } catch (e) {
+    console.error("GET bank-details error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ✅ Update bank details (your frontend uses PUT)
+app.put("/api/user/bank-details", auth, async (req, res) => {
+  try {
+    const b = req.body?.bankDetails;
+    if (!b) return res.status(400).json({ message: "bankDetails is required" });
+
+    const accountHolderName = (b.accountHolderName || "").trim();
+    const bankName = (b.bankName || "").trim();
+    const accountNumber = (b.accountNumber || "").trim();
+    const ifsc = (b.ifsc || "").trim().toUpperCase();
+    const upiId = (b.upiId || "").trim();
+
+    if (!accountHolderName || !bankName || !accountNumber || !ifsc) {
+      return res.status(400).json({
+        message: "accountHolderName, bankName, accountNumber, ifsc are required",
+      });
+    }
+
+    const bankDetails = await BankDetails.findOneAndUpdate(
+      { userId: req.user.id },
+      { userId: req.user.id, accountHolderName, bankName, accountNumber, ifsc, upiId },
+      { upsert: true, new: true }
+    ).lean();
+
+    return res.json({ message: "Bank details saved", bankDetails });
+  } catch (e) {
+    console.error("PUT bank-details error:", e);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
 app.get("/api/user/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
@@ -1830,6 +2135,50 @@ app.post("/api/user/wallet/deduct/:userId", auth, async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+app.post("/api/admin/wallet/deduct/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const amount = Number(req.body?.amount);
+    const reason = String(req.body?.reason || "Admin deduction").trim();
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid amount" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const wallet = Number(user.walletBalance || 0);
+
+    if (wallet < amount) {
+      return res.status(400).json({ success: false, message: "Insufficient wallet balance" });
+    }
+
+    // ✅ deduct safely
+    user.walletBalance = Math.round((wallet - amount) * 100) / 100;
+    await user.save();
+
+    // (optional) save audit log
+    await WalletLedger.create({
+      userId,
+      amount: -amount,
+      type: "debit",
+      reason,
+      createdBy: req.user._id,
+    });
+
+    return res.json({
+      success: true,
+      walletBalance: user.walletBalance,
+      message: "Wallet deducted successfully",
+    });
+  } catch (error) {
+    console.error("Admin wallet deduct error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
@@ -1839,7 +2188,6 @@ const storage = new CloudinaryStorage({
     transformation: [{ width: 500, height: 500, crop: "limit" }],
   },
 });
-
 export const upload = multer({ storage });
 
 app.post(

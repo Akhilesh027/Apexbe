@@ -17,6 +17,7 @@ import AddCategory from "./pages/AddCategories";
 import AddSubcategory from "./pages/AddSubCategories";
 import Forms from "./pages/Form";
 import Businesses from "./pages/Bussiness";
+import Withdrow from "./pages/Withdrow";
 
 const queryClient = new QueryClient();
 
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="categories" element={<Categories />} />
             <Route path="categories/add" element={<AddCategory />} />
             <Route path="subcategories" element={<AddSubcategory />} />
+            <Route path="withdrow" element={<Withdrow />} />
             <Route path="users" element={<Users />} />
             <Route path="orders" element={<Orders />} />
             <Route path="payouts" element={<Payouts />} />

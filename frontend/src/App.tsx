@@ -48,7 +48,6 @@ const App = () => (
           <Route path="/product/:id" element={<ProductDetail />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-
           <Route path="/account" element={<Account />} />
           <Route path="/business/:id" element={<StorePage />} />
           <Route path="/order-success" element={<OrderSuccess />} />
@@ -60,8 +59,8 @@ const App = () => (
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/local-stores" element={<SuperVendor />} />
           <Route path="/referrals" element={<Referrals />} />
-<Route path="/categories" element={<Fashion />} />
-<Route path="/category/:categoryName" element={<Fashion />} />
+          <Route path="/categories" element={<Fashion />} />
+          <Route path="/category/:categoryName" element={<Fashion />} />
           <Route path="/wishlist" element={<Wishlist />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -87,16 +87,9 @@ function getSubIcon(name?: string) {
   };
   return iconMap[normalizeName(name)] || "📦";
 }
-
-/** -----------------------------
- * Component
- * ---------------------------- */
 const Category = () => {
   const { categoryName } = useParams();
-
-  // Main screen modes:
-  // 1) showAllCategories = true => grid of categories
-  // 2) showAllCategories = false => category detail + products
+  
   const [showAllCategories, setShowAllCategories] = useState(false);
 
   const [allCategories, setAllCategories] = useState<CategoryType[]>([]);
