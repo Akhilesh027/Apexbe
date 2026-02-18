@@ -4,17 +4,17 @@ import { useNavigate } from "react-router-dom";
 
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import WaveSection from "@/components/WaveSection";
 import LocationModal from "@/components/LocationModal";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-import grocary from "../Web images/Web images/grocary.png";
-
 const API_BASE = "https://api.apexbee.in/api";
 const LOCATION_KEY = "user_location";
 
+/** ---------------------------
+ * Types
+ * -------------------------- */
 type CategoryItem = {
   id: string;
   label: string;
@@ -50,11 +50,47 @@ type Product = {
   itemName?: string;
   name?: string;
   images?: string[];
-  afterDiscount?: number;
-  userPrice?: number;
+  afterDiscount?: number | string | null;
+  userPrice?: number | string | null;
+  discount?: number | string | null;
   rating?: number;
   reviews?: number;
   tag?: string;
+};
+
+/** ---------------------------
+ * Helpers
+ * -------------------------- */
+const onlyDigits = (s: any) => String(s ?? "").replace(/\D/g, "");
+const normPincode = (p: any) => onlyDigits(p).slice(0, 6);
+
+const toNumber = (v: any) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const formatINR = (n: number) => `₹${n.toFixed(2)}`;
+
+/**
+ * ✅ Price logic (Correct)
+ * Priority:
+ * 1) afterDiscount (final customer price)
+ * 2) userPrice (MRP) if afterDiscount missing
+ * If both missing => 0
+ */
+const getDisplayPrices = (p: Product) => {
+  const after = toNumber(p.afterDiscount);
+  const mrp = toNumber(p.userPrice);
+
+  if (after > 0) {
+    const showMrp = mrp > after ? mrp : 0;
+    const percentOff = showMrp ? Math.round(((showMrp - after) / showMrp) * 100) : 0;
+    return { price: after, mrp: showMrp, percentOff };
+  }
+
+  if (mrp > 0) return { price: mrp, mrp: 0, percentOff: 0 };
+
+  return { price: 0, mrp: 0, percentOff: 0 };
 };
 
 const Home = () => {
@@ -68,12 +104,12 @@ const Home = () => {
   const [openLocationModal, setOpenLocationModal] = useState(false);
   const [userLocation, setUserLocation] = useState<StoredLocation | null>(null);
 
-  // ✅ Nearby shops
+  // Nearby shops
   const [nearbyShops, setNearbyShops] = useState<Business[]>([]);
   const [shopsLoading, setShopsLoading] = useState(false);
   const [shopsError, setShopsError] = useState<string | null>(null);
 
-  // ✅ Featured / Deals products
+  // Featured / Deals products
   const [featuredLoading, setFeaturedLoading] = useState(false);
   const [dealsLoading, setDealsLoading] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
@@ -89,7 +125,6 @@ const Home = () => {
 
   /** ---------------------------
    * Location: load from localStorage
-   * If not found => open modal
    * -------------------------- */
   useEffect(() => {
     const saved = localStorage.getItem(LOCATION_KEY);
@@ -98,6 +133,7 @@ const Home = () => {
         setUserLocation(JSON.parse(saved));
       } catch {
         localStorage.removeItem(LOCATION_KEY);
+        setOpenLocationModal(true);
       }
     } else {
       setOpenLocationModal(true);
@@ -120,15 +156,12 @@ const Home = () => {
       const data = await res.json();
       const list = Array.isArray(data?.categories) ? data.categories : [];
 
-      const transformed: CategoryItem[] = list.map((cat: any) => ({
-        id: cat._id,
-        label:
-          typeof cat.name === "string" && cat.name.length
-            ? cat.name.charAt(0).toUpperCase() + cat.name.slice(1)
-            : "Category",
-        to: `/category/${cat.name}`,
-        image: cat.image,
-      }));
+      const transformed: CategoryItem[] = list.map((cat: any) => {
+        const name: string = String(cat?.name || "category");
+        const label = name.length ? name.charAt(0).toUpperCase() + name.slice(1) : "Category";
+        const to = `/category/${encodeURIComponent(name)}`;
+        return { id: cat._id, label, to, image: cat.image };
+      });
 
       setCategories(transformed);
     } catch (e) {
@@ -140,21 +173,25 @@ const Home = () => {
   };
 
   /** ---------------------------
-   * Fetch featured products
+   * Fetch products (reuse)
    * -------------------------- */
+  const fetchProducts = async (limit: number) => {
+    const res = await fetch(`${API_BASE}/products?limit=${limit}`);
+    const json = await res.json();
+
+    const list =
+      Array.isArray(json?.products) ? json.products :
+      Array.isArray(json?.data) ? json.data :
+      Array.isArray(json) ? json :
+      [];
+
+    return list as Product[];
+  };
+
   const fetchFeaturedProducts = async () => {
     try {
       setFeaturedLoading(true);
-
-      // ✅ try featured endpoint
-      let res = await fetch(`${API_BASE}/products?limit=8`);
-      if (!res.ok) {
-        // fallback
-        res = await fetch(`${API_BASE}/products?limit=8`);
-      }
-
-      const json = await res.json();
-      const list = Array.isArray(json?.products) ? json.products : Array.isArray(json?.data) ? json.data : [];
+      const list = await fetchProducts(10); // ✅ upto 10 products
       setFeaturedProducts(list);
     } catch (e) {
       console.error("fetchFeaturedProducts:", e);
@@ -164,22 +201,10 @@ const Home = () => {
     }
   };
 
-  /** ---------------------------
-   * Fetch deals products
-   * -------------------------- */
   const fetchDealsProducts = async () => {
     try {
       setDealsLoading(true);
-
-      // ✅ try deals endpoint
-      let res = await fetch(`${API_BASE}/products?limit=8`);
-      if (!res.ok) {
-        // fallback: reuse products with limit
-        res = await fetch(`${API_BASE}/products?limit=8`);
-      }
-
-      const json = await res.json();
-      const list = Array.isArray(json?.products) ? json.products : Array.isArray(json?.data) ? json.data : [];
+      const list = await fetchProducts(10); // ✅ upto 10 products
       setDealProducts(list);
     } catch (e) {
       console.error("fetchDealsProducts:", e);
@@ -199,11 +224,14 @@ const Home = () => {
    * -------------------------- */
   const fetchNearbyShops = async (pincode: string) => {
     try {
+      const pin = normPincode(pincode);
+      if (pin.length !== 6) return;
+
       setShopsLoading(true);
       setShopsError(null);
 
       const res = await fetch(
-        `${API_BASE}/business/by-pincode?pincode=${encodeURIComponent(pincode)}&limit=50`
+        `${API_BASE}/business/by-pincode?pincode=${encodeURIComponent(pin)}&limit=50`
       );
 
       const json = await res.json();
@@ -223,15 +251,15 @@ const Home = () => {
     }
   };
 
-  // ✅ Auto fetch when pincode changes
   useEffect(() => {
-    const pin = userLocation?.pincode?.trim();
-    if (!pin) return;
+    const pin = normPincode(userLocation?.pincode);
+    if (pin.length !== 6) return;
     fetchNearbyShops(pin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userLocation?.pincode]);
 
   /** ---------------------------
-   * Category scroll (desktop arrows)
+   * UI helpers
    * -------------------------- */
   const scrollCategories = (direction: "left" | "right") => {
     const container = document.getElementById("categories-container");
@@ -240,12 +268,20 @@ const Home = () => {
     container.scrollLeft += direction === "left" ? -amount : amount;
   };
 
+  // ✅ horizontal scrollers for featured/deals
+  const scrollRow = (id: string, direction: "left" | "right") => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const amount = 420;
+    el.scrollLeft += direction === "left" ? -amount : amount;
+  };
+
   const handleViewAllCategories = () => navigate("/categories");
 
   const locationLabel = useMemo(() => {
     if (!userLocation) return "Set delivery location";
     const colony = userLocation.colony?.trim();
-    const pin = userLocation.pincode?.trim();
+    const pin = normPincode(userLocation.pincode);
     if (colony && pin) return `${colony} - ${pin}`;
     if (pin) return pin;
     return "Location set";
@@ -254,14 +290,13 @@ const Home = () => {
   const renderProductCard = (p: Product) => {
     const title = p.itemName || p.name || "Product";
     const img = p.images?.[0] || "/placeholder-product.png";
-    const price = typeof p.afterDiscount === "number" ? `₹${p.afterDiscount}` : "₹—";
-    const mrp = typeof p.userPrice === "number" ? `₹${p.userPrice}` : null;
+    const { price, mrp, percentOff } = getDisplayPrices(p);
 
     return (
       <button
         key={p._id}
         onClick={() => navigate(`/product/${p._id}`)}
-        className="text-left bg-white border rounded-2xl overflow-hidden hover:shadow-lg transition-shadow group"
+        className="text-left bg-white border rounded-2xl overflow-hidden hover:shadow-lg transition-shadow group min-w-[170px] sm:min-w-[220px]"
       >
         <div className="h-44 bg-muted overflow-hidden">
           <img
@@ -271,13 +306,21 @@ const Home = () => {
             loading="lazy"
           />
         </div>
+
         <div className="p-4">
           <p className="font-semibold text-navy line-clamp-2">{title}</p>
 
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-lg font-bold text-navy">{price}</span>
-            {mrp && (
-              <span className="text-sm text-muted-foreground line-through">{mrp}</span>
+            <span className="text-lg font-bold text-navy">{price > 0 ? formatINR(price) : "₹—"}</span>
+
+            {mrp > 0 && (
+              <span className="text-sm text-muted-foreground line-through">{formatINR(mrp)}</span>
+            )}
+
+            {percentOff > 0 && (
+              <span className="ml-auto text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-bold">
+                {percentOff}% OFF
+              </span>
             )}
           </div>
 
@@ -285,9 +328,7 @@ const Home = () => {
             <span className="text-xs px-2 py-1 rounded-full bg-blue-light text-navy font-semibold">
               ⭐ {p.rating || 4.0}
             </span>
-            <span className="text-xs text-muted-foreground">
-              ({p.reviews || 0})
-            </span>
+            <span className="text-xs text-muted-foreground">({p.reviews || 0})</span>
 
             {p.tag && (
               <span className="ml-auto text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-800 font-semibold">
@@ -304,7 +345,6 @@ const Home = () => {
     <div className="min-h-screen bg-background">
       <Navbar />
 
-      {/* Top Notice if NOT logged in */}
       {!loggedInUser && (
         <div className="bg-blue-light border-b text-center py-2 text-sm">
           On Direct <span className="font-semibold">(LI)</span> registration other complete KYC - 50/-
@@ -332,12 +372,15 @@ const Home = () => {
         </div>
       </div>
 
-      {/* ✅ HERO (Banner layout) */}
+      {/* HERO */}
       <section className="container mx-auto px-4 py-10 grid lg:grid-cols gap-6">
-        {/* Big banner */}
         <div className="lg:col-span-2 relative overflow-hidden rounded-3xl border bg-gradient-to-r from-navy to-navy-dark text-white shadow-md">
           <div className="absolute inset-0 opacity-20">
-            <img src='https://images.unsplash.com/photo-1563013544-824ae1b704d3?q=80&w=1170&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D' alt="banner" className="w-full h-full object-cover" />
+            <img
+              src="https://images.unsplash.com/photo-1563013544-824ae1b704d3?q=80&w=1170&auto=format&fit=crop"
+              alt="banner"
+              className="w-full h-full object-cover"
+            />
           </div>
 
           <div className="relative p-8 md:p-10">
@@ -356,7 +399,9 @@ const Home = () => {
               <Button className="bg-accent hover:bg-accent/90 text-white" onClick={() => navigate("/categories")}>
                 Explore Categories
               </Button>
-              <Button variant="outline" className="bg-white/10 text-white border-white/30 hover:bg-white/20"
+              <Button
+                variant="outline"
+                className="bg-white/10 text-white border-white/30 hover:bg-white/20"
                 onClick={() => navigate("/local-stores")}
               >
                 Browse Local Stores
@@ -364,8 +409,6 @@ const Home = () => {
             </div>
           </div>
         </div>
-
-        
       </section>
 
       {/* Categories */}
@@ -382,12 +425,7 @@ const Home = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden md:flex"
-            onClick={() => scrollCategories("left")}
-          >
+          <Button variant="ghost" size="icon" className="hidden md:flex" onClick={() => scrollCategories("left")}>
             <ChevronLeft className="h-5 w-5" />
           </Button>
 
@@ -430,18 +468,13 @@ const Home = () => {
             )}
           </div>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden md:flex"
-            onClick={() => scrollCategories("right")}
-          >
+          <Button variant="ghost" size="icon" className="hidden md:flex" onClick={() => scrollCategories("right")}>
             <ChevronRight className="h-5 w-5" />
           </Button>
         </div>
       </section>
 
-      {/* ✅ FEATURED PRODUCTS */}
+      {/* Featured (✅ one row horizontal scroll) */}
       <section className="container mx-auto px-4 py-10">
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -454,9 +487,9 @@ const Home = () => {
         </div>
 
         {featuredLoading ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="rounded-2xl border bg-white overflow-hidden">
+          <div className="flex gap-5 overflow-x-auto scrollbar-hide pb-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="min-w-[170px] sm:min-w-[220px] rounded-2xl border bg-white overflow-hidden">
                 <Skeleton className="h-44 w-full" />
                 <div className="p-4 space-y-2">
                   <Skeleton className="h-4 w-3/4" />
@@ -470,13 +503,35 @@ const Home = () => {
             No featured products available.
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-            {featuredProducts.map(renderProductCard)}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden md:flex"
+              onClick={() => scrollRow("featured-row", "left")}
+              aria-label="Scroll featured left"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+
+            <div id="featured-row" className="flex gap-5 overflow-x-auto scrollbar-hide scroll-smooth flex-1 pb-2">
+              {featuredProducts.slice(0, 10).map(renderProductCard)}
+            </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden md:flex"
+              onClick={() => scrollRow("featured-row", "right")}
+              aria-label="Scroll featured right"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </Button>
           </div>
         )}
       </section>
 
-      {/* ✅ DAILY DEALS */}
+      {/* Deals (✅ one row horizontal scroll) */}
       <section className="container mx-auto px-4 pb-12">
         <div className="rounded-3xl border bg-gradient-to-r from-yellow-50 to-orange-50 p-6 md:p-8">
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
@@ -484,10 +539,8 @@ const Home = () => {
               <div className="inline-flex items-center gap-2 text-xs font-bold bg-white/70 px-3 py-1 rounded-full text-yellow-800">
                 <Flame className="h-4 w-4" /> DAILY DEALS
               </div>
-              <h2 className="text-2xl font-extrabold text-navy mt-3">Daily Seals / Deals</h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                Limited time offers. Grab them before they end!
-              </p>
+              <h2 className="text-2xl font-extrabold text-navy mt-3">Daily Deals</h2>
+              <p className="text-sm text-muted-foreground mt-1">Limited time offers. Grab them before they end!</p>
             </div>
             <Button className="bg-yellow-500 hover:bg-yellow-600 text-navy font-bold" onClick={() => navigate("/deals")}>
               See All Deals
@@ -495,9 +548,9 @@ const Home = () => {
           </div>
 
           {dealsLoading ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="rounded-2xl border bg-white overflow-hidden">
+            <div className="flex gap-5 overflow-x-auto scrollbar-hide pb-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="min-w-[170px] sm:min-w-[220px] rounded-2xl border bg-white overflow-hidden">
                   <Skeleton className="h-44 w-full" />
                   <div className="p-4 space-y-2">
                     <Skeleton className="h-4 w-3/4" />
@@ -511,16 +564,36 @@ const Home = () => {
               No deals available right now.
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-              {dealProducts.map(renderProductCard)}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden md:flex"
+                onClick={() => scrollRow("deals-row", "left")}
+                aria-label="Scroll deals left"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </Button>
+
+              <div id="deals-row" className="flex gap-5 overflow-x-auto scrollbar-hide scroll-smooth flex-1 pb-2">
+                {dealProducts.slice(0, 10).map(renderProductCard)}
+              </div>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden md:flex"
+                onClick={() => scrollRow("deals-row", "right")}
+                aria-label="Scroll deals right"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </Button>
             </div>
           )}
         </div>
       </section>
 
-      {/* Coming soon: Wave */}
-  
-      {/* ✅ NEARBY STORES */}
+      {/* Nearby Stores */}
       <section className="container mx-auto px-4 py-12">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
           <div>
@@ -532,7 +605,7 @@ const Home = () => {
               Showing shops for{" "}
               <span className="font-semibold text-navy">
                 {userLocation?.colony ? `${userLocation.colony} - ` : ""}
-                {userLocation?.pincode || "—"}
+                {normPincode(userLocation?.pincode) || "—"}
               </span>
             </p>
           </div>
@@ -554,11 +627,9 @@ const Home = () => {
           </div>
         </div>
 
-        {!userLocation?.pincode ? (
+        {!normPincode(userLocation?.pincode) ? (
           <div className="rounded-2xl border bg-muted/20 p-10 text-center">
-            <p className="text-muted-foreground mb-4">
-              Set your location to see nearby shops.
-            </p>
+            <p className="text-muted-foreground mb-4">Set your location to see nearby shops.</p>
             <Button onClick={() => setOpenLocationModal(true)}>Set Location</Button>
           </div>
         ) : shopsLoading ? (
@@ -583,19 +654,13 @@ const Home = () => {
         ) : shopsError ? (
           <div className="rounded-2xl border bg-red-50 p-10 text-center">
             <p className="text-red-600 font-semibold">{shopsError}</p>
-            <Button
-              className="mt-4"
-              variant="outline"
-              onClick={() => fetchNearbyShops(userLocation.pincode)}
-            >
+            <Button className="mt-4" variant="outline" onClick={() => fetchNearbyShops(userLocation!.pincode)}>
               Retry
             </Button>
           </div>
         ) : nearbyShops.length === 0 ? (
           <div className="rounded-2xl border bg-muted/20 p-10 text-center">
-            <p className="text-muted-foreground">
-              No shops found for this pincode. Try changing location.
-            </p>
+            <p className="text-muted-foreground">No shops found for this pincode. Try changing location.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -633,19 +698,14 @@ const Home = () => {
                     {Array.isArray(shop.businessTypes) && shop.businessTypes.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-3">
                         {shop.businessTypes.slice(0, 3).map((t: string) => (
-                          <span
-                            key={t}
-                            className="text-[11px] px-2 py-1 rounded-full bg-muted text-navy border"
-                          >
+                          <span key={t} className="text-[11px] px-2 py-1 rounded-full bg-muted text-navy border">
                             {t}
                           </span>
                         ))}
                       </div>
                     )}
 
-                    <p className="text-sm text-muted-foreground mt-3 line-clamp-2">
-                      {shop.address}
-                    </p>
+                    <p className="text-sm text-muted-foreground mt-3 line-clamp-2">{shop.address}</p>
                   </div>
                 </div>
 
@@ -655,7 +715,11 @@ const Home = () => {
                   </Button>
 
                   {shop.phone ? (
-                    <Button variant="outline" className="flex-1" onClick={() => window.open(`tel:${shop.phone}`, "_self")}>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => window.open(`tel:${shop.phone}`, "_self")}
+                    >
                       Call
                     </Button>
                   ) : (
@@ -676,35 +740,6 @@ const Home = () => {
         </div>
       </section>
 
-      {/* App Download Banner - Coming Soon */}
-      <section className="bg-gradient-to-r from-gray-700 to-gray-900 text-white py-12 relative overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="absolute top-0 left-0 w-32 h-32 bg-blue-500/10 rounded-full -translate-x-16 -translate-y-16" />
-          <div className="absolute bottom-0 right-0 w-40 h-40 bg-purple-500/10 rounded-full translate-x-20 translate-y-20" />
-        </div>
-
-        <div className="container mx-auto px-4 text-center relative">
-          <div className="inline-flex items-center gap-2 bg-white/15 backdrop-blur-sm px-4 py-2 rounded-full mb-4">
-            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-sm font-bold">APP COMING SOON</span>
-          </div>
-
-          <h2 className="text-3xl font-bold mb-4">Download Our App</h2>
-          <p className="text-lg mb-6 max-w-2xl mx-auto text-gray-300">
-            Our mobile app is currently in development. Get ready for an amazing shopping experience!
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button className="bg-gray-600 text-gray-300 font-semibold px-8 py-3 cursor-not-allowed" disabled>
-              📱 iOS - Coming Soon
-            </Button>
-            <Button className="bg-gray-600 text-gray-300 font-semibold px-8 py-3 cursor-not-allowed" disabled>
-              🤖 Android - Coming Soon
-            </Button>
-          </div>
-        </div>
-      </section>
-
       {/* Location Modal */}
       <LocationModal
         open={openLocationModal}
@@ -712,7 +747,8 @@ const Home = () => {
         onConfirm={(loc) => {
           setUserLocation(loc);
           localStorage.setItem(LOCATION_KEY, JSON.stringify(loc));
-          if (loc?.pincode) fetchNearbyShops(loc.pincode);
+          const pin = normPincode(loc?.pincode);
+          if (pin) fetchNearbyShops(pin);
         }}
       />
 

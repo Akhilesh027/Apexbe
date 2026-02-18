@@ -46,7 +46,12 @@ const Register = () => {
     setLoading(true);
 
     try {
-      if (!formData.name || !formData.email || !formData.phone || !formData.password) {
+      if (
+        !formData.name ||
+        !formData.email ||
+        !formData.phone ||
+        !formData.password
+      ) {
         setError("Please fill in all required fields.");
         return;
       }
@@ -117,23 +122,33 @@ const Register = () => {
               </h1>
 
               <p className="text-white/80 mt-3 max-w-md">
-                Set up your profile, access member features, and start tracking your
-                activity in one place.
+                Set up your profile, access member features, and start tracking
+                your activity in one place.
               </p>
 
               <ul className="mt-6 space-y-3 text-sm text-white/90">
-                <li className="flex items-center gap-2">✅ Quick signup in under a minute</li>
-                <li className="flex items-center gap-2">✅ Secure access with token-based login</li>
-                <li className="flex items-center gap-2">✅ Referral support built-in</li>
+                <li className="flex items-center gap-2">
+                  ✅ Quick signup in under a minute
+                </li>
+                <li className="flex items-center gap-2">
+                  ✅ Secure access with token-based login
+                </li>
+                <li className="flex items-center gap-2">
+                  ✅ Referral support built-in
+                </li>
               </ul>
 
               {urlReferralCode && (
                 <div className="mt-7 p-4 rounded-xl bg-white/10 border border-white/15">
                   <p className="text-sm text-white/90">
-                    Referral detected! Your code will be applied automatically when you sign up.
+                    Referral detected! Your code will be applied automatically
+                    when you sign up.
                   </p>
                   <p className="text-xs text-white/70 mt-2">
-                    Code: <span className="font-semibold text-white">{urlReferralCode}</span>
+                    Code:{" "}
+                    <span className="font-semibold text-white">
+                      {urlReferralCode}
+                    </span>
                   </p>
                 </div>
               )}
@@ -143,7 +158,9 @@ const Register = () => {
             <div className="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
               <div className="p-6 md:p-8">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-xl font-semibold text-navy">Create Account</h2>
+                  <h2 className="text-xl font-semibold text-navy">
+                    Create Account
+                  </h2>
                   {urlReferralCode ? (
                     <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">
                       Referral Applied
@@ -195,8 +212,20 @@ const Register = () => {
                       name="phone"
                       placeholder="Phone number"
                       value={formData.phone}
-                      onChange={handleInputChange}
+                      onChange={(e) => {
+                        const onlyNums = e.target.value.replace(/\D/g, ""); // remove non-digits
+
+                        if (onlyNums.length <= 10) {
+                          setFormData((prev) => ({
+                            ...prev,
+                            phone: onlyNums,
+                          }));
+                        }
+                      }}
                       className="w-full"
+                      inputMode="numeric"
+                      pattern="[0-9]{10}"
+                      maxLength={10}
                       required
                     />
 
@@ -253,8 +282,13 @@ const Register = () => {
                   </Button>
 
                   <div className="text-center text-sm mt-6">
-                    <span className="text-muted-foreground">Already have an account? </span>
-                    <Link to="/login" className="text-accent hover:underline font-medium">
+                    <span className="text-muted-foreground">
+                      Already have an account?{" "}
+                    </span>
+                    <Link
+                      to="/login"
+                      className="text-accent hover:underline font-medium"
+                    >
                       Login
                     </Link>
                   </div>
@@ -263,7 +297,8 @@ const Register = () => {
 
               <div className="px-6 md:px-8 py-4 bg-secondary/30 border-t border-gray-200">
                 <p className="text-xs text-muted-foreground text-center">
-                  By creating an account, you agree to our Terms & Privacy Policy.
+                  By creating an account, you agree to our Terms & Privacy
+                  Policy.
                 </p>
               </div>
             </div>

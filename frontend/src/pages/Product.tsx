@@ -16,7 +16,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-const API_BASE = "https://api.apexbee.in/api"; // ✅ change
+const API_BASE = "https://api.apexbee.in/api"; // ✅ change if needed
 
 type Category = {
   _id: string;
@@ -32,7 +32,7 @@ type Product = {
   userPrice?: number;
   rating?: number;
   reviews?: number;
-  category?: string | Category;
+  category?: string | Category; // could be "Electronics" OR {_id,name} OR id string
   tag?: string;
 };
 
@@ -41,12 +41,38 @@ function money(n: any) {
   return new Intl.NumberFormat("en-IN").format(v);
 }
 
+/** ✅ Extract array from ANY common API response shape */
+function extractArray<T = any>(json: any): T[] {
+  if (!json) return [];
+  if (Array.isArray(json)) return json;
+
+  const candidates = [
+    json.products,
+    json.items,
+    json.data,
+    json.result,
+    json.results,
+    json.payload,
+    json?.products?.docs,
+    json?.data?.docs,
+    json?.items?.docs,
+  ];
+
+  for (const c of candidates) {
+    if (Array.isArray(c)) return c;
+  }
+
+  return [];
+}
+
 const ProductsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string>("");
 
   // Filters state
   const [q, setQ] = useState(searchParams.get("q") || "");
@@ -69,19 +95,36 @@ const ProductsPage = () => {
     (async () => {
       try {
         setLoading(true);
+        setErrorMsg("");
 
         const [catRes, prodRes] = await Promise.all([
           fetch(`${API_BASE}/categories`),
-          fetch(`${API_BASE}/products`), // ✅ if your backend has /products
+          fetch(`${API_BASE}/products`),
         ]);
+
+        if (!catRes.ok) {
+          throw new Error(`Categories API failed (${catRes.status})`);
+        }
+        if (!prodRes.ok) {
+          // ✅ show exact status & likely reason
+          throw new Error(`Products API failed (${prodRes.status}). Check /api/products route.`);
+        }
 
         const catJson = await catRes.json();
         const prodJson = await prodRes.json();
 
-        setCategories(Array.isArray(catJson?.categories) ? catJson.categories : []);
-        setProducts(Array.isArray(prodJson?.products) ? prodJson.products : []);
-      } catch (e) {
-        console.error(e);
+        // ✅ DEBUG: check actual shapes in console
+        console.log("✅ categories response:", catJson);
+        console.log("✅ products response:", prodJson);
+
+        const cats = extractArray<Category>(catJson);
+        const prods = extractArray<Product>(prodJson);
+
+        setCategories(Array.isArray(cats) ? cats : []);
+        setProducts(Array.isArray(prods) ? prods : []);
+      } catch (e: any) {
+        console.error("❌ ProductsPage load error:", e);
+        setErrorMsg(e?.message || "Failed to load products");
         setCategories([]);
         setProducts([]);
       } finally {
@@ -104,6 +147,19 @@ const ProductsPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, selectedCats, minPrice, maxPrice, minRating, sort]);
 
+  /** ✅ Build maps for category id->name and name->id (for string categories) */
+  const categoryById = useMemo(() => {
+    const m = new Map<string, Category>();
+    categories.forEach((c) => m.set(c._id, c));
+    return m;
+  }, [categories]);
+
+  const categoryIdByName = useMemo(() => {
+    const m = new Map<string, string>();
+    categories.forEach((c) => m.set(c.name.toLowerCase(), c._id));
+    return m;
+  }, [categories]);
+
   const filtered = useMemo(() => {
     let list = [...products];
 
@@ -118,15 +174,32 @@ const ProductsPage = () => {
     // Category filter
     if (selectedCats.length) {
       list = list.filter((p) => {
-        const catId =
-          typeof p.category === "string" ? p.category : p.category?._id;
-        return catId ? selectedCats.includes(catId) : false;
+        const raw = p.category;
+
+        // Case 1: category stored as object
+        if (raw && typeof raw === "object" && "_id" in raw) {
+          return selectedCats.includes((raw as any)._id);
+        }
+
+        // Case 2: category stored as id string
+        if (typeof raw === "string") {
+          // if it matches id directly
+          if (selectedCats.includes(raw)) return true;
+
+          // if stored as category name string like "Electronics"
+          const possibleId = categoryIdByName.get(raw.toLowerCase());
+          if (possibleId && selectedCats.includes(possibleId)) return true;
+
+          return false;
+        }
+
+        return false;
       });
     }
 
-    // Price
+    // Price (fallback: use afterDiscount or userPrice)
     list = list.filter((p) => {
-      const price = Number(p.afterDiscount ?? 0);
+      const price = Number(p.afterDiscount ?? p.userPrice ?? 0);
       return price >= minPrice && price <= maxPrice;
     });
 
@@ -137,17 +210,25 @@ const ProductsPage = () => {
 
     // Sorting
     if (sort === "price_low") {
-      list.sort((a, b) => (a.afterDiscount || 0) - (b.afterDiscount || 0));
+      list.sort(
+        (a, b) =>
+          Number(a.afterDiscount ?? a.userPrice ?? 0) -
+          Number(b.afterDiscount ?? b.userPrice ?? 0)
+      );
     }
     if (sort === "price_high") {
-      list.sort((a, b) => (b.afterDiscount || 0) - (a.afterDiscount || 0));
+      list.sort(
+        (a, b) =>
+          Number(b.afterDiscount ?? b.userPrice ?? 0) -
+          Number(a.afterDiscount ?? a.userPrice ?? 0)
+      );
     }
     if (sort === "rating") {
       list.sort((a, b) => (b.rating || 0) - (a.rating || 0));
     }
 
     return list;
-  }, [products, q, selectedCats, minPrice, maxPrice, minRating, sort]);
+  }, [products, q, selectedCats, minPrice, maxPrice, minRating, sort, categoryIdByName]);
 
   const toggleCat = (id: string) => {
     setSelectedCats((prev) =>
@@ -278,7 +359,7 @@ const ProductsPage = () => {
     <div className="min-h-screen bg-background">
       <Navbar />
 
-      {/* ✅ Top Banner */}
+      {/* Top Banner */}
       <div className="bg-gradient-to-r from-navy to-navy-dark text-white">
         <div className="container mx-auto px-4 py-10">
           <h1 className="text-3xl md:text-4xl font-extrabold">Shop Products</h1>
@@ -297,12 +378,29 @@ const ProductsPage = () => {
                 Search: “{q.trim()}”
               </span>
             )}
+            {!loading && (
+              <span className="bg-white/15 px-3 py-1 rounded-full text-sm">
+                Total loaded: {products.length}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
-      {/* ✅ Layout */}
+      {/* Layout */}
       <div className="container mx-auto px-4 py-8">
+        {errorMsg && (
+          <Card className="rounded-2xl mb-6 border-red-200">
+            <CardContent className="p-5">
+              <p className="font-semibold text-red-700">Could not load products</p>
+              <p className="text-sm text-muted-foreground mt-1">{errorMsg}</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Open console → check “products response” log to see exact JSON shape.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid lg:grid-cols-12 gap-6">
           {/* LEFT FILTERS (Desktop) */}
           <aside className="hidden lg:block lg:col-span-3">
@@ -361,59 +459,68 @@ const ProductsPage = () => {
                 <CardContent className="p-10 text-center">
                   <p className="text-lg font-semibold text-navy">No products found</p>
                   <p className="text-sm text-muted-foreground mt-2">
-                    Try changing filters or clearing search.
+                    If you expected products, check console logs for API response shape.
                   </p>
-                  <Button className="mt-5" onClick={clearAll}>
-                    Clear Filters
-                  </Button>
+                  <div className="flex gap-2 justify-center mt-5">
+                    <Button onClick={clearAll}>Clear Filters</Button>
+                    <Button variant="outline" onClick={() => window.location.reload()}>
+                      Reload
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5">
-                {filtered.map((p) => (
-                  <Link key={p._id} to={`/product/${p._id}`} className="group">
-                    <div className="rounded-2xl border bg-white overflow-hidden hover:shadow-lg transition">
-                      <div className="h-44 bg-muted">
-                        <img
-                          src={p.images?.[0] || "/placeholder-product.png"}
-                          alt={p.itemName || p.name}
-                          className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          loading="lazy"
-                        />
-                      </div>
+                {filtered.map((p) => {
+                  const title = p.itemName || p.name || "Product";
+                  const price = Number(p.afterDiscount ?? p.userPrice ?? 0);
+                  const img = p.images?.[0] || "https://via.placeholder.com/400x300?text=Product";
 
-                      <div className="p-4">
-                        <h3 className="font-semibold text-navy line-clamp-2">
-                          {p.itemName || p.name}
-                        </h3>
-
-                        <div className="mt-2 flex items-baseline gap-2">
-                          <span className="text-lg font-bold text-navy">
-                            ₹{money(p.afterDiscount ?? 0)}
-                          </span>
-                          {p.userPrice ? (
-                            <span className="text-sm text-muted-foreground line-through">
-                              ₹{money(p.userPrice)}
-                            </span>
-                          ) : null}
+                  return (
+                    <Link key={p._id} to={`/product/${p._id}`} className="group">
+                      <div className="rounded-2xl border bg-white overflow-hidden hover:shadow-lg transition">
+                        <div className="h-44 bg-muted">
+                          <img
+                            src={img}
+                            alt={title}
+                            className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).src =
+                                "https://via.placeholder.com/400x300?text=Product";
+                            }}
+                          />
                         </div>
 
-                        <div className="mt-2 flex items-center justify-between">
-                          <div className="text-xs bg-accent text-white px-2 py-1 rounded">
-                            ⭐ {Number(p.rating || 4).toFixed(1)}
+                        <div className="p-4">
+                          <h3 className="font-semibold text-navy line-clamp-2">{title}</h3>
+
+                          <div className="mt-2 flex items-baseline gap-2">
+                            <span className="text-lg font-bold text-navy">₹{money(price)}</span>
+                            {p.userPrice && p.afterDiscount ? (
+                              <span className="text-sm text-muted-foreground line-through">
+                                ₹{money(p.userPrice)}
+                              </span>
+                            ) : null}
                           </div>
-                          {p.tag ? (
-                            <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-yellow-banner text-navy">
-                              {p.tag}
-                            </span>
-                          ) : null}
-                        </div>
 
-                        <Button className="w-full mt-3">View</Button>
+                          <div className="mt-2 flex items-center justify-between">
+                            <div className="text-xs bg-accent text-white px-2 py-1 rounded">
+                              ⭐ {Number(p.rating || 4).toFixed(1)}
+                            </div>
+                            {p.tag ? (
+                              <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-yellow-banner text-navy">
+                                {p.tag}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <Button className="w-full mt-3">View</Button>
+                        </div>
                       </div>
-                    </div>
-                  </Link>
-                ))}
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </main>

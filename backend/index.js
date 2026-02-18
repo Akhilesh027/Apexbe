@@ -37,9 +37,14 @@ cloudinary.api.ping()
   .catch((err) => {
     console.log("❌ Cloudinary Connection Failed:", err.message);
   });
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("DB Connected"))
-  .catch((err) => console.error("DB Error:", err));
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => {
+    console.error("❌ MongoDB connection error:", err.message);
+    process.exit(1);
+  });
+
 
 app.post("/api/register", async (req, res) => {
   try {
@@ -216,20 +221,24 @@ app.get("/api/products/vendor/:vendorId", async (req, res) => {
   try {
     const { vendorId } = req.params;
 
-    const products = await Products.find({
-      vendorId,
-      status: { $in: ["Approved", "Admin Approved"] },
-    })
-      .populate("category", "name image") // to show category name
+    const products = await Products.find({ vendorId })
+      .populate("category", "name")
+      .select("itemName description images finalAmount mrp openStock status commission category createdAt")
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json({ success: true, data: products });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(200).json(
+      products.map((p) => ({
+        ...p,
+        categoryName: p.category?.name || "Unknown",
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // GET /api/vendor/:vendorId
 app.get("/api/vendor/:vendorId", async (req, res) => {
@@ -746,6 +755,7 @@ export const processReferral = async (referredUserId, referralCode) => {
     return { ok: false, reason: "server_error" };
   }
 };
+const DEFAULT_REFERRAL_CODE = "APX-ROOT";
 
 app.post("/api/auth/register", async (req, res) => {
   try {
@@ -755,7 +765,10 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(400).json({ error: "All fields are required" });
     }
 
-    const existingUser = await User.findOne({ $or: [{ email }, { phone }] });
+    const existingUser = await User.findOne({
+      $or: [{ email }, { phone }],
+    });
+
     if (existingUser) {
       return res.status(400).json({ error: "Email or Phone already registered" });
     }
@@ -773,25 +786,35 @@ app.post("/api/auth/register", async (req, res) => {
 
     console.log(`✅ New user created: ${newUser._id} (${newUser.email})`);
 
-    if (referralCode) {
-      console.log(`🔗 Processing referral with code: ${referralCode}`);
+    // ====================================================
+    // 🔥 DEFAULT REFERRAL HANDLING
+    // ====================================================
 
-      const referralResult = await processReferral(newUser._id, referralCode);
+    let finalReferralCode = referralCode;
 
-      if (referralResult) {
-        console.log(`✅ Referral processing result:`, {
-          direct: referralResult.directReferral ? "Created/Exists" : "None",
-          level2: referralResult.level2Referral ? "Created/Exists" : "None",
-          level3: referralResult.level3Referral ? "Created/Exists" : "None",
-        });
-      } else {
-        console.log("❌ processReferral returned null");
-      }
-
-      await debugReferralsForUser(newUser._id); // optional
-    } else {
-      console.log("No referral code provided");
+    if (!referralCode) {
+      console.log("⚠️ No referral code entered — assigning default ROOT");
+      finalReferralCode = DEFAULT_REFERRAL_CODE;
     }
+
+    console.log(`🔗 Processing referral with code: ${finalReferralCode}`);
+
+    const referralResult = await processReferral(
+      newUser._id,
+      finalReferralCode
+    );
+
+    if (referralResult) {
+      console.log(`✅ Referral processing result:`, {
+        direct: referralResult.directReferral ? "Created/Exists" : "None",
+        level2: referralResult.level2Referral ? "Created/Exists" : "None",
+        level3: referralResult.level3Referral ? "Created/Exists" : "None",
+      });
+    }
+
+    await debugReferralsForUser(newUser._id);
+
+    // ====================================================
 
     res.json({
       message: "Registration successful",
@@ -2331,143 +2354,285 @@ const generateSlug = (text) =>
   text.toLowerCase().replace(/ /g, "-") + "-" + Date.now();
 
 app.post("/api/products/add-product", upload.array("images", 10), async (req, res) => {
-    try {
-        const {
-            vendorId,
-            itemType,
-            category,
-            subcategory, // This is the ID of the subdocument
-            itemName,
+  try {
+    const {
+      vendorId,
+      itemType = "product",
+      category,
+      subcategory,
+      itemName,
 
-            gstRate,
-            description,
+      description,
 
-            measuringUnit,
-            hsnCode,
-            godown,
-            openStock,
-            asOnDate,
+      // ✅ pricing inputs
+      priceType = "product-wise",
+      mrpType = "without-gst", // "with-gst" | "without-gst"
+      mrp,                    // base price (without-gst) OR final price (with-gst)
+      gstRate,
+      gstAmount,
+      discount,               // percent
+      discountAmount,         // rupees
 
-            mrp,
-            discount,
-            afterDiscount,
-            // REMOVED: commission is no longer submitted by the vendor
-            finalAmount,
-            priceType,
-        } = req.body;
+      // ✅ stock inputs
+      measuringUnit,
+      hsnCode,
+      godown,
+      openStock,
+      asOnDate,
 
-        // =============================
-        // 🔹 CRITICAL SUBCATEGORY VALIDATION
-        // =============================
-        if (subcategory) {
-            const parentCategory = await Category.findById(category).select('subcategories');
+      // ✅ fulfillment / pickup
+      fulfillmentMode = "delivery_only", // delivery_only | pickup_only | both
+      pickupEnabled,
+      deliveryEnabled,
+      pickupPincodeMatchOnly,
 
-            if (!parentCategory) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Validation Error: Parent category not found.",
-                });
-            }
-            
-            // Checks if the subcategory ID exists within the embedded array
-            const subcategoryExists = parentCategory.subcategories.some(
-                // Use .toString() for accurate comparison with a string ID from req.body
-                sub => sub._id.toString() === subcategory
-            );
+      // ✅ pre-order
+      preOrderEnabled,
+      preOrderAvailableFrom,
+      preOrderExpectedDispatchDays,
+      preOrderMaxQtyPerUser,
+      preOrderNote,
 
-            if (!subcategoryExists) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Validation Error: Subcategory ID is invalid or does not belong to the selected category.",
-                });
-            }
-        }
-        
-        // =============================
-        // 🔹 Auto-generated fields
-        // =============================
-        const skuCode = generateSKU(vendorId, itemName);
-        const slug = generateSlug(itemName);
+      // ✅ availability
+      blockIfOutOfStock,
+      allowPreOrderWhenOutOfStock,
+    } = req.body;
 
-        // =============================
-        // 🔹 Cloudinary image URLs
-        // =============================
-        const images = req.files?.map((f) => f.path) || []; 
-
-        // =========================================================================
-        // 🌟 UPDATED: Commission is set to 0 and Status is set to 'Pending'
-        // The final calculated commission will be applied by the admin later.
-        // =========================================================================
-        const COMMISSION_INITIAL = 0;
-        const PRODUCT_STATUS = 'Pending'; 
-        
-        // =============================
-        // 🔹 Create product document
-        // =============================
-        const product = new Products({
-            vendorId,
-
-            // PRODUCT DETAILS
-            itemType: itemType || "product",
-            category,       // ID of the main category
-            subcategory,    // ID of the subcategory (optional)
-            itemName,
-            
-            gstRate: Number(gstRate) || 0,
-            description,
-            images,
-            slug,
-
-            // STOCK DETAILS
-            skuCode,
-            measuringUnit: itemType === "service" ? "" : measuringUnit, 
-            hsnCode: itemType === "service" ? "" : hsnCode, 
-            godown: itemType === "service" ? "" : godown, 
-            openStock: itemType === "service" ? 0 : (Number(openStock) || 0),
-            asOnDate: itemType === "service" ? "" : asOnDate,
-
-            // PRICE DETAILS
-            userPrice: Number(mrp) || 0, // userPrice corresponds to mrp
-            discount: Number(discount) || 0,
-            afterDiscount: Number(afterDiscount) || 0,
-            
-            // Commission field is now hardcoded/set to 0 initially
-            commission: COMMISSION_INITIAL, 
-            
-            finalAmount: Number(finalAmount) || 0, // This is the amount before commission (from frontend)
-            priceType,
-
-            // 🔹 NEW FIELD ADDED
-            status: PRODUCT_STATUS,
-        });
-
-        await product.save();
-
-        return res.json({
-            success: true,
-            message: "Product submitted successfully for admin approval.",
-            product,
-        });
-
-    } catch (error) {
-        console.error("Error Adding Product:", error);
-
-        // Log specific validation errors if Mongoose throws them
-        if (error.name === 'ValidationError') {
-            return res.status(400).json({ 
-                success: false, 
-                message: "Mongoose Validation Failed", 
-                errors: error.errors 
-            });
-        }
-        
-        return res.status(500).json({
-            success: false,
-            message: "Server Error",
-            error: error.message,
-        });
+    // -----------------------------
+    // Basic validation
+    // -----------------------------
+    if (!vendorId || !category || !itemName) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation Error: vendorId, category, itemName are required.",
+      });
     }
+
+    // =============================
+    // 🔹 Subcategory validation
+    // =============================
+    if (subcategory) {
+      const parentCategory = await Category.findById(category).select("subcategories");
+      if (!parentCategory) {
+        return res.status(404).json({
+          success: false,
+          message: "Validation Error: Parent category not found.",
+        });
+      }
+
+      const subcategoryExists = parentCategory.subcategories.some(
+        (sub) => sub._id.toString() === subcategory
+      );
+
+      if (!subcategoryExists) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Validation Error: Subcategory ID is invalid or does not belong to the selected category.",
+        });
+      }
+    }
+
+    // =============================
+    // 🔹 Fetch business (for pickup rule + GST applicability)
+    // =============================
+    const business = await Bussiness.findOne({ vendorId }).select("pinCode gstApplicable");
+    const gstApplicable = Boolean(business?.gstApplicable);
+
+    // =============================
+    // 🔹 Auto-generated fields
+    // =============================
+    const skuCode = generateSKU(vendorId, itemName);
+    const slug = generateSlug(itemName);
+
+    // =============================
+    // 🔹 Cloudinary image URLs
+    // =============================
+    const images = req.files?.map((f) => f.path) || [];
+
+    // =============================
+    // ✅ Normalize booleans
+    // =============================
+    const toBool = (v) => {
+      if (typeof v === "boolean") return v;
+      if (typeof v === "string") return v.toLowerCase() === "true";
+      return false;
+    };
+
+    const pickupEnabledBool =
+      typeof pickupEnabled !== "undefined"
+        ? toBool(pickupEnabled)
+        : fulfillmentMode === "pickup_only" || fulfillmentMode === "both";
+
+    const deliveryEnabledBool =
+      typeof deliveryEnabled !== "undefined"
+        ? toBool(deliveryEnabled)
+        : fulfillmentMode === "delivery_only" || fulfillmentMode === "both";
+
+    const pickupPincodeMatchOnlyBool = toBool(pickupPincodeMatchOnly);
+
+    const preOrderEnabledBool = toBool(preOrderEnabled);
+    const blockIfOutOfStockBool = toBool(blockIfOutOfStock);
+    const allowPreOrderWhenOutOfStockBool = toBool(allowPreOrderWhenOutOfStock);
+
+    // =============================
+    // ✅ PRICE CALCULATION (Backend Source of Truth)
+    // Rules:
+    // - product-wise only: compute totals
+    // - if mrpType=without-gst & gstApplicable => totalWithGst = mrp + gstAmount (or from gstRate)
+    // - if mrpType=with-gst => totalWithGst = mrp
+    // - discountAmount or discount% applied on totalWithGst
+    // - afterDiscount = totalWithGst - discountAmountFinal
+    // =============================
+    const n = (v) => {
+      const num = Number(v);
+      return Number.isFinite(num) ? num : 0;
+    };
+    const clamp = (x, min, max) => Math.max(min, Math.min(max, x));
+
+    let userPrice = n(mrp); // store base or final depending mrpType
+    let gstRateNum = n(gstRate);
+    let gstAmountNum = n(gstAmount);
+    let discountPercent = n(discount);
+    let discountAmountNum = n(discountAmount);
+
+    let computedTotalWithGst = 0;
+    let computedDiscountAmount = 0;
+    let computedAfterDiscount = 0;
+
+    if (priceType === "product-wise") {
+      // totalWithGst
+      if (mrpType === "without-gst" && gstApplicable) {
+        // If gstAmount missing but gstRate provided, compute gstAmount
+        if (!gstAmountNum && gstRateNum && userPrice) {
+          gstAmountNum = (userPrice * gstRateNum) / 100;
+        }
+        // If gstRate missing but gstAmount provided, compute gstRate
+        if (!gstRateNum && gstAmountNum && userPrice) {
+          gstRateNum = (gstAmountNum / userPrice) * 100;
+        }
+        computedTotalWithGst = userPrice + gstAmountNum;
+      } else {
+        // with-gst OR gst not applicable
+        gstRateNum = mrpType === "with-gst" ? gstRateNum : gstApplicable ? gstRateNum : 0;
+        gstAmountNum = mrpType === "with-gst" ? 0 : gstApplicable ? gstAmountNum : 0;
+        computedTotalWithGst = userPrice;
+      }
+
+      // discount amount
+      if (!discountAmountNum && discountPercent && computedTotalWithGst) {
+        discountAmountNum = (computedTotalWithGst * discountPercent) / 100;
+      }
+      if (!discountPercent && discountAmountNum && computedTotalWithGst) {
+        discountPercent = (discountAmountNum / computedTotalWithGst) * 100;
+      }
+
+      computedDiscountAmount = clamp(discountAmountNum, 0, computedTotalWithGst);
+      computedAfterDiscount = clamp(computedTotalWithGst - computedDiscountAmount, 0, computedTotalWithGst);
+    } else {
+      // order-wise (no fixed price now)
+      computedTotalWithGst = 0;
+      computedDiscountAmount = 0;
+      computedAfterDiscount = 0;
+    }
+
+    // =============================
+    // 🌟 Commission & Status
+    // =============================
+    const COMMISSION_INITIAL = 0;
+    const PRODUCT_STATUS = "Pending";
+
+    // =============================
+    // ✅ Build product payload
+    // =============================
+    const productPayload = {
+      vendorId,
+
+      itemType,
+      category,
+      subcategory: subcategory || undefined,
+      itemName,
+      description: description || "",
+      images,
+      slug,
+
+      // stock details
+      skuCode,
+      measuringUnit: itemType === "service" ? "" : measuringUnit || "",
+      hsnCode: itemType === "service" ? "" : hsnCode || "",
+      godown: itemType === "service" ? "" : godown || "",
+      openStock: itemType === "service" ? 0 : n(openStock),
+      asOnDate: itemType === "service" ? "" : asOnDate || "",
+
+      // pricing stored
+      priceType,
+      mrpType,
+      userPrice: userPrice,               // base (without-gst) OR full (with-gst)
+      gstRate: gstRateNum,                // keep rate for display
+      gstAmount: gstAmountNum,            // ✅ NEW
+      discount: discountPercent,          // %
+      discountAmount: computedDiscountAmount, // ✅ NEW (truth)
+      afterDiscount: computedAfterDiscount,   // ✅ truth
+      finalAmount: computedAfterDiscount,     // vendor receives before admin commission (your logic)
+      commission: COMMISSION_INITIAL,
+
+      // ✅ fulfillment / pickup
+      fulfillmentMode,
+      pickupEnabled: pickupEnabledBool,
+      deliveryEnabled: deliveryEnabledBool,
+      pickupPincodeMatchOnly: pickupPincodeMatchOnlyBool,
+      pickupShopPincode: business?.pinCode || "", // ✅ NEW helper field
+
+      // ✅ preorder
+      preOrderEnabled: preOrderEnabledBool,
+      preOrderAvailableFrom: preOrderAvailableFrom || "",
+      preOrderExpectedDispatchDays: n(preOrderExpectedDispatchDays),
+      preOrderMaxQtyPerUser: n(preOrderMaxQtyPerUser),
+      preOrderNote: preOrderNote || "",
+
+      // ✅ availability rules
+      blockIfOutOfStock: blockIfOutOfStockBool,
+      allowPreOrderWhenOutOfStock: allowPreOrderWhenOutOfStockBool,
+
+      status: PRODUCT_STATUS,
+    };
+
+    const product = new Products(productPayload);
+    await product.save();
+
+    return res.json({
+      success: true,
+      message: "Product submitted successfully for admin approval.",
+      product,
+    });
+  } catch (error) {
+    console.error("Error Adding Product:", error);
+
+    if (error?.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Mongoose Validation Failed",
+        errors: error.errors,
+      });
+    }
+
+    // Duplicate key (sku/slug) helpful message
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Duplicate field error",
+        error: error.keyValue,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+      error: error.message,
+    });
+  }
 });
+
 app.post("/api/products/:id/:action", async (req, res) => {
     try {
         const { id, action } = req.params;
@@ -2604,22 +2769,20 @@ app.post("/api/products/vendor/reject/:id", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
 });
-
-
 app.get("/api/products", async (req, res) => {
   try {
-    // Fetch products and populate vendor and category details
     const products = await Products.find()
-      .populate("vendorId", "name email") // only fetch vendor name & email
-      .populate("category", "name")       // only fetch category name
-      .populate("subcategory", "name");   // optional, if you have a subcategory collection
+      .populate("vendorId", "name email")
+      .populate("category", "name")
+      .populate("subcategory", "name");
 
-    res.json({ products });
+    return res.status(200).json(products); // ✅ array
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
+
 // Assuming Category and Products models are correctly imported
 
 app.get("/api/products/:category", async (req, res) => {
@@ -2789,20 +2952,25 @@ app.delete("/api/products/:id", async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
-});
-app.get("/api/products/vendor/:vendorId", async (req, res) => {
+});app.get("/api/products/vendor/:vendorId", async (req, res) => {
   try {
-    const products = await Products.find({ vendorId: req.params.vendorId })
-      .populate("category", "name"); 
+    const { vendorId } = req.params;
 
-    const productsWithCategory = products.map((p) => ({
-      ...p._doc,
-      categoryName: p.category?.name || "Unknown"
-    }));
+    const products = await Products.find({ vendorId })
+      .populate("category", "name")
+      .select("itemName description images finalAmount mrp openStock status commission category createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json(productsWithCategory);
+    return res.status(200).json(
+      products.map((p) => ({
+        ...p,
+        categoryName: p.category?.name || "Unknown",
+      }))
+    );
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -6230,6 +6398,407 @@ app.get('/api/orders/pending-verification', auth, async (req, res) => {
     });
   }
 });
+
+const COUPONS = [
+  {
+    code: "FIRST100",
+    type: "flat",
+    value: 100,
+    maxDiscount: null,
+    minOrder: 499,
+    firstOrderOnly: true,
+    allowedPayments: ["upi", "wallet", "card", "cod", "bank_transfer", "scan"],
+    expiresAt: null,
+  },
+  {
+    code: "SAVE10",
+    type: "percent",
+    value: 10,
+    maxDiscount: 250,
+    minOrder: 999,
+    firstOrderOnly: false,
+    allowedPayments: ["upi", "wallet", "card", "cod", "bank_transfer", "scan"],
+    expiresAt: null,
+  },
+];
+
+function findCoupon(code) {
+  if (!code) return null;
+  return COUPONS.find((c) => c.code === String(code).trim().toUpperCase()) || null;
+}
+
+function computeDiscount(coupon, subtotal) {
+  if (!coupon || subtotal <= 0) return 0;
+
+  if (coupon.type === "flat") {
+    return Math.min(coupon.value, subtotal);
+  }
+
+  const raw = (subtotal * coupon.value) / 100;
+  const limited = coupon.maxDiscount ? Math.min(raw, coupon.maxDiscount) : raw;
+  return Math.min(limited, subtotal);
+}
+
+async function isFirstOrder(userId) {
+  const count = await Order.countDocuments({ userId });
+  return count === 0;
+}
+
+async function validateAndApplyCoupon({ userId, couponCode, subtotal, paymentMethod }) {
+  if (!couponCode) return { couponCode: null, couponDiscount: 0 };
+
+  const coupon = findCoupon(couponCode);
+  if (!coupon) return { error: "Invalid coupon code" };
+
+  if (coupon.expiresAt) {
+    const exp = new Date(coupon.expiresAt);
+    if (Date.now() > exp.getTime()) return { error: "Coupon expired" };
+  }
+
+  if (coupon.minOrder && subtotal < coupon.minOrder) {
+    return { error: `Min order ₹${coupon.minOrder} required` };
+  }
+
+  if (coupon.allowedPayments?.length && !coupon.allowedPayments.includes(paymentMethod)) {
+    return { error: `Coupon not valid for ${paymentMethod} payment` };
+  }
+
+  if (coupon.firstOrderOnly) {
+    const first = await isFirstOrder(userId);
+    if (!first) return { error: "This coupon is only for first order" };
+  }
+
+  const couponDiscount = computeDiscount(coupon, subtotal);
+
+  return {
+    couponCode: coupon.code,
+    couponDiscount,
+  };
+}
+
+
+app.get("/api/orders/first-order/:userId", async (req, res) => {
+  try {
+    const userId = normalizeId(req.params.userId);
+    if (!userId) return res.status(400).json({ success: false, message: "userId missing" });
+
+    const first = await isFirstOrder(userId);
+    res.json({ success: true, isFirstOrder: first });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+const TIERS = ["stateFranchiser", "franchiser", "level1", "level2", "level3"];
+
+/**
+ * ✅ SAVE vendor + referral commissions
+ * POST /api/products/:id/commissions
+ *
+ * Body example:
+ * {
+ *   "commission": 10,
+ *   "referralCommissions": {
+ *     "stateFranchiser": { "percentage": 1 },
+ *     "franchiser": { "amount": 15 },
+ *     "level1": { "percentage": 0.5 },
+ *     "level2": { "percentage": 0.3 },
+ *     "level3": { "percentage": 0.2 }
+ *   }
+ * }
+ */
+app.post("/api/products/:id/commissions", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // ✅ validate product id
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid product id" });
+    }
+
+    const { commission, referralCommissions } = req.body;
+
+    // ✅ vendor commission validation
+    const vendorCommission = round2(Number(commission));
+    if (!Number.isFinite(vendorCommission) || vendorCommission < 0 || vendorCommission > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "commission must be a number between 0 and 100",
+      });
+    }
+
+    // ✅ fetch product
+    const product = await Products.findById(id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    // ✅ referral base = amount after vendor commission (calculated from afterDiscount)
+    const base = round2(Number(product.afterDiscount || 0));
+    const vendorAmount = round2((base * vendorCommission) / 100);
+    const referralBase = round2(base - vendorAmount);
+
+    // ✅ normalize referral commissions and always store both percentage & amount
+    const normalized = {};
+    let totalReferralAmount = 0;
+
+    const incoming = referralCommissions && typeof referralCommissions === "object"
+      ? referralCommissions
+      : {};
+
+    for (const tier of TIERS) {
+      const raw = incoming?.[tier] || {};
+
+      // allow either percentage or amount (or both)
+      let percentage = round2(Number(raw.percentage));
+      let amount = round2(Number(raw.amount));
+
+      const hasPct = Number.isFinite(percentage) && percentage >= 0;
+      const hasAmt = Number.isFinite(amount) && amount >= 0;
+
+      // if percentage is provided => compute amount
+      if (hasPct) {
+        amount = round2((referralBase * percentage) / 100);
+      } else if (hasAmt) {
+        // if amount is provided => compute percentage
+        percentage = referralBase > 0 ? round2((amount / referralBase) * 100) : 0;
+      } else {
+        percentage = 0;
+        amount = 0;
+      }
+
+      // clamp %
+      if (percentage > 100) percentage = 100;
+
+      normalized[tier] = { percentage, amount };
+      totalReferralAmount = round2(totalReferralAmount + amount);
+    }
+
+    // ✅ validation: referrals must not exceed referralBase
+    if (totalReferralAmount > referralBase) {
+      return res.status(400).json({
+        success: false,
+        message: "Total referral amount cannot exceed Amount After Vendor (referralBase).",
+        referralBase,
+        totalReferralAmount,
+      });
+    }
+
+    // ✅ save fields into product
+    product.commission = vendorCommission;
+    product.referralBase = referralBase;
+    product.referralCommissions = normalized;
+    product.totalReferralAmount = totalReferralAmount;
+
+    // optional: update status
+    product.status = "Admin Approved"; // change if you want
+
+    await product.save();
+
+    return res.json({
+      success: true,
+      message: "Commissions saved successfully",
+      product: {
+        _id: product._id,
+        commission: product.commission,
+        referralBase: product.referralBase,
+        referralCommissions: product.referralCommissions,
+        totalReferralAmount: product.totalReferralAmount,
+        status: product.status,
+      },
+    });
+  } catch (err) {
+    console.error("Save commissions error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/* =========================
+   REVIEW MODEL (inside app.js)
+========================= */
+const reviewSchema = new mongoose.Schema(
+  {
+    orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", required: true, index: true },
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Products", required: true, index: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+
+    rating: { type: Number, required: true, min: 1, max: 5 },
+    title: { type: String, default: "" },
+    comment: { type: String, default: "" },
+
+    images: [{ type: String }], // optional
+    isVerifiedPurchase: { type: Boolean, default: true },
+  },
+  { timestamps: true }
+);
+
+// prevent duplicate review for same order+product+user
+reviewSchema.index({ orderId: 1, productId: 1, userId: 1 }, { unique: true });
+
+const Review = mongoose.model("Review", reviewSchema);
+
+/* =========================
+   REVIEW ENDPOINTS
+========================= */
+
+// ✅ Create review (delivered only)
+app.post("/api/product/reviews", async (req, res) => {
+  try {
+    const { orderId, productId, userId, rating, title, comment } = req.body;
+
+    if (!orderId || !productId || !userId) {
+      return res.status(400).json({
+        success: false,
+        message: "orderId, productId, userId are required",
+      });
+    }
+
+    if (!rating || Number(rating) < 1 || Number(rating) > 5) {
+      return res.status(400).json({
+        success: false,
+        message: "rating must be between 1-5",
+      });
+    }
+
+    // 1️⃣ Check order exists
+    const order = await Order.findById(orderId).lean();
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // 2️⃣ Check ownership
+    if (String(order.userId) !== String(userId)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not allowed",
+      });
+    }
+
+    // 3️⃣ Check delivered
+    if (order?.orderStatus?.currentStatus !== "delivered") {
+      return res.status(400).json({
+        success: false,
+        message: "Review allowed only after delivery",
+      });
+    }
+
+    // 🔥 FIX FOR POPULATED productId
+    const normalizeId = (v) => {
+      if (!v) return null;
+      if (typeof v === "string") return v;
+      return String(v._id || v.id || v);
+    };
+
+    const productIdStr = normalizeId(productId);
+
+    const hasProduct = Array.isArray(order.orderItems)
+      ? order.orderItems.some(
+          (it) => normalizeId(it.productId) === productIdStr
+        )
+      : false;
+
+    if (!hasProduct) {
+      return res.status(400).json({
+        success: false,
+        message: "This product is not part of the order",
+      });
+    }
+
+    // 4️⃣ Create review
+    const review = await Review.create({
+      orderId,
+      productId,
+      userId,
+      rating: Number(rating),
+      title: title || "",
+      comment: comment || "",
+      isVerifiedPurchase: true,
+    });
+
+    res.json({ success: true, review });
+  } catch (e) {
+    if (e.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Review already submitted for this product",
+      });
+    }
+
+    console.error("Review create error:", e);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+app.get("/api/reviews/product/:productId", async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    const reviews = await Review.find({ productId })
+      .populate("userId", "name")
+      .sort({ createdAt: -1 });
+
+    const totalReviews = reviews.length;
+    const averageRating =
+      totalReviews > 0
+        ? (
+            reviews.reduce((acc, r) => acc + r.rating, 0) /
+            totalReviews
+          ).toFixed(1)
+        : 0;
+
+    res.json({
+      success: true,
+      totalReviews,
+      averageRating,
+      reviews,
+    });
+  } catch (e) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch reviews",
+    });
+  }
+});
+app.get("/api/reviews/user/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const reviews = await Review.find({ userId })
+      .populate("productId", "itemName images")
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      reviews,
+    });
+  } catch (e) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch user reviews",
+    });
+  }
+});
+
+// ✅ Get user's reviews for a specific order (so UI can hide button if already reviewed)
+app.get("/api/reviews/order/:orderId/user/:userId", async (req, res) => {
+  try {
+    const { orderId, userId } = req.params;
+
+    const reviews = await Review.find({ orderId, userId }).lean();
+    return res.json({ success: true, reviews });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: "Failed to load reviews" });
+  }
+});
+
+
 
 
 app.use("/uploads", express.static("uploads"));

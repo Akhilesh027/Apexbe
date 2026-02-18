@@ -241,6 +241,14 @@ const orderSchema = new mongoose.Schema({
     },
     
     // Additional summary fields
+    // add inside orderSchema (top-level)
+coupon: {
+  code: String,
+  type: { type: String, enum: ["flat", "percent"] },
+  value: Number,
+  discount: { type: Number, default: 0 },
+},
+
     couponCode: String,
     couponDiscount: {
       type: Number,
@@ -344,7 +352,18 @@ const orderSchema = new mongoose.Schema({
       default: 'general'
     }
   }],
-
+fulfillment: {
+  type: { type: String, enum: ["delivery", "pickup"], default: "delivery" },
+  pickupLocationId: { type: mongoose.Schema.Types.ObjectId, ref: "PickupLocation", default: null },
+  pickupSlot: {
+    date: String,   // "2026-02-20"
+    time: String,   // "10:00-11:00"
+  },
+},
+preOrder: {
+  isPreOrder: { type: Boolean, default: false },
+  availableOn: { type: Date, default: null }, // max of items availability
+},
   customerNotes: String,
   internalNotes: String,
 

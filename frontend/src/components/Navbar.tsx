@@ -13,11 +13,11 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import logo from "../Web images/Web images/logo.png";
 import FormModal from "./FormModal.tsx";
 
-const API_BASE = "https://api.apexbee.in/api"; // ✅ change if needed
+const API_BASE = "https://api.apexbee.in/api";
 const TOKEN_KEY = "token";
 const USER_KEY = "user";
 
@@ -35,7 +35,11 @@ const Navbar = () => {
 
   const [cartItemsCount, setCartItemsCount] = useState(0);
   const [ordersCount, setOrdersCount] = useState(0);
-  const [walletBalance, setWalletBalance] = useState(0);
+
+  /** ✅ UPDATED: show AVAILABLE wallet (and support hold/total if backend returns) */
+  const [walletTotal, setWalletTotal] = useState(0);
+  const [walletHold, setWalletHold] = useState(0);
+  const walletAvailable = Math.max(0, walletTotal - walletHold);
 
   const [loading, setLoading] = useState({
     wallet: false,
@@ -57,13 +61,22 @@ const Navbar = () => {
   const [shopByOpen, setShopByOpen] = useState(false);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
 
+  /** ✅ close dropdowns on outside click / Esc */
+  const shopByRef = useRef<HTMLDivElement | null>(null);
+  const earnRef = useRef<HTMLDivElement | null>(null);
+
+  const closeAllPopovers = useCallback(() => {
+    setEarnDropdownOpen(false);
+    setShopByOpen(false);
+    setMobileEarnOpen(false);
+  }, []);
+
   const handleOpenForm = (title: string, endpoint: string) => {
     setModalTitle(title);
     setModalEndpoint(endpoint);
     setModalOpen(true);
-    setEarnDropdownOpen(false);
+    closeAllPopovers();
     setMobileMenuOpen(false);
-    setMobileEarnOpen(false);
   };
 
   const getUserData = useCallback(() => {
@@ -78,15 +91,16 @@ const Navbar = () => {
 
     setLoggedInUser(null);
     setCartItemsCount(0);
-    setWalletBalance(0);
     setOrdersCount(0);
 
+    setWalletTotal(0);
+    setWalletHold(0);
+
     setMobileMenuOpen(false);
-    setEarnDropdownOpen(false);
-    setShopByOpen(false);
+    closeAllPopovers();
 
     navigate("/login");
-  }, [navigate]);
+  }, [navigate, closeAllPopovers]);
 
   // ✅ cart count
   const fetchCartItemsCount = useCallback(
@@ -151,7 +165,7 @@ const Navbar = () => {
     [handleLogout]
   );
 
-  // ✅ wallet
+  /** ✅ UPDATED: wallet split normalization (total/hold/available) */
   const fetchWalletBalance = useCallback(
     async (token: string) => {
       if (!token) return;
@@ -164,15 +178,39 @@ const Navbar = () => {
 
         if (response.ok) {
           const data = await response.json();
-          setWalletBalance(data?.totalEarnings || 0);
+
+          // Try wallet split first (recommended)
+          const total =
+            Number(
+              data?.walletTotal ??
+                data?.walletBalance ??
+                data?.wallet ??
+                data?.purchaseCommissionTotal ??
+                data?.totalEarnings ?? // fallback
+                0
+            ) || 0;
+
+          const hold =
+            Number(
+              data?.walletHold ??
+                data?.holdBalance ??
+                data?.walletOnHold ??
+                data?.pendingHold ??
+                0
+            ) || 0;
+
+          setWalletTotal(total);
+          setWalletHold(hold);
         } else if (response.status === 401) {
           handleLogout();
         } else {
-          setWalletBalance(0);
+          setWalletTotal(0);
+          setWalletHold(0);
         }
       } catch (error) {
         console.error("Error fetching wallet balance:", error);
-        setWalletBalance(0);
+        setWalletTotal(0);
+        setWalletHold(0);
       } finally {
         setLoading((p) => ({ ...p, wallet: false }));
       }
@@ -216,8 +254,9 @@ const Navbar = () => {
     } else {
       setLoggedInUser(null);
       setCartItemsCount(0);
-      setWalletBalance(0);
       setOrdersCount(0);
+      setWalletTotal(0);
+      setWalletHold(0);
     }
   }, [getUserData, fetchCartItemsCount, fetchOrdersCount, fetchWalletBalance]);
 
@@ -234,17 +273,14 @@ const Navbar = () => {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, [fetchUserData, fetchCategories]);
 
-  // refresh counts on route change (important)
+  // refresh counts on route change
   useEffect(() => {
     fetchUserData();
-    // close popovers on navigation
-    setEarnDropdownOpen(false);
-    setShopByOpen(false);
+    closeAllPopovers();
     setMobileMenuOpen(false);
-    setMobileEarnOpen(false);
   }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // periodic refresh
+  // periodic refresh (counts + wallet)
   useEffect(() => {
     if (!loggedInUser) return;
 
@@ -254,12 +290,33 @@ const Navbar = () => {
     const interval = setInterval(() => {
       fetchCartItemsCount(user._id, token);
       fetchOrdersCount(user._id, token);
+      fetchWalletBalance(token);
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [loggedInUser, fetchCartItemsCount, fetchOrdersCount, getUserData]);
+  }, [loggedInUser, fetchCartItemsCount, fetchOrdersCount, fetchWalletBalance, getUserData]);
 
-  const formatWalletBalance = (balance: number) => {
+  /** ✅ close dropdowns when clicking outside or pressing ESC */
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (shopByOpen && shopByRef.current && !shopByRef.current.contains(t)) setShopByOpen(false);
+      if (earnDropdownOpen && earnRef.current && !earnRef.current.contains(t)) setEarnDropdownOpen(false);
+    };
+
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeAllPopovers();
+    };
+
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [shopByOpen, earnDropdownOpen, closeAllPopovers]);
+
+  const formatMoney = (balance: number) => {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
       currency: "INR",
@@ -320,7 +377,7 @@ const Navbar = () => {
                 className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left"
                 onClick={() => {
                   setShopByOpen(false);
-                  navigate(`/category/${c.name}`);
+                  navigate(`/category/${encodeURIComponent(c.name)}`);
                 }}
               >
                 <div className="h-10 w-10 rounded-lg overflow-hidden bg-gray-100 border flex items-center justify-center">
@@ -350,17 +407,21 @@ const Navbar = () => {
         <div className="container mx-auto px-4">
           <div className="flex items-center justify-between h-14">
             {/* Logo */}
-            <Link to="/" className="text-2xl font-bold">
+            <Link to="/" className="text-2xl font-bold" onClick={closeAllPopovers}>
               <img src={logo} alt="logo" className="w-32 h-auto" />
             </Link>
 
             {/* Desktop Menu */}
             <div className="hidden md:flex items-center space-x-8 text-sm">
-              <Link to="/" className="hover:text-accent transition">HOME</Link>
-              <Link to="/categories" className="hover:text-accent transition">CATEGORY</Link>
+              <Link to="/" className="hover:text-accent transition">
+                HOME
+              </Link>
+              <Link to="/categories" className="hover:text-accent transition">
+                CATEGORY
+              </Link>
 
               {/* Earn With Us */}
-              <div className="relative">
+              <div className="relative" ref={earnRef}>
                 <Button
                   variant="ghost"
                   className="flex items-center gap-1 hover:text-accent hover:bg-transparent"
@@ -371,28 +432,40 @@ const Navbar = () => {
 
                 {earnDropdownOpen && (
                   <div className="absolute top-full left-0 bg-white text-black rounded shadow-lg mt-1 w-56 z-50">
-                    <button className="block w-full text-left px-4 py-2 hover:bg-gray-100"
-                      onClick={() => handleOpenForm("Become a Vendor", "vendor")}>
+                    <button
+                      className="block w-full text-left px-4 py-2 hover:bg-gray-100"
+                      onClick={() => handleOpenForm("Become a Vendor", "vendor")}
+                    >
                       BECOME A VENDOR
                     </button>
-                    <button className="block w-full text-left px-4 py-2 hover:bg-gray-100"
-                      onClick={() => handleOpenForm("Become a Franchiser", "franchiser")}>
+                    <button
+                      className="block w-full text-left px-4 py-2 hover:bg-gray-100"
+                      onClick={() => handleOpenForm("Become a Franchiser", "franchiser")}
+                    >
                       BECOME A FRANCHISER
                     </button>
-                    <button className="block w-full text-left px-4 py-2 hover:bg-gray-100"
-                      onClick={() => handleOpenForm("Become a Freelancer", "freelancer")}>
+                    <button
+                      className="block w-full text-left px-4 py-2 hover:bg-gray-100"
+                      onClick={() => handleOpenForm("Become a Freelancer", "freelancer")}
+                    >
                       BECOME A FREELANCER
                     </button>
-                    <button className="block w-full text-left px-4 py-2 hover:bg-gray-100"
-                      onClick={() => handleOpenForm("Become an Entrepreneur", "entrepreneur")}>
+                    <button
+                      className="block w-full text-left px-4 py-2 hover:bg-gray-100"
+                      onClick={() => handleOpenForm("Become an Entrepreneur", "entrepreneur")}
+                    >
                       BECOME AN ENTREPRENEUR
                     </button>
                   </div>
                 )}
               </div>
 
-              <Link to="/local-stores" className="hover:text-accent transition">LOCAL STORES</Link>
-              <Link to="/referrals" className="hover:text-accent transition">REFER & EARN</Link>
+              <Link to="/local-stores" className="hover:text-accent transition">
+                LOCAL STORES
+              </Link>
+              <Link to="/referrals" className="hover:text-accent transition">
+                REFER & EARN
+              </Link>
             </div>
 
             <FormModal
@@ -413,11 +486,11 @@ const Navbar = () => {
                   size="sm"
                   className="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 h-7 flex items-center gap-1"
                   onClick={() => navigate("/referrals")}
-                  title="Click to view referral earnings"
+                  title={`Wallet Available: ${formatMoney(walletAvailable)} (Hold: ${formatMoney(walletHold)})`}
                   disabled={loading.wallet}
                 >
                   <Wallet className="h-3 w-3" />
-                  {loading.wallet ? <span className="animate-pulse">...</span> : formatWalletBalance(walletBalance)}
+                  {loading.wallet ? <span className="animate-pulse">...</span> : formatMoney(walletAvailable)}
                 </Button>
               )}
 
@@ -433,7 +506,7 @@ const Navbar = () => {
       {/* Row 2 */}
       <div className="container mx-auto px-4 py-3 flex items-center gap-4">
         {/* ✅ Shop by Category dropdown */}
-        <div className="relative">
+        <div className="relative" ref={shopByRef}>
           <Button
             variant="outline"
             className="text-foreground bg-white border-0 hover:bg-gray-50"
@@ -496,12 +569,16 @@ const Navbar = () => {
                   <Link to="/profile" className="text-sm hover:text-accent transition font-medium">
                     Hi, {loggedInUser.name || "User"}
                   </Link>
-                  {walletBalance > 0 && (
-                    <span className="text-xs text-green-400">
-                      Wallet: {formatWalletBalance(walletBalance)}
-                    </span>
-                  )}
+
+                  {/* ✅ show available + hold */}
+                  <span className="text-xs text-green-400">
+                    Wallet: {formatMoney(walletAvailable)}
+                    {walletHold > 0 ? (
+                      <span className="text-yellow-300"> • Hold: {formatMoney(walletHold)}</span>
+                    ) : null}
+                  </span>
                 </div>
+
                 <Button size="sm" onClick={handleLogout} className="bg-red-500 hover:bg-red-600 text-white px-3">
                   Logout
                 </Button>
@@ -549,7 +626,11 @@ const Navbar = () => {
               <Link to="/" className="block py-2 hover:text-accent transition" onClick={() => setMobileMenuOpen(false)}>
                 HOME
               </Link>
-              <Link to="/categories" className="block py-2 hover:text-accent transition" onClick={() => setMobileMenuOpen(false)}>
+              <Link
+                to="/categories"
+                className="block py-2 hover:text-accent transition"
+                onClick={() => setMobileMenuOpen(false)}
+              >
                 CATEGORY
               </Link>
 
@@ -565,33 +646,53 @@ const Navbar = () => {
 
                 {mobileEarnOpen && (
                   <div className="pl-4 space-y-2 mt-2 border-l border-navy-light">
-                    <button className="block w-full text-left py-2 hover:text-accent transition"
-                      onClick={() => handleOpenForm("Become a Vendor", "vendor")}>
+                    <button
+                      className="block w-full text-left py-2 hover:text-accent transition"
+                      onClick={() => handleOpenForm("Become a Vendor", "vendor")}
+                    >
                       BECOME A VENDOR
                     </button>
-                    <button className="block w-full text-left py-2 hover:text-accent transition"
-                      onClick={() => handleOpenForm("Become a Franchiser", "franchiser")}>
+                    <button
+                      className="block w-full text-left py-2 hover:text-accent transition"
+                      onClick={() => handleOpenForm("Become a Franchiser", "franchiser")}
+                    >
                       BECOME A FRANCHISER
                     </button>
-                    <button className="block w-full text-left py-2 hover:text-accent transition"
-                      onClick={() => handleOpenForm("Become a Freelancer", "freelancer")}>
+                    <button
+                      className="block w-full text-left py-2 hover:text-accent transition"
+                      onClick={() => handleOpenForm("Become a Freelancer", "freelancer")}
+                    >
                       BECOME A FREELANCER
                     </button>
-                    <button className="block w-full text-left py-2 hover:text-accent transition"
-                      onClick={() => handleOpenForm("Become an Entrepreneur", "entrepreneur")}>
+                    <button
+                      className="block w-full text-left py-2 hover:text-accent transition"
+                      onClick={() => handleOpenForm("Become an Entrepreneur", "entrepreneur")}
+                    >
                       BECOME AN ENTREPRENEUR
                     </button>
                   </div>
                 )}
               </div>
 
-              <Link to="/local-stores" className="block py-2 hover:text-accent transition" onClick={() => setMobileMenuOpen(false)}>
+              <Link
+                to="/local-stores"
+                className="block py-2 hover:text-accent transition"
+                onClick={() => setMobileMenuOpen(false)}
+              >
                 LOCAL STORES
               </Link>
-              <Link to="/referrals" className="block py-2 hover:text-accent transition" onClick={() => setMobileMenuOpen(false)}>
+              <Link
+                to="/referrals"
+                className="block py-2 hover:text-accent transition"
+                onClick={() => setMobileMenuOpen(false)}
+              >
                 REFER & EARN
               </Link>
-              <Link to="/wishlist" className="block py-2 hover:text-accent transition" onClick={() => setMobileMenuOpen(false)}>
+              <Link
+                to="/wishlist"
+                className="block py-2 hover:text-accent transition"
+                onClick={() => setMobileMenuOpen(false)}
+              >
                 WISHLIST
               </Link>
             </div>
@@ -603,11 +704,12 @@ const Navbar = () => {
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex flex-col">
                       <span className="font-medium">Hi, {loggedInUser.name || "User"}</span>
-                      {walletBalance > 0 && (
-                        <span className="text-sm text-green-400">
-                          Wallet: {formatWalletBalance(walletBalance)}
-                        </span>
-                      )}
+                      <span className="text-sm text-green-400">
+                        Wallet: {formatMoney(walletAvailable)}
+                        {walletHold > 0 ? (
+                          <span className="text-yellow-300"> • Hold: {formatMoney(walletHold)}</span>
+                        ) : null}
+                      </span>
                     </div>
                     <Button size="sm" onClick={handleLogout} className="bg-red-500 hover:bg-red-600 text-white px-3">
                       Logout
@@ -615,14 +717,20 @@ const Navbar = () => {
                   </div>
 
                   <div className="space-y-3">
-                    <Link to="/profile" className="flex items-center py-2 hover:text-accent transition"
-                      onClick={() => setMobileMenuOpen(false)}>
+                    <Link
+                      to="/profile"
+                      className="flex items-center py-2 hover:text-accent transition"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
                       <User className="h-4 w-4 mr-3" />
                       My Profile
                     </Link>
 
-                    <Link to="/my-orders" className="flex items-center py-2 hover:text-accent transition"
-                      onClick={() => setMobileMenuOpen(false)}>
+                    <Link
+                      to="/my-orders"
+                      className="flex items-center py-2 hover:text-accent transition"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
                       <Package className="h-4 w-4 mr-3" />
                       <span>My Orders</span>
                       {ordersCount > 0 && !loading.orders && (
@@ -632,8 +740,11 @@ const Navbar = () => {
                       )}
                     </Link>
 
-                    <Link to="/cart" className="flex items-center py-2 hover:text-accent transition"
-                      onClick={() => setMobileMenuOpen(false)}>
+                    <Link
+                      to="/cart"
+                      className="flex items-center py-2 hover:text-accent transition"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
                       <ShoppingBag className="h-4 w-4 mr-3" />
                       <span>My Cart</span>
                       {cartItemsCount > 0 && !loading.cart && (
@@ -645,8 +756,11 @@ const Navbar = () => {
                   </div>
                 </>
               ) : (
-                <Link to="/login" className="flex items-center py-3 hover:text-accent transition"
-                  onClick={() => setMobileMenuOpen(false)}>
+                <Link
+                  to="/login"
+                  className="flex items-center py-3 hover:text-accent transition"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
                   <User className="h-5 w-5 mr-3" />
                   <span>Login / Signup</span>
                 </Link>

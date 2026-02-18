@@ -91,6 +91,11 @@ interface ReferralStats {
       level3?: number;
     };
   };
+
+  /** ✅ NEW: Wallet split (for PDF rules: instant reduce + hold) */
+  walletTotal?: number;
+  walletHold?: number;
+  walletAvailable?: number;
 }
 
 interface ReferralHistory {
@@ -179,7 +184,7 @@ interface NetworkData {
   };
 }
 
-/** ✅ NEW: Bank details + withdrawals */
+/** ✅ Bank details + withdrawals */
 type BankDetails = {
   accountHolderName: string;
   bankName: string;
@@ -199,6 +204,10 @@ type WithdrawalRequest = {
   processedAt?: string;
   referenceId?: string;
   rejectReason?: string;
+  // optional fee info if backend returns
+  feePercent?: number;
+  feeAmount?: number;
+  netAmount?: number;
 };
 
 const API_BASE = "https://api.apexbee.in/api";
@@ -247,6 +256,11 @@ const Referrals = () => {
     level1Count: 0,
     level2Count: 0,
     level3Count: 0,
+
+    // ✅ wallet split defaults
+    walletTotal: 0,
+    walletHold: 0,
+    walletAvailable: 0,
   });
 
   const [referralHistory, setReferralHistory] = useState<ReferralHistory[]>([]);
@@ -266,7 +280,7 @@ const Referrals = () => {
     withdraw: false,
   });
 
-  /** ✅ NEW withdraw states */
+  /** ✅ withdraw states */
   const [bankDetails, setBankDetails] = useState<BankDetails>({
     accountHolderName: "",
     bankName: "",
@@ -297,8 +311,8 @@ const Referrals = () => {
 
   // Helper function to calculate APEX values
   const calculateApexValues = (s: ReferralStats) => {
-    const apexWallet = s.purchaseCommissionTotal || 0; // Purchase commissions
-    const apexBonus = s.signupBonusTotal || 0; // Bonuses
+    const apexWallet = s.purchaseCommissionTotal || 0;
+    const apexBonus = s.signupBonusTotal || 0;
     const totalEarnings = apexWallet + apexBonus;
     return { apexWallet, apexBonus, totalEarnings };
   };
@@ -375,9 +389,45 @@ const Referrals = () => {
     [commissionHistory]
   );
 
+  /** ✅ PDF rule: 15% fee (TDS + PLATFORM FEE) */
+  const WITHDRAW_FEE_PERCENT = 15;
+
+  /** ✅ Wallet split (supports multiple backend shapes safely) */
+  const walletTotal = useMemo(() => {
+    const v =
+      (stats.walletTotal ??
+        (stats as any).walletBalance ??
+        (stats as any).wallet ??
+        stats.purchaseCommissionTotal ??
+        0) as number;
+    return Number(v) || 0;
+  }, [stats]);
+
+  const walletHold = useMemo(() => {
+    const v =
+      (stats.walletHold ??
+        (stats as any).holdBalance ??
+        (stats as any).walletOnHold ??
+        (stats as any).pendingHold ??
+        0) as number;
+    return Number(v) || 0;
+  }, [stats]);
+
+  const walletAvailable = useMemo(() => {
+    const explicit = (stats.walletAvailable ?? (stats as any).availableBalance) as number | undefined;
+    if (explicit !== undefined && explicit !== null) return Number(explicit) || 0;
+    const avail = walletTotal - walletHold;
+    return avail > 0 ? avail : 0;
+  }, [stats, walletTotal, walletHold]);
+
+  const calcWithdrawFee = (amount: number) => {
+    const fee = Math.round((amount * WITHDRAW_FEE_PERCENT) / 100);
+    const net = Math.max(0, amount - fee);
+    return { fee, net };
+  };
+
   useEffect(() => {
     fetchReferralData();
-    // also load withdraw info
     fetchWithdrawData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -412,6 +462,21 @@ const Referrals = () => {
       });
       if (!statsRes.ok) throw new Error("Failed to fetch referral stats");
       const statsData = await statsRes.json();
+
+      // ✅ normalize wallet split
+      const total =
+        Number(
+          statsData.walletTotal ??
+            statsData.walletBalance ??
+            statsData.wallet ??
+            statsData.purchaseCommissionTotal ??
+            0
+        ) || 0;
+      const hold =
+        Number(statsData.walletHold ?? statsData.holdBalance ?? statsData.walletOnHold ?? 0) || 0;
+      const available =
+        Number(statsData.walletAvailable ?? statsData.availableBalance ?? (total - hold)) || 0;
+
       setStats((prev) => ({
         ...prev,
         ...statsData,
@@ -435,6 +500,12 @@ const Referrals = () => {
         level1Count: statsData.level1Count || 0,
         level2Count: statsData.level2Count || 0,
         level3Count: statsData.level3Count || 0,
+
+        // ✅ wallet split set
+        walletTotal: total,
+        walletHold: hold,
+        walletAvailable: available < 0 ? 0 : available,
+        walletBalance: total, // keep legacy field aligned
       }));
       setLoadingSections((prev) => ({ ...prev, stats: false }));
 
@@ -503,7 +574,7 @@ const Referrals = () => {
     }
   };
 
-  /** ✅ NEW: load bank details + withdrawals */
+  /** ✅ load bank details + withdrawals */
   const fetchWithdrawData = async () => {
     try {
       setLoadingSections((prev) => ({ ...prev, withdraw: true }));
@@ -700,12 +771,13 @@ const Referrals = () => {
       color: "text-navy",
     },
     {
-      label: "APEX Wallet",
-      value: `Rs. ${Math.round(stats.purchaseCommissionTotal || 0)}`,
-      icon: Gift,
-      description: "Purchase commissions",
-      color: "text-green-600",
+      label: "Wallet Available",
+      value: `Rs. ${Math.round(walletAvailable)}`,
+      icon: IndianRupee,
+      description: "Available to withdraw",
+      color: "text-green-700",
     },
+   
     {
       label: "APEX Bonus",
       value: `Rs. ${Math.round(stats.signupBonusTotal)}`,
@@ -727,13 +799,6 @@ const Referrals = () => {
       description: "Level 1 team members",
       color: "text-green-700",
     },
-    {
-      label: "Indirect Referrals",
-      value: calculateTotalIndirectReferrals().toString(),
-      icon: Users,
-      description: "Level 2 & Level 3 Team",
-      color: "text-blue-700",
-    },
   ];
 
   const formatDate = (dateString: string) => {
@@ -752,7 +817,7 @@ const Referrals = () => {
       .map((_, i) => <Skeleton key={i} className="h-32 w-full" />);
   };
 
-  /** ✅ NEW: withdraw helpers */
+  /** ✅ withdraw helpers */
   const getWithdrawStatusBadge = (status: WithdrawalStatus) => {
     const map: Record<WithdrawalStatus, string> = {
       pending: "bg-yellow-100 text-yellow-800 border-yellow-200",
@@ -804,14 +869,15 @@ const Referrals = () => {
     }
   };
 
+  /** ✅ UPDATED: withdraw uses AVAILABLE + instant reduce (move to hold) + 15% fee */
   const requestWithdraw = async () => {
     const amt = Number(withdrawAmount);
+
     if (!amt || amt <= 0) {
       toast({ title: "Invalid amount", description: "Enter a valid withdraw amount", variant: "destructive" });
       return;
     }
 
-    // optional: block if bank not saved
     const msg = validateBank(bankDetails);
     if (!bankSaved || msg) {
       toast({
@@ -822,25 +888,29 @@ const Referrals = () => {
       return;
     }
 
-    // optional: amount <= wallet
-    const wallet = Number(stats.purchaseCommissionTotal || 0);
-    if (amt > wallet) {
+    if (amt > walletAvailable) {
       toast({
-        title: "Not enough balance",
-        description: `You can withdraw up to Rs. ${Math.round(wallet)}`,
+        title: "Not enough available balance",
+        description: `You can withdraw up to Rs. ${Math.round(walletAvailable)}`,
         variant: "destructive",
       });
       return;
     }
 
+    const { fee, net } = calcWithdrawFee(amt);
+
     try {
       setLoadingSections((p) => ({ ...p, withdraw: true }));
       const res = await apiFetch("/wallet/withdrawals", {
         method: "POST",
-        body: JSON.stringify({ amount: amt, note: withdrawNote }),
+        body: JSON.stringify({
+          amount: amt,
+          note: withdrawNote,
+          feePercent: WITHDRAW_FEE_PERCENT, // optional
+        }),
       });
-      const json = await res.json().catch(() => ({}));
 
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast({
           title: "Withdraw request failed",
@@ -850,11 +920,35 @@ const Referrals = () => {
         return;
       }
 
-      toast({ title: "Request submitted", description: "Your withdrawal request is created (Pending)" });
+      // ✅ instant UI update: move requested amount into HOLD so Available reduces immediately
+      setStats((prev) => {
+        const prevTotal =
+          Number(prev.walletTotal ?? (prev as any).walletBalance ?? prev.purchaseCommissionTotal ?? 0) || 0;
+        const prevHold =
+          Number(prev.walletHold ?? (prev as any).holdBalance ?? (prev as any).walletOnHold ?? 0) || 0;
+
+        const newHold = prevHold + amt;
+        const newAvail = Math.max(0, prevTotal - newHold);
+
+        return {
+          ...prev,
+          walletTotal: prevTotal,
+          walletHold: newHold,
+          walletAvailable: newAvail,
+          walletBalance: prevTotal,
+        };
+      });
+
+      toast({
+        title: "Request submitted",
+        description: `Withdraw created. Fee: Rs. ${fee} (TDS + PLATFORM FEE). You will receive Rs. ${net}.`,
+      });
+
       setWithdrawAmount("");
       setWithdrawNote("");
+
       await fetchWithdrawData(); // refresh list
-      await fetchReferralData(); // refresh wallet (if backend subtracts reserved/available)
+      await fetchReferralData(); // refresh wallet from backend truth
     } catch (e) {
       toast({ title: "Error", description: "Unable to create withdraw request", variant: "destructive" });
     } finally {
@@ -895,8 +989,7 @@ const Referrals = () => {
           <div>
             <h1 className="text-3xl font-bold text-navy">Refer & Earn Dashboard</h1>
             <p className="text-muted-foreground mt-2">
-              Level {stats.userLevel} •{" "}
-              {stats.hasParent ? `Referred by ${stats.parentInfo?.name || "someone"}` : "No referrer"}
+              Level {stats.userLevel} • {stats.hasParent ? `Referred by ${stats.parentInfo?.name || "someone"}` : "No referrer"}
             </p>
             {stats.parentInfo && (
               <p className="text-sm text-gray-600 mt-1">
@@ -904,7 +997,15 @@ const Referrals = () => {
               </p>
             )}
           </div>
-          <Button onClick={() => { fetchReferralData(); fetchWithdrawData(); }} variant="outline" size="sm" disabled={loading}>
+          <Button
+            onClick={() => {
+              fetchReferralData();
+              fetchWithdrawData();
+            }}
+            variant="outline"
+            size="sm"
+            disabled={loading}
+          >
             {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
             Refresh
           </Button>
@@ -918,6 +1019,7 @@ const Referrals = () => {
               <p className="text-lg mb-2">Earn ₹50 for Direct Referrals</p>
               <p className="text-lg mb-2">Introduce Your Friends & Earn Unlimited Income</p>
               <p className="text-lg font-semibold mb-4">"No Boss – No Limits – Just Earnings"</p>
+
               <div className="flex flex-wrap gap-4">
                 <div className="bg-white/20 rounded-lg p-3">
                   <p className="text-sm">Direct Referral Bonus</p>
@@ -930,16 +1032,21 @@ const Referrals = () => {
                 </div>
               </div>
             </div>
+
             <div className="text-center">
               <Gift className="h-16 w-16 mx-auto mb-4" />
-              <div className="bg-white/20 rounded-lg p-4">
-                <p className="text-sm">APEX Wallet</p>
-                <p className="text-2xl font-bold">Rs. {Math.round(stats.purchaseCommissionTotal || 0)}</p>
+
+              {/* ✅ Wallet summary */}
+              <div className="bg-white/20 rounded-lg p-4 space-y-1">
+                <p className="text-sm">Wallet Available</p>
+                <p className="text-2xl font-bold">Rs. {Math.round(walletAvailable)}</p>
+                <p className="text-xs opacity-90">
+                  Total: Rs. {Math.round(walletTotal)} • Hold: Rs. {Math.round(walletHold)}
+                </p>
+                <p className="text-[11px] opacity-90">Fee: {WITHDRAW_FEE_PERCENT}% (TDS + PLATFORM FEE)</p>
               </div>
-              <Button
-                className="mt-4 bg-white text-navy hover:bg-white/90"
-                onClick={() => setActiveTab("withdraw")}
-              >
+
+              <Button className="mt-4 bg-white text-navy hover:bg-white/90" onClick={() => setActiveTab("withdraw")}>
                 <IndianRupee className="h-4 w-4 mr-2" />
                 Withdraw
               </Button>
@@ -1035,6 +1142,15 @@ const Referrals = () => {
                     </Button>
                   </div>
                 </div>
+
+                {/* ✅ Wallet fee note */}
+                <div className="rounded-lg border bg-slate-50 p-4 text-sm text-slate-700">
+                  Withdrawals have a <span className="font-semibold">{WITHDRAW_FEE_PERCENT}%</span> deduction (
+                  <span className="font-semibold">TDS + PLATFORM FEE</span>).
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Available decreases immediately after you submit a withdrawal request (moves to Hold).
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
@@ -1069,291 +1185,265 @@ const Referrals = () => {
             )}
           </TabsContent>
 
-          {/* ✅ Earnings Tab (your existing tab kept as-is, not repeating here to save message length)
-              Keep your current earnings tab content exactly same as you pasted. */}
-        <TabsContent value="earnings" className="space-y-6">
-  <div className="grid lg:grid-cols-3 gap-6">
-    {/* LEFT: Main breakdown */}
-    <Card className="lg:col-span-2">
-      <CardHeader>
-        <CardTitle>APEX Earnings Breakdown</CardTitle>
-      </CardHeader>
+          {/* Earnings Tab */}
+          <TabsContent value="earnings" className="space-y-6">
+            <div className="grid lg:grid-cols-3 gap-6">
+              {/* LEFT: Main breakdown */}
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>APEX Earnings Breakdown</CardTitle>
+                </CardHeader>
 
-      <CardContent>
-        {loadingSections.earnings ? (
-          <div className="space-y-4">{renderSkeletonCards(3)}</div>
-        ) : (
-          <div className="space-y-4">
-            {/* ✅ Purchase Commissions by Level */}
-            <div className="rounded-2xl border bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">
-              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
-                <div>
-                  <p className="font-semibold text-navy text-base flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-blue-600" />
-                    Purchase Commissions by Level
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Complete commissions earned from purchases in your network (Level 1 / 2 / 3).
-                  </p>
-                </div>
+                <CardContent>
+                  {loadingSections.earnings ? (
+                    <div className="space-y-4">{renderSkeletonCards(3)}</div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Purchase Commissions by Level */}
+                      <div className="rounded-2xl border bg-gradient-to-b from-slate-50 to-white p-5 shadow-sm">
+                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                          <div>
+                            <p className="font-semibold text-navy text-base flex items-center gap-2">
+                              <TrendingUp className="h-4 w-4 text-blue-600" />
+                              Purchase Commissions by Level
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Complete commissions earned from purchases in your network (Level 1 / 2 / 3).
+                            </p>
+                          </div>
 
-                <div className="text-left md:text-right">
-                  <Badge variant="outline" className="bg-white">
-                    Total: Rs. {Math.round(purchaseByLevel.total || 0)}
-                  </Badge>
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    Wallet: Rs. {Math.round(stats.purchaseCommissionTotal || 0)}
-                  </p>
-                </div>
-              </div>
+                          <div className="text-left md:text-right">
+                            <Badge variant="outline" className="bg-white">
+                              Total: Rs. {Math.round(purchaseByLevel.total || 0)}
+                            </Badge>
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                              Wallet Total: Rs. {Math.round(walletTotal)}
+                            </p>
+                          </div>
+                        </div>
 
-              <div className="grid md:grid-cols-3 gap-3">
-                <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-green-800">Level 1 (Direct)</p>
-                    <Badge className="bg-green-100 text-green-800 hover:bg-green-100">L1</Badge>
-                  </div>
-                  <p className="text-2xl font-extrabold text-green-900 mt-2">
-                    Rs. {Math.round((purchaseByLevel.level1 || 0) - (stats.level1FirstPurchaseCommission || 0))}
-                  </p>
-                  <p className="text-xs text-green-700 mt-1">From purchases by your direct referrals</p>
-                </div>
+                        <div className="grid md:grid-cols-3 gap-3">
+                          <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium text-green-800">Level 1 (Direct)</p>
+                              <Badge className="bg-green-100 text-green-800 hover:bg-green-100">L1</Badge>
+                            </div>
+                            <p className="text-2xl font-extrabold text-green-900 mt-2">
+                              Rs. {Math.round((purchaseByLevel.level1 || 0) - (stats.level1FirstPurchaseCommission || 0))}
+                            </p>
+                            <p className="text-xs text-green-700 mt-1">From purchases by your direct referrals</p>
+                          </div>
 
-                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-blue-800">Level 2 (Indirect)</p>
-                    <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">L2</Badge>
-                  </div>
-                  <p className="text-2xl font-extrabold text-blue-900 mt-2">
-                    Rs. {Math.round(purchaseByLevel.level2 || 0)}
-                  </p>
-                  <p className="text-xs text-blue-700 mt-1">From purchases under your Level 1 team</p>
-                </div>
+                          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium text-blue-800">Level 2 (Indirect)</p>
+                              <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">L2</Badge>
+                            </div>
+                            <p className="text-2xl font-extrabold text-blue-900 mt-2">
+                              Rs. {Math.round(purchaseByLevel.level2 || 0)}
+                            </p>
+                            <p className="text-xs text-blue-700 mt-1">From purchases under your Level 1 team</p>
+                          </div>
 
-                <div className="rounded-2xl border border-purple-200 bg-purple-50 p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-purple-800">Level 3 (Extended)</p>
-                    <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100">L3</Badge>
-                  </div>
-                  <p className="text-2xl font-extrabold text-purple-900 mt-2">
-                    Rs. {Math.round(purchaseByLevel.level3 || 0)}
-                  </p>
-                  <p className="text-xs text-purple-700 mt-1">From purchases deeper in your network</p>
-                </div>
-              </div>
+                          <div className="rounded-2xl border border-purple-200 bg-purple-50 p-4">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium text-purple-800">Level 3 (Extended)</p>
+                              <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100">L3</Badge>
+                            </div>
+                            <p className="text-2xl font-extrabold text-purple-900 mt-2">
+                              Rs. {Math.round(purchaseByLevel.level3 || 0)}
+                            </p>
+                            <p className="text-xs text-purple-700 mt-1">From purchases deeper in your network</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Level 1 FIRST Purchase Commission ONLY */}
+                      <div className="rounded-2xl border bg-gradient-to-b from-green-50 to-white p-5 shadow-sm">
+                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                          <div>
+                            <p className="font-semibold text-navy text-base flex items-center gap-2">
+                              <TrendingUp className="h-4 w-4 text-green-700" />
+                              Level 1 – First Purchase Commission
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              One-time commission when your direct referral places their first order.
+                            </p>
+                          </div>
+                          <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Direct</Badge>
+                        </div>
+
+                        <p className="text-4xl font-extrabold text-green-900">
+                          Rs. {Math.round(stats.level1FirstPurchaseCommission || 0)}
+                        </p>
+                      </div>
+
+                      {/* Wish Link Incentive */}
+                      <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-sky-900 flex items-center gap-2">
+                              <Gift className="h-4 w-4 text-sky-700" />
+                              Wish Link Incentive
+                            </p>
+                            <p className="text-xs text-sky-700 mt-1">Earned when someone buys using your wish link.</p>
+                          </div>
+                          <p className="text-2xl font-extrabold text-sky-900">Rs. {Math.round(wishLinkIncentive || 0)}</p>
+                        </div>
+                      </div>
+
+                      {/* Signup Bonus */}
+                      <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-indigo-900 flex items-center gap-2">
+                              <Award className="h-4 w-4 text-indigo-700" />
+                              Signup Bonus
+                            </p>
+                          </div>
+                          <p className="text-2xl font-extrabold text-indigo-900">
+                            Rs. {Math.round(stats.signupBonusTotal || 0)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Wallet split */}
+                      <div className="rounded-2xl border border-orange-200 bg-orange-50 p-5 shadow-sm">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-orange-900 flex items-center gap-2">
+                              <Wallet className="h-4 w-4 text-orange-700" />
+                              Wallet Split
+                            </p>
+                            <p className="text-xs text-orange-800 mt-1">
+                              Available decreases instantly after withdrawal request.
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-extrabold text-orange-900">Rs. {Math.round(walletAvailable)}</p>
+                            <p className="text-xs text-orange-800">
+                              Total {Math.round(walletTotal)} • Hold {Math.round(walletHold)}
+                            </p>
+                            <p className="text-[11px] text-orange-800">Fee {WITHDRAW_FEE_PERCENT}% (TDS + PLATFORM FEE)</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Extra Bonus Cards */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="rounded-2xl border border-purple-200 bg-purple-50 p-4">
+                          <p className="text-sm font-semibold text-purple-900">App Bonus</p>
+                          <p className="text-2xl font-extrabold text-purple-900 mt-2">
+                            Rs. {Math.round((stats as any)?.appBonus || 0)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4">
+                          <p className="text-sm font-semibold text-yellow-900">Special Bonus</p>
+                          <p className="text-2xl font-extrabold text-yellow-900 mt-2">
+                            Rs. {Math.round((stats as any)?.specialBonus || 0)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                          <p className="text-sm font-semibold text-emerald-900">Team Management Bonus</p>
+                          <p className="text-2xl font-extrabold text-emerald-900 mt-2">
+                            Rs. {Math.round((stats as any)?.teamManagementBonus || 0)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Existing Other Incentives */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                          <p className="text-sm font-semibold text-red-900">Membership Incentives</p>
+                          <p className="text-2xl font-extrabold text-red-900 mt-2">
+                            Rs. {Math.round(stats.membershipIncentives || 0)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-pink-200 bg-pink-50 p-4">
+                          <p className="text-sm font-semibold text-pink-900">Vendor Incentives</p>
+                          <p className="text-2xl font-extrabold text-pink-900 mt-2">
+                            Rs. {Math.round(stats.vendorIncentives || 0)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
+                          <p className="text-sm font-semibold text-teal-900">Franchiser Incentives</p>
+                          <p className="text-2xl font-extrabold text-teal-900 mt-2">
+                            Rs. {Math.round(stats.franchiserIncentives || 0)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* RIGHT: Summary */}
+              <Card className="lg:col-span-1">
+                <CardHeader>
+                  <CardTitle>Summary</CardTitle>
+                </CardHeader>
+
+                <CardContent>
+                  {loadingSections.earnings ? (
+                    <div className="space-y-4">{renderSkeletonCards(4)}</div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border bg-white p-4">
+                        <p className="text-xs text-muted-foreground">Wallet Available</p>
+                        <p className="text-2xl font-extrabold text-green-700 mt-1">Rs. {Math.round(walletAvailable)}</p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Total {Math.round(walletTotal)} • Hold {Math.round(walletHold)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl border bg-white p-4">
+                        <p className="text-xs text-muted-foreground">APEX Bonus</p>
+                        <p className="text-2xl font-extrabold text-purple-700 mt-1">Rs. {Math.round(apexValues.apexBonus)}</p>
+                      </div>
+
+                      <div className="rounded-2xl border bg-slate-50 p-4">
+                        <p className="text-xs text-muted-foreground">Total Earnings</p>
+                        <p className="text-3xl font-extrabold text-navy mt-1">Rs. {Math.round(apexValues.totalEarnings)}</p>
+
+                        <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                          <div className="flex justify-between">
+                            <span>Wallet Available</span>
+                            <span className="font-medium text-navy">Rs. {Math.round(walletAvailable)}</span>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <span>Wallet Hold</span>
+                            <span className="font-medium text-navy">Rs. {Math.round(walletHold)}</span>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <span>Signup Bonus</span>
+                            <span className="font-medium text-navy">Rs. {Math.round(stats.signupBonusTotal || 0)}</span>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <span>Wish Link Incentive</span>
+                            <span className="font-medium text-navy">Rs. {Math.round(wishLinkIncentive || 0)}</span>
+                          </div>
+
+                          <div className="flex justify-between pt-2 border-t">
+                            <span>Fee</span>
+                            <span className="font-medium text-navy">
+                              {WITHDRAW_FEE_PERCENT}% (TDS + PLATFORM FEE)
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
-
-            {/* ✅ Level 1 FIRST Purchase Commission ONLY */}
-            <div className="rounded-2xl border bg-gradient-to-b from-green-50 to-white p-5 shadow-sm">
-              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
-                <div>
-                  <p className="font-semibold text-navy text-base flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-green-700" />
-                    Level 1 – First Purchase Commission
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    One-time commission when your direct referral places their first order.
-                  </p>
-                </div>
-                <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Direct</Badge>
-              </div>
-
-              <p className="text-4xl font-extrabold text-green-900">
-                Rs. {Math.round(stats.level1FirstPurchaseCommission || 0)}
-              </p>
-            </div>
-
-            {/* ✅ Wish Link Incentive */}
-            <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-semibold text-sky-900 flex items-center gap-2">
-                    <Gift className="h-4 w-4 text-sky-700" />
-                    Wish Link Incentive
-                  </p>
-                  <p className="text-xs text-sky-700 mt-1">Earned when someone buys using your wish link.</p>
-                </div>
-                <p className="text-2xl font-extrabold text-sky-900">
-                  Rs. {Math.round(wishLinkIncentive || 0)}
-                </p>
-              </div>
-            </div>
-
-            {/* ✅ Signup Bonus */}
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-semibold text-indigo-900 flex items-center gap-2">
-                    <Award className="h-4 w-4 text-indigo-700" />
-                    Signup Bonus
-                  </p>
-                </div>
-                <p className="text-2xl font-extrabold text-indigo-900">
-                  Rs. {Math.round(stats.signupBonusTotal || 0)}
-                </p>
-              </div>
-            </div>
-
-            {/* ✅ Purchase Commission (Wallet total) */}
-            <div className="rounded-2xl border border-orange-200 bg-orange-50 p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-semibold text-orange-900 flex items-center gap-2">
-                    <Wallet className="h-4 w-4 text-orange-700" />
-                    Purchase Commission (Wallet)
-                  </p>
-                </div>
-                <p className="text-2xl font-extrabold text-orange-900">
-                  Rs. {Math.round(stats.purchaseCommissionTotal || 0)}
-                </p>
-              </div>
-            </div>
-
-            {/* ✅ NEW: Extra Bonus Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-2xl border border-purple-200 bg-purple-50 p-4">
-                <p className="text-sm font-semibold text-purple-900">App Bonus</p>
-                <p className="text-2xl font-extrabold text-purple-900 mt-2">
-                  Rs. {Math.round((stats as any)?.appBonus || 0)}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4">
-                <p className="text-sm font-semibold text-yellow-900">Special Bonus</p>
-                <p className="text-2xl font-extrabold text-yellow-900 mt-2">
-                  Rs. {Math.round((stats as any)?.specialBonus || 0)}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-                <p className="text-sm font-semibold text-emerald-900">Team Management Bonus</p>
-                <p className="text-2xl font-extrabold text-emerald-900 mt-2">
-                  Rs. {Math.round((stats as any)?.teamManagementBonus || 0)}
-                </p>
-              </div>
-            </div>
-
-            {/* ✅ Existing Other Incentives */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-                <p className="text-sm font-semibold text-red-900">Membership Incentives</p>
-                <p className="text-2xl font-extrabold text-red-900 mt-2">
-                  Rs. {Math.round(stats.membershipIncentives || 0)}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-pink-200 bg-pink-50 p-4">
-                <p className="text-sm font-semibold text-pink-900">Vendor Incentives</p>
-                <p className="text-2xl font-extrabold text-pink-900 mt-2">
-                  Rs. {Math.round(stats.vendorIncentives || 0)}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4">
-                <p className="text-sm font-semibold text-teal-900">Franchiser Incentives</p>
-                <p className="text-2xl font-extrabold text-teal-900 mt-2">
-                  Rs. {Math.round(stats.franchiserIncentives || 0)}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-
-    {/* RIGHT: Summary (No explanations) */}
-    <Card className="lg:col-span-1">
-      <CardHeader>
-        <CardTitle>Summary</CardTitle>
-      </CardHeader>
-
-      <CardContent>
-        {loadingSections.earnings ? (
-          <div className="space-y-4">{renderSkeletonCards(4)}</div>
-        ) : (
-          <div className="space-y-4">
-            <div className="rounded-2xl border bg-white p-4">
-              <p className="text-xs text-muted-foreground">APEX Wallet</p>
-              <p className="text-2xl font-extrabold text-green-700 mt-1">
-                Rs. {Math.round(stats.purchaseCommissionTotal || 0)}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border bg-white p-4">
-              <p className="text-xs text-muted-foreground">APEX Bonus</p>
-              <p className="text-2xl font-extrabold text-purple-700 mt-1">
-                Rs. {Math.round(apexValues.apexBonus)}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border bg-slate-50 p-4">
-              <p className="text-xs text-muted-foreground">Total Earnings</p>
-              <p className="text-3xl font-extrabold text-navy mt-1">
-                Rs. {Math.round(apexValues.totalEarnings)}
-              </p>
-
-              <div className="mt-3 space-y-2 text-xs text-muted-foreground">
-                <div className="flex justify-between">
-                  <span>Purchase (Wallet)</span>
-                  <span className="font-medium text-navy">
-                    Rs. {Math.round(stats.purchaseCommissionTotal || 0)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Signup Bonus</span>
-                  <span className="font-medium text-navy">
-                    Rs. {Math.round(stats.signupBonusTotal || 0)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Wish Link Incentive</span>
-                  <span className="font-medium text-navy">
-                    Rs. {Math.round(wishLinkIncentive || 0)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>App Bonus</span>
-                  <span className="font-medium text-navy">
-                    Rs. {Math.round((stats as any)?.appBonus || 0)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Special Bonus</span>
-                  <span className="font-medium text-navy">
-                    Rs. {Math.round((stats as any)?.specialBonus || 0)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Team Management Bonus</span>
-                  <span className="font-medium text-navy">
-                    Rs. {Math.round((stats as any)?.teamManagementBonus || 0)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Other Incentives</span>
-                  <span className="font-medium text-navy">
-                    Rs.{" "}
-                    {Math.round(
-                      (stats.membershipIncentives || 0) +
-                        (stats.vendorIncentives || 0) +
-                        (stats.franchiserIncentives || 0)
-                    )}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  </div>
-</TabsContent>
+          </TabsContent>
 
           {/* Referral History Tab */}
           <TabsContent value="referrals" className="space-y-6">
@@ -1372,7 +1462,6 @@ const Referrals = () => {
                     variant="outline"
                     onClick={() => {
                       const filtered = referralHistory.filter((r) => r.level === 1);
-                      // Update display logic here
                       console.log(filtered);
                     }}
                   >
@@ -1413,9 +1502,7 @@ const Referrals = () => {
                   <div className="text-center py-12">
                     <Users className="h-16 w-16 mx-auto mb-4 text-gray-300" />
                     <h4 className="text-lg font-semibold text-navy mb-2">No referrals yet</h4>
-                    <p className="text-muted-foreground mb-4">
-                      Start sharing your referral code to earn rewards!
-                    </p>
+                    <p className="text-muted-foreground mb-4">Start sharing your referral code to earn rewards!</p>
                     <Button onClick={() => setActiveTab("overview")}>Go to Referral Tools</Button>
                   </div>
                 ) : (
@@ -1495,7 +1582,9 @@ const Referrals = () => {
                                 <span className="font-bold">Rs. {Math.round(ref.orderDetails.total)}</span>
                               </div>
                               {ref.orderDetails.paymentMethod && (
-                                <div className="text-xs text-blue-600 mt-1">Payment: {ref.orderDetails.paymentMethod}</div>
+                                <div className="text-xs text-blue-600 mt-1">
+                                  Payment: {ref.orderDetails.paymentMethod}
+                                </div>
                               )}
                             </div>
                           )}
@@ -1512,173 +1601,147 @@ const Referrals = () => {
           </TabsContent>
 
           {/* Commission History Tab */}
-      <TabsContent value="commissions" className="space-y-6">
-  <Card>
-    <CardHeader>
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-        <div>
-          <CardTitle>Commission History</CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">
-            Total earned: Rs. {Math.round(apexValues.totalEarnings)}
-          </p>
-        </div>
+          <TabsContent value="commissions" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                  <div>
+                    <CardTitle>Commission History</CardTitle>
+                    <p className="text-sm text-muted-foreground mt-1">Total earned: Rs. {Math.round(apexValues.totalEarnings)}</p>
+                  </div>
 
-        {commissionHistory.length > 0 && (
-          <div className="flex gap-2">
-            <Badge variant="outline" className="bg-purple-50">
-              APEX Bonus: Rs. {Math.round(apexValues.apexBonus)}
-            </Badge>
-            <Badge variant="outline" className="bg-green-50">
-              APEX Wallet: Rs. {Math.round(apexValues.apexWallet)}
-            </Badge>
-          </div>
-        )}
-      </div>
-    </CardHeader>
+                  {commissionHistory.length > 0 && (
+                    <div className="flex gap-2">
+                      <Badge variant="outline" className="bg-purple-50">
+                        APEX Bonus: Rs. {Math.round(apexValues.apexBonus)}
+                      </Badge>
+                      <Badge variant="outline" className="bg-green-50">
+                        Wallet Total: Rs. {Math.round(walletTotal)}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
 
-    <CardContent>
-      {loadingSections.commissions ? (
-        <div className="space-y-4">
-          {Array(5)
-            .fill(0)
-            .map((_, i) => (
-              <Skeleton key={i} className="h-20 w-full" />
-            ))}
-        </div>
-      ) : commissionHistory.length === 0 ? (
-        <div className="text-center py-12">
-          <Coins className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-          <h4 className="text-lg font-semibold text-navy mb-2">No commission history yet</h4>
-          <p className="text-muted-foreground mb-4">
-            Commissions will appear here when your referrals make purchases
-          </p>
-          <Button onClick={() => setActiveTab("overview")}>Share Your Referral Link</Button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-            <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
-              <p className="text-sm text-purple-700">APEX Bonus</p>
-              <p className="text-lg font-bold text-purple-800">
-                Rs. {Math.round(apexValues.apexBonus)}
-              </p>
-            </div>
+              <CardContent>
+                {loadingSections.commissions ? (
+                  <div className="space-y-4">
+                    {Array(5)
+                      .fill(0)
+                      .map((_, i) => (
+                        <Skeleton key={i} className="h-20 w-full" />
+                      ))}
+                  </div>
+                ) : commissionHistory.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Coins className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                    <h4 className="text-lg font-semibold text-navy mb-2">No commission history yet</h4>
+                    <p className="text-muted-foreground mb-4">Commissions will appear here when your referrals make purchases</p>
+                    <Button onClick={() => setActiveTab("overview")}>Share Your Referral Link</Button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                      <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                        <p className="text-sm text-purple-700">APEX Bonus</p>
+                        <p className="text-lg font-bold text-purple-800">Rs. {Math.round(apexValues.apexBonus)}</p>
+                      </div>
 
-            <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-              <p className="text-sm text-green-700">APEX Wallet</p>
-              <p className="text-lg font-bold text-green-800">
-                Rs. {Math.round(apexValues.apexWallet)}
-              </p>
-            </div>
+                      <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                        <p className="text-sm text-green-700">Wallet Available</p>
+                        <p className="text-lg font-bold text-green-800">Rs. {Math.round(walletAvailable)}</p>
+                        <p className="text-xs text-green-700 mt-1">Hold: Rs. {Math.round(walletHold)}</p>
+                      </div>
 
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-              <p className="text-sm text-blue-700">Total Earnings</p>
-              <p className="text-lg font-bold text-blue-800">
-                Rs. {Math.round(apexValues.totalEarnings)}
-              </p>
-              <p className="text-xs text-blue-600 mt-1">{commissionHistory.length} transactions</p>
-            </div>
-          </div>
+                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                        <p className="text-sm text-blue-700">Total Earnings</p>
+                        <p className="text-lg font-bold text-blue-800">Rs. {Math.round(apexValues.totalEarnings)}</p>
+                        <p className="text-xs text-blue-600 mt-1">{commissionHistory.length} transactions</p>
+                      </div>
+                    </div>
 
-          {/* ✅ TABLE */}
-          <div className="overflow-x-auto border rounded-lg">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b">
-                <tr className="text-left">
-                  <th className="p-3 font-semibold text-gray-700">Type</th>
-                  <th className="p-3 font-semibold text-gray-700">Level</th>
-                  <th className="p-3 font-semibold text-gray-700">Source</th>
-                  <th className="p-3 font-semibold text-gray-700">Status</th>
-                  <th className="p-3 font-semibold text-gray-700">Date</th>
-                  <th className="p-3 font-semibold text-gray-700 text-right">Amount</th>
-                </tr>
-              </thead>
+                    <div className="overflow-x-auto border rounded-lg">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr className="text-left">
+                            <th className="p-3 font-semibold text-gray-700">Type</th>
+                            <th className="p-3 font-semibold text-gray-700">Level</th>
+                            <th className="p-3 font-semibold text-gray-700">Source</th>
+                            <th className="p-3 font-semibold text-gray-700">Status</th>
+                            <th className="p-3 font-semibold text-gray-700">Date</th>
+                            <th className="p-3 font-semibold text-gray-700 text-right">Amount</th>
+                          </tr>
+                        </thead>
 
-              <tbody>
-                {commissionHistory.map((commission) => {
-                  const levelBadge =
-                    commission.level === 1
-                      ? "bg-green-50 text-green-800"
-                      : commission.level === 2
-                      ? "bg-blue-50 text-blue-800"
-                      : commission.level === 3
-                      ? "bg-purple-50 text-purple-800"
-                      : "bg-gray-50 text-gray-800";
+                        <tbody>
+                          {commissionHistory.map((commission) => {
+                            const levelBadge =
+                              commission.level === 1
+                                ? "bg-green-50 text-green-800"
+                                : commission.level === 2
+                                ? "bg-blue-50 text-blue-800"
+                                : commission.level === 3
+                                ? "bg-purple-50 text-purple-800"
+                                : "bg-gray-50 text-gray-800";
 
-                  const statusBadge =
-                    commission.status === "credited"
-                      ? "bg-green-100 text-green-800"
-                      : commission.status === "pending"
-                      ? "bg-yellow-100 text-yellow-800"
-                      : "bg-gray-100 text-gray-800";
+                            const statusBadge =
+                              commission.status === "credited"
+                                ? "bg-green-100 text-green-800"
+                                : commission.status === "pending"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-gray-100 text-gray-800";
 
-                  return (
-                    <tr key={commission._id} className="border-b hover:bg-gray-50">
-                      {/* Type */}
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          {getCommissionTypeIcon(commission.commissionType)}
-                          <span className="font-medium capitalize">
-                            {commission.commissionType} Commission
-                          </span>
+                            return (
+                              <tr key={commission._id} className="border-b hover:bg-gray-50">
+                                <td className="p-3">
+                                  <div className="flex items-center gap-2">
+                                    {getCommissionTypeIcon(commission.commissionType)}
+                                    <span className="font-medium capitalize">{commission.commissionType} Commission</span>
 
-                          {commission.source === "product-commission" && commission.percentage ? (
-                            <Badge variant="outline" className="bg-blue-50">
-                              {commission.percentage}%
-                            </Badge>
-                          ) : null}
-                        </div>
+                                    {commission.source === "product-commission" && commission.percentage ? (
+                                      <Badge variant="outline" className="bg-blue-50">
+                                        {commission.percentage}%
+                                      </Badge>
+                                    ) : null}
+                                  </div>
 
-                        {/* optional: order row info */}
-                        {commission.orderId?.orderNumber ? (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Order #{commission.orderId.orderNumber}
-                          </p>
-                        ) : null}
-                      </td>
+                                  {commission.orderId?.orderNumber ? (
+                                    <p className="text-xs text-muted-foreground mt-1">Order #{commission.orderId.orderNumber}</p>
+                                  ) : null}
+                                </td>
 
-                      {/* Level */}
-                      <td className="p-3">
-                        <Badge variant="outline" className={levelBadge}>
-                          Level {commission.level}
-                        </Badge>
-                      </td>
+                                <td className="p-3">
+                                  <Badge variant="outline" className={levelBadge}>
+                                    Level {commission.level}
+                                  </Badge>
+                                </td>
 
-                      {/* Source */}
-                      <td className="p-3 text-muted-foreground capitalize">
-                        {commission.source?.replaceAll("-", " ") || "-"}
-                      </td>
+                                <td className="p-3 text-muted-foreground capitalize">
+                                  {commission.source?.replaceAll("-", " ") || "-"}
+                                </td>
 
-                      {/* Status */}
-                      <td className="p-3">
-                        {commission.status ? (
-                          <Badge className={statusBadge}>{commission.status}</Badge>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </td>
+                                <td className="p-3">
+                                  {commission.status ? (
+                                    <Badge className={statusBadge}>{commission.status}</Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
 
-                      {/* Date */}
-                      <td className="p-3 text-muted-foreground">
-                        {formatDate(commission.createdAt)}
-                      </td>
+                                <td className="p-3 text-muted-foreground">{formatDate(commission.createdAt)}</td>
 
-                      {/* Amount */}
-                      <td className="p-3 text-right font-bold text-navy">
-                        Rs. {Math.round(commission.amount)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </CardContent>
-  </Card>
-</TabsContent>
+                                <td className="p-3 text-right font-bold text-navy">Rs. {Math.round(commission.amount)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* Network Tab */}
           <TabsContent value="network" className="space-y-6">
@@ -1774,11 +1837,9 @@ const Referrals = () => {
                               <div
                                 className="bg-green-500 h-2 rounded-full"
                                 style={{
-                                  width: `${
-                                    (calculatePersonalDirectReferrals() / calculatePersonalNetworkSize()) * 100 || 0
-                                  }%`,
+                                  width: `${(calculatePersonalDirectReferrals() / calculatePersonalNetworkSize()) * 100 || 0}%`,
                                 }}
-                              ></div>
+                              />
                             </div>
                           </div>
 
@@ -1791,11 +1852,9 @@ const Referrals = () => {
                               <div
                                 className="bg-blue-500 h-2 rounded-full"
                                 style={{
-                                  width: `${
-                                    (calculatePersonalIndirectReferrals() / calculatePersonalNetworkSize()) * 100 || 0
-                                  }%`,
+                                  width: `${(calculatePersonalIndirectReferrals() / calculatePersonalNetworkSize()) * 100 || 0}%`,
                                 }}
-                              ></div>
+                              />
                             </div>
                           </div>
 
@@ -1808,11 +1867,9 @@ const Referrals = () => {
                               <div
                                 className="bg-purple-500 h-2 rounded-full"
                                 style={{
-                                  width: `${
-                                    (calculatePersonalLevel3Referrals() / calculatePersonalNetworkSize()) * 100 || 0
-                                  }%`,
+                                  width: `${(calculatePersonalLevel3Referrals() / calculatePersonalNetworkSize()) * 100 || 0}%`,
                                 }}
-                              ></div>
+                              />
                             </div>
                           </div>
                         </div>
@@ -1873,13 +1930,9 @@ const Referrals = () => {
                             <div
                               className="bg-green-500 h-2 rounded-full"
                               style={{
-                                width: `${
-                                  stats.totalDirectReferrals > 0
-                                    ? (stats.completedDirectReferrals / stats.totalDirectReferrals) * 100
-                                    : 0
-                                }%`,
+                                width: `${stats.totalDirectReferrals > 0 ? (stats.completedDirectReferrals / stats.totalDirectReferrals) * 100 : 0}%`,
                               }}
-                            ></div>
+                            />
                           </div>
                           <div className="flex justify-between text-xs text-gray-500 mt-1">
                             <span>{stats.completedDirectReferrals || 0} completed</span>
@@ -1900,13 +1953,9 @@ const Referrals = () => {
                             <div
                               className="bg-blue-500 h-2 rounded-full"
                               style={{
-                                width: `${
-                                  stats.totalIndirectReferrals > 0
-                                    ? (stats.completedIndirectReferrals / stats.totalIndirectReferrals) * 100
-                                    : 0
-                                }%`,
+                                width: `${stats.totalIndirectReferrals > 0 ? (stats.completedIndirectReferrals / stats.totalIndirectReferrals) * 100 : 0}%`,
                               }}
-                            ></div>
+                            />
                           </div>
                           <div className="flex justify-between text-xs text-gray-500 mt-1">
                             <span>{stats.completedIndirectReferrals || 0} completed</span>
@@ -1927,13 +1976,9 @@ const Referrals = () => {
                             <div
                               className="bg-purple-500 h-2 rounded-full"
                               style={{
-                                width: `${
-                                  stats.totalLevel3Referrals > 0
-                                    ? (stats.completedLevel3Referrals / stats.totalLevel3Referrals) * 100
-                                    : 0
-                                }%`,
+                                width: `${stats.totalLevel3Referrals > 0 ? (stats.completedLevel3Referrals / stats.totalLevel3Referrals) * 100 : 0}%`,
                               }}
-                            ></div>
+                            />
                           </div>
                           <div className="flex justify-between text-xs text-gray-500 mt-1">
                             <span>{stats.completedLevel3Referrals || 0} completed</span>
@@ -1989,10 +2034,14 @@ const Referrals = () => {
                           </span>
                         </div>
                         <div className="flex justify-between pt-2 border-t">
-                          <span className="text-sm text-gray-600">APEX Wallet</span>
+                          <span className="text-sm text-gray-600">Wallet Available</span>
                           <span className="font-semibold">
-                            {apexValues.totalEarnings > 0 ? `${((apexValues.apexWallet / apexValues.totalEarnings) * 100).toFixed(1)}%` : "0%"}
+                            {apexValues.totalEarnings > 0 ? `${((walletAvailable / apexValues.totalEarnings) * 100).toFixed(1)}%` : "0%"}
                           </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">Fee</span>
+                          <span className="font-semibold">{WITHDRAW_FEE_PERCENT}% (TDS + PLATFORM FEE)</span>
                         </div>
                       </div>
                     </div>
@@ -2048,8 +2097,8 @@ const Referrals = () => {
                         {stats.totalLevel3Referrals === 0 && stats.totalIndirectReferrals > 0 && (
                           <li>• Ask your Level 2 referrals to refer others to build Level 3 network</li>
                         )}
-                        {apexValues.apexWallet < apexValues.apexBonus && (
-                          <li>• Encourage your referrals to make purchases for APEX Wallet growth</li>
+                        {walletAvailable < stats.signupBonusTotal && (
+                          <li>• Encourage purchases for wallet growth (wallet available is low vs bonus)</li>
                         )}
                         {stats.completedDirectReferrals < stats.totalDirectReferrals && (
                           <li>• Follow up with pending direct referrals to complete their first purchase</li>
@@ -2063,8 +2112,7 @@ const Referrals = () => {
             </div>
           </TabsContent>
 
-
-          {/* ✅ NEW: Withdraw Tab */}
+          {/* ✅ Withdraw Tab */}
           <TabsContent value="withdraw" className="space-y-6">
             <div className="grid lg:grid-cols-3 gap-6">
               {/* Left: Bank Details */}
@@ -2075,9 +2123,7 @@ const Referrals = () => {
                       <Landmark className="h-5 w-5" />
                       Bank Details
                     </CardTitle>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Save your bank details for withdrawals.
-                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">Save your bank details for withdrawals.</p>
                   </div>
                   {bankSaved ? (
                     <Badge className="bg-green-100 text-green-800 border-green-200">Saved</Badge>
@@ -2144,22 +2190,24 @@ const Referrals = () => {
                       </div>
 
                       <div className="flex gap-2">
-                        <Button
-                          onClick={saveBankDetails}
-                          disabled={loadingSections.withdraw}
-                          className="bg-navy hover:bg-navy/90"
-                        >
+                        <Button onClick={saveBankDetails} disabled={loadingSections.withdraw} className="bg-navy hover:bg-navy/90">
                           {loadingSections.withdraw ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                           Save Bank Details
                         </Button>
 
-                        <Button
-                          variant="outline"
-                          onClick={fetchWithdrawData}
-                          disabled={loadingSections.withdraw}
-                        >
+                        <Button variant="outline" onClick={fetchWithdrawData} disabled={loadingSections.withdraw}>
                           Refresh
                         </Button>
+                      </div>
+
+                      <div className="rounded-lg border bg-slate-50 p-4 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700">Fee</span>
+                          <span className="font-semibold text-slate-900">{WITHDRAW_FEE_PERCENT}% (TDS + PLATFORM FEE)</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Available reduces immediately after you submit (amount moves to Hold).
+                        </p>
                       </div>
                     </div>
                   )}
@@ -2173,9 +2221,17 @@ const Referrals = () => {
                     <IndianRupee className="h-5 w-5" />
                     Withdraw
                   </CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Available Wallet: <span className="font-semibold text-navy">Rs. {Math.round(stats.purchaseCommissionTotal || 0)}</span>
-                  </p>
+
+                  <div className="text-sm text-muted-foreground mt-1 space-y-1">
+                    <div>
+                      Available:{" "}
+                      <span className="font-semibold text-navy">Rs. {Math.round(walletAvailable)}</span>
+                    </div>
+                    <div className="text-xs">
+                      Total: Rs. {Math.round(walletTotal)} • Hold: Rs. {Math.round(walletHold)}
+                    </div>
+                    <div className="text-xs">Fee: {WITHDRAW_FEE_PERCENT}% (TDS + PLATFORM FEE)</div>
+                  </div>
                 </CardHeader>
 
                 <CardContent className="space-y-4">
@@ -2187,9 +2243,34 @@ const Referrals = () => {
                       placeholder="Enter amount"
                       inputMode="numeric"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Withdrawals are processed after verification.
-                    </p>
+
+                    {/* ✅ live fee preview */}
+                    {Number(withdrawAmount) > 0 ? (
+                      <div className="mt-2 rounded-lg border bg-slate-50 p-3 text-xs text-slate-700">
+                        {(() => {
+                          const a = Number(withdrawAmount);
+                          const { fee, net } = calcWithdrawFee(a);
+                          return (
+                            <div className="space-y-1">
+                              <div className="flex justify-between">
+                                <span>Requested</span>
+                                <span className="font-semibold">Rs. {Math.round(a)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Fee ({WITHDRAW_FEE_PERCENT}% TDS + PLATFORM FEE)</span>
+                                <span className="font-semibold">Rs. {Math.round(fee)}</span>
+                              </div>
+                              <div className="flex justify-between border-t pt-1">
+                                <span>You will receive</span>
+                                <span className="font-semibold">Rs. {Math.round(net)}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ) : null}
+
+                    <p className="text-xs text-muted-foreground mt-2">Withdrawals are processed after verification.</p>
                   </div>
 
                   <div>
@@ -2228,9 +2309,7 @@ const Referrals = () => {
                     <FileText className="h-5 w-5" />
                     Withdrawal History
                   </CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Track your withdrawal request status.
-                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">Track your withdrawal request status.</p>
                 </div>
                 <Button variant="outline" size="sm" onClick={fetchWithdrawData} disabled={loadingSections.withdraw}>
                   {loadingSections.withdraw ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
@@ -2246,9 +2325,7 @@ const Referrals = () => {
                     <Skeleton className="h-12 w-full" />
                   </div>
                 ) : withdrawals.length === 0 ? (
-                  <div className="text-center py-10 text-muted-foreground">
-                    No withdrawals yet.
-                  </div>
+                  <div className="text-center py-10 text-muted-foreground">No withdrawals yet.</div>
                 ) : (
                   <div className="overflow-x-auto border rounded-lg">
                     <table className="w-full text-sm">
@@ -2269,7 +2346,7 @@ const Referrals = () => {
                             <td className="p-3">{getWithdrawStatusBadge(w.status)}</td>
                             <td className="p-3 text-muted-foreground">{w.referenceId || "-"}</td>
                             <td className="p-3 text-muted-foreground">
-                              {w.status === "rejected" ? (w.rejectReason || "Rejected") : (w.note || "-")}
+                              {w.status === "rejected" ? w.rejectReason || "Rejected" : w.note || "-"}
                             </td>
                           </tr>
                         ))}
