@@ -4778,7 +4778,7 @@ app.get("/api/admin/dashboard/recent-activity", async (req, res) => {
     const recentOrders = await Order.find()
       .sort({ createdAt: -1 })
       .limit(5)
-      .populate("user", "name")
+      .populate("userId", "name")
       .populate("products.Products", "itemName");
 
     const recentUsers = await User.find()
