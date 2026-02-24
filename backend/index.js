@@ -4779,7 +4779,7 @@ app.get("/api/admin/dashboard/recent-activity", async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(5)
       .populate("userId", "name")
-      .populate("products.Products", "itemName");
+      .populate("orderItems.productId", "name");
 
     const recentUsers = await User.find()
       .sort({ createdAt: -1 })
