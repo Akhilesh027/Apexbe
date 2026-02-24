@@ -34,6 +34,9 @@ import upi from "../Web images/Web images/upi.jpg";
 
 const API_BASE = "https://api.apexbee.in/api";
 
+// ✅ Pincode validate endpoint
+const PINCODE_VALIDATE_API = `${API_BASE}/checkout/validate-pincode`;
+
 /** -----------------------------
  * Types
  * ---------------------------- */
@@ -70,7 +73,7 @@ type PickupLocation = {
   name: string;
   address: string;
   phone?: string;
-  pincode?: string; // ✅ helpful for filtering
+  pincode?: string;
   slots?: PickupSlot[];
 };
 
@@ -82,9 +85,6 @@ const normPincode = (p: any) => onlyDigits(String(p || "")).slice(0, 6);
 
 /**
  * ✅ unify "pickup/preorder" flags from product/cart
- * Supports your new schema:
- *  - item.fulfillment.pickupEnabled / mode
- *  - item.preOrder.enabled / availableFrom
  */
 const readItemFlags = (item: any) => {
   const fulfillment = item?.fulfillment || {};
@@ -96,17 +96,25 @@ const readItemFlags = (item: any) => {
     Boolean(item?.pickupAvailable);
 
   const mode = fulfillment?.mode || "delivery_only";
+
+  // ✅ FIX: do NOT allow pickup when mode is delivery_only
   const allowPickup =
-    pickupEnabled && (mode === "both" || mode === "pickup_only" || mode === "delivery_only");
+    pickupEnabled && (mode === "both" || mode === "pickup_only");
 
   const isPreOrder =
-    Boolean(preOrder?.enabled) || Boolean(item?.isPreOrder) || Boolean(item?.preOrder);
+    Boolean(preOrder?.enabled) ||
+    Boolean(item?.isPreOrder) ||
+    Boolean(item?.preOrder);
 
-  const availableOn = preOrder?.availableFrom || item?.availableOn || item?.preOrderDate || null;
+  const availableOn =
+    preOrder?.availableFrom || item?.availableOn || item?.preOrderDate || null;
 
   // ✅ shop pincode snapshot for match-only pickup rule
   const shopPincode =
-    fulfillment?.pickupShopPincode || item?.pickupShopPincode || item?.shopPincode || null;
+    fulfillment?.pickupShopPincode ||
+    item?.pickupShopPincode ||
+    item?.shopPincode ||
+    null;
 
   const pincodeMatchOnly = fulfillment?.pickupRules?.pincodeMatchOnly ?? true;
 
@@ -145,7 +153,9 @@ const Checkout = () => {
   const [showAddressDialog, setShowAddressDialog] = useState(false);
 
   // Fulfillment
-  const [fulfillmentType, setFulfillmentType] = useState<"delivery" | "pickup">("delivery");
+  const [fulfillmentType, setFulfillmentType] = useState<"delivery" | "pickup">(
+    "delivery"
+  );
   const [pickupLocations, setPickupLocations] = useState<PickupLocation[]>([]);
   const [pickupLocationId, setPickupLocationId] = useState<string>("");
   const [pickupSlot, setPickupSlot] = useState<PickupSlot | null>(null);
@@ -163,8 +173,18 @@ const Checkout = () => {
 
   // Proof
   const [paymentProof, setPaymentProof] = useState<File | null>(null);
-  const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null);
+  const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(
+    null
+  );
   const [isUploading, setIsUploading] = useState(false);
+
+  // ✅ Pincode validation (delivery availability + charge)
+  const [pinCheckLoading, setPinCheckLoading] = useState(false);
+  const [pinValid, setPinValid] = useState<boolean | null>(null);
+  const [pinError, setPinError] = useState<string>("");
+  const [pinMeta, setPinMeta] = useState<{ charge: number; etaDays: number } | null>(
+    null
+  );
 
   // Order details
   const [orderDetails, setOrderDetails] = useState({
@@ -194,7 +214,9 @@ const Checkout = () => {
 
     if (!userPincode) return false;
 
-    const allHaveShopPin = flags.every((f) => !f.pincodeMatchOnly || !!normPincode(f.shopPincode));
+    const allHaveShopPin = flags.every(
+      (f) => !f.pincodeMatchOnly || !!normPincode(f.shopPincode)
+    );
     if (!allHaveShopPin) return false;
 
     const allMatch = flags.every((f) => {
@@ -211,7 +233,8 @@ const Checkout = () => {
       .map((it: any) => ({ ...it, ...readItemFlags(it) }))
       .filter((it: any) => it.isPreOrder && it.availableOn);
 
-    if (preItems.length === 0) return { hasPreOrder: false, availableOnMax: null as string | null };
+    if (preItems.length === 0)
+      return { hasPreOrder: false, availableOnMax: null as string | null };
 
     const maxDate = preItems
       .map((it: any) => new Date(it.availableOn))
@@ -272,9 +295,14 @@ const Checkout = () => {
       return acc + price * quantity;
     }, 0);
 
-  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+  const clamp = (n: number, min: number, max: number) =>
+    Math.max(min, Math.min(max, n));
 
-  const checkCouponValidity = (coupon: CouponRule, baseAmount: number, payment: "upi" | "wallet") => {
+  const checkCouponValidity = (
+    coupon: CouponRule,
+    baseAmount: number,
+    payment: "upi" | "wallet"
+  ) => {
     const now = new Date();
     if (coupon.expiresAt) {
       const exp = new Date(coupon.expiresAt);
@@ -303,17 +331,28 @@ const Checkout = () => {
 
     const coupon = COUPONS.find((c) => c.code === code);
     if (!coupon)
-      return toast({ title: "Invalid coupon", description: "Coupon not found", variant: "destructive" });
+      return toast({
+        title: "Invalid coupon",
+        description: "Coupon not found",
+        variant: "destructive",
+      });
 
     const baseAmount = orderDetails.subtotal;
     const validity = checkCouponValidity(coupon, baseAmount, selectedPayment);
     if (!validity.ok)
-      return toast({ title: "Cannot apply coupon", description: validity.msg, variant: "destructive" });
+      return toast({
+        title: "Cannot apply coupon",
+        description: validity.msg,
+        variant: "destructive",
+      });
 
     const disc = computeCouponDiscount(coupon, baseAmount);
     setAppliedCoupon(coupon);
     setCouponDiscount(disc);
-    toast({ title: "Coupon applied", description: `${coupon.code} applied. You saved ₹${disc.toFixed(2)}` });
+    toast({
+      title: "Coupon applied",
+      description: `${coupon.code} applied. You saved ₹${disc.toFixed(2)}`,
+    });
   };
 
   const removeCoupon = () => {
@@ -328,7 +367,11 @@ const Checkout = () => {
    * ---------------------------- */
   useEffect(() => {
     if (!cartData.cartItems || cartData.cartItems.length === 0) {
-      toast({ title: "Cart is empty", description: "Redirecting to cart...", variant: "destructive" });
+      toast({
+        title: "Cart is empty",
+        description: "Redirecting to cart...",
+        variant: "destructive",
+      });
       navigate("/cart");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -357,19 +400,96 @@ const Checkout = () => {
     if (!pickupPossible && fulfillmentType === "pickup") setFulfillmentType("delivery");
   }, [pickupPossible, fulfillmentType]);
 
+  // ✅ validate pincode and update shipping
+  const validatePincodeAndUpdateShipping = async (pincode: string) => {
+    const pin = normPincode(pincode);
+
+    if (pin.length !== 6) {
+      setPinValid(null);
+      setPinError("");
+      setPinMeta(null);
+      return;
+    }
+
+    // only for delivery
+    if (fulfillmentType !== "delivery") return;
+
+    // preorder => free
+    if (preOrderInfo.hasPreOrder) {
+      setPinValid(true);
+      setPinError("");
+      setPinMeta({ charge: 0, etaDays: 0 });
+      setOrderDetails((prev) => ({ ...prev, shipping: 0 }));
+      return;
+    }
+
+    try {
+      setPinCheckLoading(true);
+      setPinError("");
+      setPinValid(null);
+
+      const res = await fetch(PINCODE_VALIDATE_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pincode: pin }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || data?.success === false) {
+        setPinValid(false);
+        setPinMeta(null);
+        setPinError(data?.message || "Delivery not available for this pincode");
+        setOrderDetails((prev) => ({ ...prev, shipping: 0 }));
+        return;
+      }
+
+      const charge = Number(data?.deliveryCharge ?? 0);
+      const etaDays = Number(data?.estimatedDays ?? 0);
+
+      setPinValid(true);
+      setPinMeta({ charge, etaDays });
+      setPinError("");
+
+      setOrderDetails((prev) => ({ ...prev, shipping: charge }));
+    } catch (e) {
+      setPinValid(false);
+      setPinMeta(null);
+      setPinError("Failed to validate pincode. Try again.");
+      setOrderDetails((prev) => ({ ...prev, shipping: 0 }));
+    } finally {
+      setPinCheckLoading(false);
+    }
+  };
+
   /**
-   * ✅ SHIPPING RULE UPDATE:
-   * If pickup OR any preorder exists => shipping = 0
+   * ✅ Shipping rule:
+   * - pickup OR preorder => shipping = 0
+   * - delivery => shipping from pincode validation (fallback base shipping until pincode selected)
    */
   useEffect(() => {
-    const baseShipping = cartData.shipping ?? 50;
+    if (fulfillmentType === "pickup" || preOrderInfo.hasPreOrder) {
+      setOrderDetails((prev) => ({ ...prev, shipping: 0 }));
+      setPinValid(true);
+      setPinError("");
+      setPinMeta({ charge: 0, etaDays: 0 });
+      return;
+    }
 
-    setOrderDetails((prev) => ({
-      ...prev,
-      shipping: fulfillmentType === "pickup" || preOrderInfo.hasPreOrder ? 0 : baseShipping,
-    }));
+    if (fulfillmentType === "delivery") {
+      if (userPincode.length === 6) {
+        validatePincodeAndUpdateShipping(userPincode);
+      } else {
+        setPinValid(null);
+        setPinError("");
+        setPinMeta(null);
+
+        const baseShipping = cartData.shipping ?? 50;
+        setOrderDetails((prev) => ({ ...prev, shipping: baseShipping }));
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fulfillmentType, preOrderInfo.hasPreOrder]);
+  }, [fulfillmentType, preOrderInfo.hasPreOrder, userPincode]);
 
   const loadPickupLocations = async (pincode?: string) => {
     try {
@@ -408,9 +528,12 @@ const Checkout = () => {
       if (!res.ok) return;
 
       const data = await res.json();
-      setAddresses(data.addresses || []);
+      const list = data.addresses || [];
+      setAddresses(list);
+
       const defaultAddr =
-        data.addresses?.find((a: Address) => a.isDefault) || data.addresses?.[0] || null;
+        list.find((a: Address) => a.isDefault) || list[0] || null;
+
       setSelectedAddress(defaultAddr);
     } catch (err) {
       console.error("Load addresses error:", err);
@@ -484,7 +607,11 @@ const Checkout = () => {
       const user = JSON.parse(localStorage.getItem("user") || "null");
       const token = localStorage.getItem("token");
       if (!user || !token) {
-        toast({ title: "Login required", description: "Please login", variant: "destructive" });
+        toast({
+          title: "Login required",
+          description: "Please login",
+          variant: "destructive",
+        });
         navigate("/login");
         return;
       }
@@ -493,29 +620,50 @@ const Checkout = () => {
         ...addressForm,
         phone: onlyDigits(addressForm.phone).slice(0, 10),
         pincode: normPincode(addressForm.pincode),
-        id: (editingAddress as any)?.id,
-        userId: user.id,
+        // ✅ FIX: backend expects "id" (and your Address has _id)
+        id: editingAddress?._id,
+        // ❌ userId not needed; backend uses req.user._id
       };
 
       const res = await fetch(`${API_BASE}/user/address`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(payload),
       });
 
       const result = await res.json();
-      if (!res.ok) throw new Error(result.message || "Failed to save address");
+      if (!res.ok) throw new Error(result.message || result.error || "Failed to save address");
 
       await loadAddresses();
+
+      // if new default OR no selection, select returned
       if (!selectedAddress || addressForm.isDefault) setSelectedAddress(result.address);
 
       setShowAddressDialog(false);
-      setAddressForm({ name: "", phone: "", pincode: "", address: "", city: "", state: "", isDefault: false });
+      setAddressForm({
+        name: "",
+        phone: "",
+        pincode: "",
+        address: "",
+        city: "",
+        state: "",
+        isDefault: false,
+      });
       setEditingAddress(null);
 
-      toast({ title: "Success", description: editingAddress ? "Address updated" : "Address added" });
+      toast({
+        title: "Success",
+        description: editingAddress ? "Address updated" : "Address added",
+      });
     } catch (err: any) {
-      toast({ title: "Error", description: err?.message || "Failed to save address", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: err?.message || "Failed to save address",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -525,14 +673,29 @@ const Checkout = () => {
    * Proof upload
    * ---------------------------- */
   const validateFile = (file: File) => {
-    const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "application/pdf"];
+    const allowedTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "application/pdf",
+    ];
     const maxSize = 5 * 1024 * 1024;
     if (!allowedTypes.includes(file.type)) {
-      toast({ title: "Invalid file type", description: "Upload JPG/PNG/GIF/WEBP/PDF only", variant: "destructive" });
+      toast({
+        title: "Invalid file type",
+        description: "Upload JPG/PNG/GIF/WEBP/PDF only",
+        variant: "destructive",
+      });
       return false;
     }
     if (file.size > maxSize) {
-      toast({ title: "File too large", description: "Max file size is 5MB", variant: "destructive" });
+      toast({
+        title: "File too large",
+        description: "Max file size is 5MB",
+        variant: "destructive",
+      });
       return false;
     }
     return true;
@@ -560,7 +723,9 @@ const Checkout = () => {
   const removePaymentProof = () => {
     setPaymentProof(null);
     setPaymentProofPreview(null);
-    const fileInput = document.getElementById("payment-proof-upload") as HTMLInputElement | null;
+    const fileInput = document.getElementById(
+      "payment-proof-upload"
+    ) as HTMLInputElement | null;
     if (fileInput) fileInput.value = "";
   };
 
@@ -571,7 +736,11 @@ const Checkout = () => {
       toast({ title: "Copied!", description: "UPI ID copied" });
       setTimeout(() => setCopiedUPI(false), 2000);
     } catch {
-      toast({ title: "Copy failed", description: "Copy manually", variant: "destructive" });
+      toast({
+        title: "Copy failed",
+        description: "Copy manually",
+        variant: "destructive",
+      });
     }
   };
 
@@ -581,7 +750,11 @@ const Checkout = () => {
     if (appliedCoupon) {
       const validity = checkCouponValidity(appliedCoupon, orderDetails.subtotal, method);
       if (!validity.ok) {
-        toast({ title: "Coupon removed", description: validity.msg, variant: "destructive" });
+        toast({
+          title: "Coupon removed",
+          description: validity.msg,
+          variant: "destructive",
+        });
         setAppliedCoupon(null);
         setCouponDiscount(0);
       }
@@ -618,7 +791,14 @@ const Checkout = () => {
       total: Math.max(0, calculatedTotal),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderDetails.items, orderDetails.shipping, orderDetails.discount, appliedCoupon, selectedPayment, isFirstOrder]);
+  }, [
+    orderDetails.items,
+    orderDetails.shipping,
+    orderDetails.discount,
+    appliedCoupon,
+    selectedPayment,
+    isFirstOrder,
+  ]);
 
   /** ✅ Reset UPI dialog */
   useEffect(() => {
@@ -632,11 +812,45 @@ const Checkout = () => {
   /** -----------------------------
    * Order
    * ---------------------------- */
-  const handlePlaceOrder = async (paymentMethod: "upi" | "wallet" = selectedPayment) => {
+  const handlePlaceOrder = async (
+    paymentMethod: "upi" | "wallet" = selectedPayment
+  ) => {
     // Delivery requires address
     if (fulfillmentType === "delivery" && !selectedAddress) {
-      toast({ title: "Address required", description: "Please select a delivery address", variant: "destructive" });
+      toast({
+        title: "Address required",
+        description: "Please select a delivery address",
+        variant: "destructive",
+      });
       return;
+    }
+
+    // ✅ block order if pincode is not deliverable
+    if (fulfillmentType === "delivery") {
+      if (pinCheckLoading) {
+        toast({
+          title: "Checking pincode...",
+          description: "Please wait",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (pinValid === false) {
+        toast({
+          title: "Delivery not available",
+          description: pinError || "Invalid pincode",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (pinValid === null) {
+        toast({
+          title: "Select address",
+          description: "Please select a valid pincode address",
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     // Pickup requirements
@@ -644,7 +858,8 @@ const Checkout = () => {
       if (!pickupPossible) {
         toast({
           title: "Pickup not allowed",
-          description: "Pickup is available only when your pincode matches the shop pincode for these items.",
+          description:
+            "Pickup is available only when your pincode matches the shop pincode for these items.",
           variant: "destructive",
         });
         return;
@@ -666,7 +881,11 @@ const Checkout = () => {
     if (appliedCoupon) {
       const validity = checkCouponValidity(appliedCoupon, baseForCoupon, paymentMethod);
       if (!validity.ok) {
-        toast({ title: "Coupon removed", description: validity.msg, variant: "destructive" });
+        toast({
+          title: "Coupon removed",
+          description: validity.msg,
+          variant: "destructive",
+        });
         setAppliedCoupon(null);
         setCouponDiscount(0);
       } else {
@@ -674,13 +893,11 @@ const Checkout = () => {
       }
     }
 
-    /**
-     * ✅ IMPORTANT:
-     * Recompute shipping here so backend total matches rule immediately
-     * If pickup OR preorder => shipping 0
-     */
-    const baseShipping = cartData.shipping ?? 50;
-    const finalShipping = fulfillmentType === "pickup" || preOrderInfo.hasPreOrder ? 0 : baseShipping;
+    // ✅ shipping is already updated by pincode validation
+    const finalShipping =
+      fulfillmentType === "pickup" || preOrderInfo.hasPreOrder
+        ? 0
+        : Number(orderDetails.shipping || 0);
 
     const finalTotal = Math.max(
       0,
@@ -693,7 +910,9 @@ const Checkout = () => {
     if (paymentMethod === "wallet" && walletBalance < finalTotal) {
       toast({
         title: "Insufficient Wallet",
-        description: `Wallet balance ₹${walletBalance.toFixed(2)} is not enough`,
+        description: `Wallet balance ₹${walletBalance.toFixed(
+          2
+        )} is not enough`,
         variant: "destructive",
       });
       return;
@@ -706,7 +925,11 @@ const Checkout = () => {
       const token = localStorage.getItem("token");
 
       if (!user || !token) {
-        toast({ title: "Login required", description: "Please login again", variant: "destructive" });
+        toast({
+          title: "Login required",
+          description: "Please login again",
+          variant: "destructive",
+        });
         navigate("/login");
         return;
       }
@@ -732,7 +955,10 @@ const Checkout = () => {
         };
       });
 
-      const finalSubtotal = mappedItems.reduce((acc: number, it: any) => acc + it.price * it.quantity, 0);
+      const finalSubtotal = mappedItems.reduce(
+        (acc: number, it: any) => acc + it.price * it.quantity,
+        0
+      );
 
       let upiDetails: any = null;
       if (paymentMethod === "upi") {
@@ -755,7 +981,10 @@ const Checkout = () => {
           userId: user.id,
           name: user.name || user.username || "Customer",
           email: user.email || "",
-          phone: fulfillmentType === "delivery" ? selectedAddress?.phone : (user.phone || ""),
+          phone:
+            fulfillmentType === "delivery"
+              ? selectedAddress?.phone
+              : user.phone || "",
         },
 
         shippingAddress: fulfillmentType === "delivery" ? selectedAddress : null,
@@ -780,13 +1009,18 @@ const Checkout = () => {
         orderItems: mappedItems,
 
         coupon: appliedCoupon
-          ? { code: appliedCoupon.code, type: appliedCoupon.type, value: appliedCoupon.value, discount: finalCouponDiscount }
+          ? {
+              code: appliedCoupon.code,
+              type: appliedCoupon.type,
+              value: appliedCoupon.value,
+              discount: finalCouponDiscount,
+            }
           : null,
 
         orderSummary: {
           itemsCount: mappedItems.reduce((acc: number, it: any) => acc + it.quantity, 0),
           subtotal: finalSubtotal,
-          shipping: finalShipping, // ✅ RULE APPLIED HERE
+          shipping: finalShipping,
           discount: (orderDetails.discount || 0) + finalCouponDiscount,
           total: finalTotal,
           tax: 0,
@@ -847,7 +1081,11 @@ const Checkout = () => {
       });
     } catch (err: any) {
       console.error("Order error:", err);
-      toast({ title: "Order Failed", description: err?.message || "Failed", variant: "destructive" });
+      toast({
+        title: "Order Failed",
+        description: err?.message || "Failed",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
       setIsUploading(false);
@@ -856,11 +1094,19 @@ const Checkout = () => {
 
   const handleUPIPayment = async () => {
     if (!upiTransactionId.trim()) {
-      toast({ title: "Transaction ID Required", description: "Enter UPI transaction ID", variant: "destructive" });
+      toast({
+        title: "Transaction ID Required",
+        description: "Enter UPI transaction ID",
+        variant: "destructive",
+      });
       return;
     }
     if (!paymentProof) {
-      toast({ title: "Payment Proof Required", description: "Upload screenshot", variant: "destructive" });
+      toast({
+        title: "Payment Proof Required",
+        description: "Upload screenshot",
+        variant: "destructive",
+      });
       return;
     }
     setIsProcessingUPI(true);
@@ -875,7 +1121,15 @@ const Checkout = () => {
 
   const handleEditAddress = (addr: Address) => {
     setEditingAddress(addr);
-    setAddressForm({ ...(addr as any) });
+    setAddressForm({
+      name: String(addr.name || ""),
+      phone: onlyDigits(String(addr.phone || "")).slice(0, 10),
+      pincode: normPincode(addr.pincode),
+      address: String(addr.address || ""),
+      city: String(addr.city || ""),
+      state: String(addr.state || ""),
+      isDefault: Boolean(addr.isDefault),
+    });
     setShowAddressDialog(true);
   };
 
@@ -952,7 +1206,7 @@ const Checkout = () => {
                     {preOrderInfo.hasPreOrder ? (
                       <span className="text-xs text-green-700 font-medium">(Free for pre-order)</span>
                     ) : (
-                      <span className="text-xs text-muted-foreground">(Shipping applies)</span>
+                      <span className="text-xs text-muted-foreground">(Shipping as per pincode)</span>
                     )}
                   </Label>
                 </div>
@@ -961,12 +1215,43 @@ const Checkout = () => {
                   <RadioGroupItem value="pickup" id="pickup" disabled={!pickupPossible} />
                   <Label htmlFor="pickup" className={`cursor-pointer ${!pickupPossible ? "text-muted-foreground" : ""}`}>
                     Self Pickup (Free)
-                    {!pickupPossible && (
-                      <span className="text-xs ml-2">({pickupDisabledReason || "Not available"})</span>
-                    )}
+                    {!pickupPossible && <span className="text-xs ml-2">({pickupDisabledReason || "Not available"})</span>}
                   </Label>
                 </div>
               </RadioGroup>
+
+              {/* ✅ PINCODE status */}
+              {fulfillmentType === "delivery" && (
+                <div className="mt-4">
+                  {pinCheckLoading ? (
+                    <div className="text-muted-foreground flex items-center gap-2 text-sm">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Checking delivery for pincode {userPincode || "—"}...
+                    </div>
+                  ) : pinValid === true ? (
+                    <div className="rounded-lg border bg-green-50 border-green-200 p-3 text-sm">
+                      ✅ Delivery available for <strong>{userPincode}</strong>
+                      <div className="text-xs text-green-800 mt-1">
+                        Charge: <strong>₹{Number(pinMeta?.charge ?? orderDetails.shipping).toFixed(0)}</strong>
+                        {!!pinMeta?.etaDays && (
+                          <>
+                            {" "}
+                            • ETA: <strong>{pinMeta.etaDays} days</strong>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ) : pinValid === false ? (
+                    <div className="rounded-lg border bg-red-50 border-red-200 p-3 text-sm text-red-700">
+                      ❌ {pinError || "Delivery not available"} {userPincode ? <strong>({userPincode})</strong> : null}
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground text-xs">
+                      Select an address with valid pincode to calculate delivery charge.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Pickup options */}
               {fulfillmentType === "pickup" && (
@@ -1067,9 +1352,7 @@ const Checkout = () => {
                             <p className="font-semibold text-sm sm:text-base truncate">
                               {addr.name}{" "}
                               {addr.isDefault && (
-                                <span className="text-xs bg-primary text-white px-2 py-1 rounded ml-2">
-                                  Default
-                                </span>
+                                <span className="text-xs bg-primary text-white px-2 py-1 rounded ml-2">Default</span>
                               )}
                             </p>
                             <p className="text-xs sm:text-sm text-muted-foreground mt-1 line-clamp-2">
@@ -1246,8 +1529,6 @@ const Checkout = () => {
                           <div className="flex-1 min-w-0">
                             <h4 className="font-semibold text-sm mb-1 line-clamp-2">{item.itemName || item.name}</h4>
 
-                            
-
                             {flags.isPreOrder && flags.availableOn && (
                               <p className="text-[11px] text-muted-foreground mb-1">
                                 Available on: <strong>{new Date(flags.availableOn).toDateString()}</strong>
@@ -1298,8 +1579,12 @@ const Checkout = () => {
                       <span className="text-green-600 font-semibold">Free</span>
                     ) : preOrderInfo.hasPreOrder ? (
                       <span className="text-green-600 font-semibold">Free (Pre-order)</span>
+                    ) : pinCheckLoading ? (
+                      <span className="text-muted-foreground">Checking…</span>
+                    ) : pinValid === false ? (
+                      <span className="text-red-600 font-semibold">Not available</span>
                     ) : (
-                      `₹${orderDetails.shipping.toFixed(2)}`
+                      `₹${Number(orderDetails.shipping || 0).toFixed(2)}`
                     )}
                   </span>
                 </div>
@@ -1318,8 +1603,13 @@ const Checkout = () => {
                 }}
                 disabled={
                   isLoading ||
-                  (fulfillmentType === "delivery" && !selectedAddress) ||
-                  (fulfillmentType === "pickup" && (!pickupPossible || !pickupLocationId || !pickupSlot))
+                  (fulfillmentType === "delivery" &&
+                    (!selectedAddress ||
+                      pinCheckLoading ||
+                      pinValid === false ||
+                      pinValid === null)) ||
+                  (fulfillmentType === "pickup" &&
+                    (!pickupPossible || !pickupLocationId || !pickupSlot))
                 }
               >
                 {isLoading ? (
@@ -1333,14 +1623,25 @@ const Checkout = () => {
               </Button>
 
               {fulfillmentType === "delivery" && !selectedAddress && (
-                <p className="text-xs text-red-500 text-center mt-2">Please select a delivery address</p>
-              )}
-
-              {fulfillmentType === "pickup" && (!pickupPossible || !pickupLocationId || !pickupSlot) && (
                 <p className="text-xs text-red-500 text-center mt-2">
-                  {!pickupPossible ? pickupDisabledReason : "Please select pickup location + slot"}
+                  Please select a delivery address
                 </p>
               )}
+
+              {fulfillmentType === "delivery" && selectedAddress && pinValid === false && (
+                <p className="text-xs text-red-500 text-center mt-2">
+                  {pinError || "Delivery not available"}
+                </p>
+              )}
+
+              {fulfillmentType === "pickup" &&
+                (!pickupPossible || !pickupLocationId || !pickupSlot) && (
+                  <p className="text-xs text-red-500 text-center mt-2">
+                    {!pickupPossible
+                      ? pickupDisabledReason
+                      : "Please select pickup location + slot"}
+                  </p>
+                )}
             </div>
           </div>
         </div>
@@ -1363,12 +1664,16 @@ const Checkout = () => {
             <Input
               placeholder="Phone (10 digits)"
               value={addressForm.phone}
-              onChange={(e) => setAddressForm((p) => ({ ...p, phone: onlyDigits(e.target.value).slice(0, 10) }))}
+              onChange={(e) =>
+                setAddressForm((p) => ({ ...p, phone: onlyDigits(e.target.value).slice(0, 10) }))
+              }
             />
             <Input
               placeholder="Pincode (6 digits)"
               value={addressForm.pincode}
-              onChange={(e) => setAddressForm((p) => ({ ...p, pincode: normPincode(e.target.value) }))}
+              onChange={(e) =>
+                setAddressForm((p) => ({ ...p, pincode: normPincode(e.target.value) }))
+              }
             />
             <Textarea
               placeholder="Address"
@@ -1389,7 +1694,11 @@ const Checkout = () => {
           </div>
 
           <DialogFooter>
-            <Button disabled={!isAddressFormValid() || isLoading} onClick={handleAddOrEditAddress} className="w-full sm:w-auto">
+            <Button
+              disabled={!isAddressFormValid() || isLoading}
+              onClick={handleAddOrEditAddress}
+              className="w-full sm:w-auto"
+            >
               {isLoading ? "Saving..." : "Save Address"}
             </Button>
           </DialogFooter>
@@ -1413,16 +1722,31 @@ const Checkout = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
               <div className="text-center">
                 <div className="bg-white p-3 sm:p-4 rounded-lg border inline-block max-w-full">
-                  <img src={upiConfig.qrCodeUrl} alt="UPI QR Code" className="w-36 h-36 sm:w-44 sm:h-44 mx-auto" />
+                  <img
+                    src={upiConfig.qrCodeUrl}
+                    alt="UPI QR Code"
+                    className="w-36 h-36 sm:w-44 sm:h-44 mx-auto"
+                  />
                 </div>
-                <p className="text-xs sm:text-sm text-muted-foreground mt-2">Scan QR code with any UPI app</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-2">
+                  Scan QR code with any UPI app
+                </p>
               </div>
 
               <div className="text-center">
-                <Label className="text-sm sm:text-base font-medium mb-2 block">Or use UPI ID</Label>
+                <Label className="text-sm sm:text-base font-medium mb-2 block">
+                  Or use UPI ID
+                </Label>
                 <div className="bg-primary/10 p-3 sm:p-4 rounded-lg border border-primary/20">
-                  <p className="font-mono text-base sm:text-lg font-bold break-all">{upiConfig.upiId}</p>
-                  <Button variant="outline" size="sm" className="mt-2 text-xs sm:text-sm" onClick={copyUPIId}>
+                  <p className="font-mono text-base sm:text-lg font-bold break-all">
+                    {upiConfig.upiId}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 text-xs sm:text-sm"
+                    onClick={copyUPIId}
+                  >
                     {copiedUPI ? (
                       <Check className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
                     ) : (
@@ -1456,14 +1780,18 @@ const Checkout = () => {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-sm sm:text-base font-medium">Upload Payment Screenshot *</Label>
+              <Label className="text-sm sm:text-base font-medium">
+                Upload Payment Screenshot *
+              </Label>
 
               {paymentProof ? (
                 <div className="border border-green-200 bg-green-50 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <Check className="h-5 w-5 text-green-600" />
-                      <span className="font-medium text-green-700">File uploaded successfully</span>
+                      <span className="font-medium text-green-700">
+                        File uploaded successfully
+                      </span>
                     </div>
                     <Button
                       variant="ghost"
@@ -1490,7 +1818,9 @@ const Checkout = () => {
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">{paymentProof.name}</p>
+                      <p className="font-medium text-sm truncate">
+                        {paymentProof.name}
+                      </p>
                       <p className="text-xs text-gray-500">
                         {(paymentProof.size / 1024).toFixed(2)} KB • {paymentProof.type}
                       </p>
@@ -1517,11 +1847,16 @@ const Checkout = () => {
                     accept="image/*,.pdf"
                     onChange={handleFileUpload}
                   />
-                  <label htmlFor="payment-proof-upload" className="cursor-pointer flex flex-col items-center gap-2">
+                  <label
+                    htmlFor="payment-proof-upload"
+                    className="cursor-pointer flex flex-col items-center gap-2"
+                  >
                     <Upload className="h-8 w-8 text-gray-400" />
                     <div>
                       <p className="font-medium">Upload payment screenshot</p>
-                      <p className="text-xs text-gray-500 mt-1">JPG, PNG, GIF, WEBP or PDF (Max 5MB)</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        JPG, PNG, GIF, WEBP or PDF (Max 5MB)
+                      </p>
                     </div>
                     <Button variant="outline" size="sm" className="mt-2">
                       Choose File

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,6 +49,7 @@ const OrderSuccess = () => {
   useEffect(() => {
     const orderData: any = location.state;
 
+    // Prepare order details if present (optional, used if user stays on this page)
     if (orderData?.order) {
       const expected =
         orderData?.order?.deliveryDetails?.expectedDelivery ??
@@ -72,9 +73,14 @@ const OrderSuccess = () => {
       setOrderDetails(null);
     }
 
-    const timer = setTimeout(() => setShowAnimation(false), 2000);
+    // ✅ After animation, go to My Orders
+    const timer = setTimeout(() => {
+      setShowAnimation(false);
+      navigate("/my-orders", { replace: true });
+    }, 2000);
+
     return () => clearTimeout(timer);
-  }, [location.state]);
+  }, [location.state, navigate]);
 
   const formatAddress = (addr?: ShippingAddress) => {
     if (!addr) return "Address not available";
@@ -90,35 +96,10 @@ const OrderSuccess = () => {
   const getImageUrl = (img?: string) => {
     if (!img) return "/placeholder-product.png";
     if (img.startsWith("http")) return img;
-    // if backend returns "/uploads/.."
     return `${API_ORIGIN}${img.startsWith("/") ? "" : "/"}${img}`;
   };
 
-  // ✅ Empty state (no order data)
-  if (!orderDetails && !showAnimation) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <div className="container mx-auto px-4 py-20 flex items-center justify-center">
-          <Card className="max-w-lg w-full">
-            <CardContent className="p-8 text-center space-y-3">
-              <p className="text-lg font-semibold text-navy">
-                No order data found
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Please place an order or open this page from the checkout flow.
-              </p>
-              <div className="pt-2">
-                <Button onClick={() => navigate("/")}>Go Home</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
-  // ✅ First Animation Screen
+  // ✅ First Animation Screen (shown briefly before redirect)
   if (showAnimation) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -130,20 +111,47 @@ const OrderSuccess = () => {
           <p className="text-muted-foreground mt-2 text-lg">
             Your order has been successfully placed.
           </p>
+          <p className="text-muted-foreground mt-2 text-sm">
+            Redirecting to <strong>My Orders</strong>...
+          </p>
         </div>
       </div>
     );
   }
 
-  // Safety: if animation ended but orderDetails is still null
-  if (!orderDetails) return null;
+  // Safety fallback (in case navigation fails somehow)
+  if (!orderDetails) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navbar />
+        <div className="container mx-auto px-4 py-20 flex items-center justify-center">
+          <Card className="max-w-lg w-full">
+            <CardContent className="p-8 text-center space-y-3">
+              <p className="text-lg font-semibold text-navy">No order data found</p>
+              <p className="text-sm text-muted-foreground">
+                Redirecting to My Orders...
+              </p>
+              <div className="pt-2 flex justify-center gap-2">
+                <Button onClick={() => navigate("/orders", { replace: true })}>
+                  Go to My Orders
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/")}>
+                  Home
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
+  // If user stays here (fallback UI)
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
 
       <div className="max-w-5xl mx-auto px-6 py-12 space-y-8">
-        {/* Header */}
         <div className="text-center">
           <div className="inline-flex items-center justify-center w-24 h-24 bg-yellow-100 rounded-full mb-4">
             <CheckCircle2 className="w-14 h-14 text-yellow-600" />
@@ -163,11 +171,9 @@ const OrderSuccess = () => {
           )}
         </div>
 
-        {/* Products Ordered */}
         <Card>
           <CardContent className="p-6">
             <h3 className="font-semibold text-lg mb-4">Products Ordered</h3>
-
             <div className="space-y-4">
               {orderDetails.items.map((item, idx) => (
                 <div key={idx} className="flex gap-4 pb-4 border-b last:border-b-0">
@@ -194,7 +200,6 @@ const OrderSuccess = () => {
           </CardContent>
         </Card>
 
-        {/* Delivery Information */}
         <Card>
           <CardContent className="p-6">
             <h3 className="font-semibold text-lg mb-4">Delivery Details</h3>
@@ -204,9 +209,7 @@ const OrderSuccess = () => {
                 <MapPin className="w-5 h-5 text-muted-foreground mt-0.5" />
                 <div>
                   <p className="font-medium">Address</p>
-                  <p className="text-muted-foreground">
-                    {formatAddress(orderDetails.shippingAddress)}
-                  </p>
+                  <p className="text-muted-foreground">{formatAddress(orderDetails.shippingAddress)}</p>
                 </div>
               </div>
 
@@ -229,7 +232,6 @@ const OrderSuccess = () => {
           </CardContent>
         </Card>
 
-        {/* Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Button
             variant="outline"
@@ -243,7 +245,7 @@ const OrderSuccess = () => {
           <Button
             size="lg"
             className="bg-yellow hover:bg-yellow/90 text-yellow-foreground flex items-center gap-2"
-            onClick={() => navigate("/orders")}
+            onClick={() => navigate("/my-orders")}
           >
             <Truck className="w-4 h-4" /> Track Order
           </Button>

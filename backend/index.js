@@ -17,18 +17,28 @@ import Category from "./models/Category.js";
 import Subcategory from "./models/Subcategory.js";
 import BankDetails from "./models/BankDetails.js";
 import Withdrawal from "./models/Withdrawal.js";
-
+import cookieParser from "cookie-parser";
+import googleAuth from "./routes/auth.js";
 import path from "path";
 import fs from "fs";
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cookieParser());
+app.use(cors({
+  origin: "https://apexbee.in",
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
+
 
 import dotenv from "dotenv";
 import Referral from "./models/Referral.js";
 import Bussiness from "./models/Bussiness.js";
 import Form from "./models/Form.js";
+import Pincode from "./models/Pincode.js";
+import User from "./models/User.js";
 dotenv.config();
 cloudinary.api.ping()
   .then(() => {
@@ -255,126 +265,6 @@ app.get("/api/vendor/:vendorId", async (req, res) => {
     res.status(500).json({ error: "Server Error" });
   }
 });
-const userSchema = new mongoose.Schema(
-  {
-    name: { type: String, required: true, trim: true },
-
-    email: {
-      type: String,
-      unique: true,
-      sparse: true,
-      trim: true,
-      lowercase: true,
-      index: true,
-    },
-
-    phone: {
-      type: String,
-      unique: true,
-      sparse: true,
-      trim: true,
-      index: true,
-    },
-
-    password: { type: String, select: false },
-
-    dateOfBirth: { type: Date },
-
-    gender: {
-      type: String,
-      enum: ["male", "female", "other", "prefer-not-to-say"],
-      default: "prefer-not-to-say",
-    },
-
-    bio: { type: String, maxlength: 500 },
-
-    avatar: { type: String, default: "" },
-
-    referralCode: {
-      type: String,
-      unique: true,
-      sparse: true,
-      index: true,
-    },
-
-    referredBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      index: true,
-      default: null,
-    },
-
-    referralLevel: {
-      type: Number,
-      default: 0, // 0 = root, 1 = direct, 2 = indirect, 3 = sub-indirect
-      index: true,
-    },
-
-    // ✅ Recommended for "first purchase commission" logic
-    firstOrderCompleted: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
-
-    walletBalance: { type: Number, default: 0 },
-    totalEarnings: { type: Number, default: 0 },
-
-    // Optional arrays (fast populate / display)
-    directReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
-    indirectReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
-    level3Referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
-
-    // Level-specific counts
-    level0Count: { type: Number, default: 0 },
-    level1Count: { type: Number, default: 0 },
-    level2Count: { type: Number, default: 0 },
-    level3Count: { type: Number, default: 0 },
-  },
-  { timestamps: true }
-);
-
-// ✅ Normalize email/phone
-userSchema.pre("save", function (next) {
-  if (this.email) this.email = String(this.email).trim().toLowerCase();
-  if (this.phone) this.phone = String(this.phone).trim();
-  next();
-});
-
-// ✅ Helper: refresh counts + arrays (Level 1/2/3)
-userSchema.methods.updateLevelCounts = async function () {
-  const userId = this._id;
-
-  const level1Users = await this.constructor.find({ referredBy: userId }).select("_id");
-  const level1Ids = level1Users.map((u) => u._id);
-
-  const level2Users = level1Ids.length
-    ? await this.constructor.find({ referredBy: { $in: level1Ids } }).select("_id")
-    : [];
-  const level2Ids = level2Users.map((u) => u._id);
-
-  const level3Users = level2Ids.length
-    ? await this.constructor.find({ referredBy: { $in: level2Ids } }).select("_id")
-    : [];
-  const level3Ids = level3Users.map((u) => u._id);
-
-  this.level0Count = 1;
-  this.level1Count = level1Ids.length;
-  this.level2Count = level2Ids.length;
-  this.level3Count = level3Ids.length;
-
-  this.directReferrals = level1Ids;
-  this.indirectReferrals = level2Ids;
-  this.level3Referrals = level3Ids;
-
-  return this.save();
-};
-
-// ✅ Helpful indexes for network queries
-userSchema.index({ referredBy: 1, createdAt: -1 });
-userSchema.index({ referralCode: 1 }); // quick lookup
-
-const User = mongoose.model("User", userSchema);
 
 /* =========================================================
  * COMMISSION SCHEMA
@@ -835,46 +725,7 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 
-app.get("/api/referrals/debug/:userId", auth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    if (!req.user) {
-      return res.status(401).json({ error: 'User not authenticated' });
-    }
 
-    const referrals = await debugReferralsForUser(userId);
-    const user = await User.findById(userId)
-      .populate('referredBy', 'name email referralCode')
-      .populate('directReferrals', 'name email')
-      .populate('indirectReferrals', 'name email');
-
-    res.json({
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        referralCode: user.referralCode,
-        referredBy: user.referredBy,
-        referralLevel: user.referralLevel,
-        directReferralsCount: user.directReferrals?.length || 0,
-        indirectReferralsCount: user.indirectReferrals?.length || 0
-      },
-      referrals: referrals.map(ref => ({
-        id: ref._id,
-        level: ref.level,
-        referrer: ref.referrer,
-        rewardAmount: ref.rewardAmount,
-        status: ref.status,
-        commissionRecipients: ref.commissionRecipients,
-        createdAt: ref.createdAt
-      }))
-    });
-  } catch (error) {
-    console.error('Debug endpoint error:', error);
-    res.status(500).json({ error: 'Failed to get debug info' });
-  }
-});
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -925,6 +776,190 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+app.post("/api/auth/request-login", async (req, res) => {
+  try {
+    const { email, mode } = req.body; // "otp" | "magiclink"
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    const cleanEmail = String(email).toLowerCase().trim();
+    const chosenMode = mode === "magiclink" ? "magiclink" : "otp";
+
+    // delete old codes for this email (recommended)
+    await AuthCode.deleteMany({ email: cleanEmail, purpose: "login" });
+
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
+    if (chosenMode === "otp") {
+      const otp = generateOtp();
+      const otpHash = hashValue(otp);
+
+      await AuthCode.create({ email: cleanEmail, otpHash, expiresAt, attemptsLeft: 5 });
+
+      await sendEmail({
+        to: cleanEmail,
+        subject: "Your login code",
+        html: `<p>Your OTP is:</p><h2>${otp}</h2><p>Expires in 10 minutes.</p>`,
+      });
+
+      return res.json({ message: "OTP sent" });
+    }
+
+    // magic link
+    const token = generateToken();
+    const tokenHash = hashValue(token);
+
+    await AuthCode.create({ email: cleanEmail, tokenHash, expiresAt, attemptsLeft: 5 });
+
+    const link = `${process.env.APP_URL}/auth/magic?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
+
+    await sendEmail({
+      to: cleanEmail,
+      subject: "Your magic login link",
+      html: `<p>Click to login (valid 10 minutes):</p><p><a href="${link}">Login</a></p>`,
+    });
+
+    return res.json({ message: "Magic link sent" });
+  } catch (err) {
+    console.error("request-login error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ✅ Verify OTP => login
+app.post("/api/auth/verify-otp", async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ error: "Email and OTP required" });
+
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    const record = await AuthCode.findOne({ email: cleanEmail, purpose: "login" });
+    if (!record) return res.status(400).json({ error: "Invalid or expired OTP" });
+
+    if (record.expiresAt < new Date()) {
+      await record.deleteOne();
+      return res.status(400).json({ error: "OTP expired" });
+    }
+
+    if (record.attemptsLeft <= 0) {
+      await record.deleteOne();
+      return res.status(400).json({ error: "Too many attempts. Request again." });
+    }
+
+    const otpHash = hashValue(String(otp).trim());
+    if (otpHash !== record.otpHash) {
+      record.attemptsLeft -= 1;
+      await record.save();
+      return res.status(400).json({ error: "Wrong OTP" });
+    }
+
+    // ✅ find existing user (DON'T auto register if you don't want)
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) return res.status(404).json({ error: "User not registered. Please register first." });
+
+    await record.deleteOne();
+
+    return res.json({
+      message: "Login successful",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        referralCode: user.referralCode,
+        walletBalance: user.walletBalance,
+      },
+      token: createToken(user),
+    });
+  } catch (err) {
+    console.error("verify-otp error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ✅ Verify Magic Link => login
+app.post("/api/auth/verify-magic", async (req, res) => {
+  try {
+    const { email, token } = req.body;
+    if (!email || !token) return res.status(400).json({ error: "Email and token required" });
+
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    const record = await AuthCode.findOne({ email: cleanEmail, purpose: "login" });
+    if (!record) return res.status(400).json({ error: "Invalid or expired link" });
+
+    if (record.expiresAt < new Date()) {
+      await record.deleteOne();
+      return res.status(400).json({ error: "Link expired" });
+    }
+
+    const tokenHash = hashValue(token);
+    if (tokenHash !== record.tokenHash) {
+      return res.status(400).json({ error: "Invalid or expired link" });
+    }
+
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) return res.status(404).json({ error: "User not registered. Please register first." });
+
+    await record.deleteOne();
+
+    return res.json({
+      message: "Login successful",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        referralCode: user.referralCode,
+        walletBalance: user.walletBalance,
+      },
+      token: createToken(user),
+    });
+  } catch (err) {
+    console.error("verify-magic error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+app.get("/api/referrals/debug/:userId", auth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const referrals = await debugReferralsForUser(userId);
+    const user = await User.findById(userId)
+      .populate('referredBy', 'name email referralCode')
+      .populate('directReferrals', 'name email')
+      .populate('indirectReferrals', 'name email');
+
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        referralCode: user.referralCode,
+        referredBy: user.referredBy,
+        referralLevel: user.referralLevel,
+        directReferralsCount: user.directReferrals?.length || 0,
+        indirectReferralsCount: user.indirectReferrals?.length || 0
+      },
+      referrals: referrals.map(ref => ({
+        id: ref._id,
+        level: ref.level,
+        referrer: ref.referrer,
+        rewardAmount: ref.rewardAmount,
+        status: ref.status,
+        commissionRecipients: ref.commissionRecipients,
+        createdAt: ref.createdAt
+      }))
+    });
+  } catch (error) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({ error: 'Failed to get debug info' });
+  }
+});
 app.get("/api/referrals/code", auth, async (req, res) => {
   try {
     console.log('Getting referral code for user:', req.user?._id);
@@ -3154,103 +3189,105 @@ app.get("/api/user/address/:userId", async (req, res) => {
 });
 app.post("/api/user/address", auth, async (req, res) => {
   try {
-    const { name, phone, pincode, city, state, address, isDefault, id } = req.body;
-    
+    let { name, phone, pincode, city, state, address, isDefault, id } = req.body;
+
+    // normalize
+    name = String(name || "").trim();
+    phone = String(phone || "").replace(/\D/g, "");      // digits only
+    pincode = String(pincode || "").replace(/\D/g, "");  // digits only
+    city = String(city || "").trim();
+    state = String(state || "").trim();
+    address = String(address || "").trim();
+
+    // boolean normalize (handles "true"/"false")
+    isDefault = isDefault === true || isDefault === "true";
+
     // Validate required fields
     if (!name || !phone || !pincode || !city || !state || !address) {
-      return res.status(400).json({ 
-        error: "All address fields are required" 
+      return res.status(400).json({
+        success: false,
+        error: "All address fields are required",
       });
     }
 
     // Validate phone number (10 digits)
     const phoneRegex = /^[6-9]\d{9}$/;
     if (!phoneRegex.test(phone)) {
-      return res.status(400).json({ 
-        error: "Please enter a valid 10-digit phone number" 
+      return res.status(400).json({
+        success: false,
+        error: "Please enter a valid 10-digit phone number",
       });
     }
 
     // Validate pincode (6 digits)
     const pincodeRegex = /^\d{6}$/;
     if (!pincodeRegex.test(pincode)) {
-      return res.status(400).json({ 
-        error: "Please enter a valid 6-digit pincode" 
+      return res.status(400).json({
+        success: false,
+        error: "Please enter a valid 6-digit pincode",
       });
     }
 
-    // Get user ID from authenticated request
     const userId = req.user._id;
 
-    // If setting as default, unset other defaults for this user
+    // If setting default, unset other defaults for this user
     if (isDefault) {
       await Address.updateMany(
-        { userId: userId },
+        { userId, ...(id ? { _id: { $ne: id } } : {}) },
         { $set: { isDefault: false } }
       );
     }
 
     let addressDoc;
-    
+
     if (id) {
-      // Update existing address - ensure it belongs to the user
+      // Update existing address
       addressDoc = await Address.findOneAndUpdate(
-        { _id: id, userId: userId },
-        { 
-          name, 
-          phone, 
-          pincode, 
-          city, 
-          state, 
-          address, 
-          isDefault 
-        },
+        { _id: id, userId },
+        { name, phone, pincode, city, state, address, isDefault },
         { new: true, runValidators: true }
       );
 
       if (!addressDoc) {
-        return res.status(404).json({ 
-          error: "Address not found or you don't have permission to edit it" 
+        return res.status(404).json({
+          success: false,
+          error: "Address not found or you don't have permission to edit it",
         });
       }
     } else {
       // Create new address
       addressDoc = await Address.create({
-        userId: userId,
+        userId,
         name,
         phone,
         pincode,
         city,
         state,
         address,
-        isDefault: isDefault || false
+        isDefault: isDefault || false,
       });
     }
 
-    res.json({ 
-      message: id ? "Address updated successfully" : "Address added successfully", 
-      address: addressDoc 
+    return res.json({
+      success: true,
+      message: id ? "Address updated successfully" : "Address added successfully",
+      address: addressDoc,
     });
-
   } catch (err) {
     console.error("Address save error:", err);
-    
-    if (err.name === 'ValidationError') {
-      const errors = Object.values(err.errors).map(error => error.message);
-      return res.status(400).json({ 
-        error: "Validation failed", 
-        details: errors 
+
+  
+
+    if (err?.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        error: "Duplicate address",
       });
     }
-    
-    if (err.code === 11000) {
-      return res.status(400).json({ 
-        error: "Address already exists" 
-      });
-    }
-    
-    res.status(500).json({ 
-      error: "Server error while saving address" 
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error while saving address",
     });
   }
 });
@@ -3436,7 +3473,7 @@ async function processWishLinkIncentive({ buyerId, order, orderAmount, metadata 
 /** -------------------------------------------------------
  * ✅ UPDATED ORDER API (your code + changes only in referral part)
  * ------------------------------------------------------*/
-
+import sendOrderConfirmation from "./utils/SendOrderConformation.js"; // (optional) for sending confirmation emails
 app.post("/api/orders", auth, async (req, res) => {
   try {
     const {
@@ -3662,6 +3699,7 @@ app.post("/api/orders", auth, async (req, res) => {
     if (orderStatus === "confirmed" || paymentStatus === "completed") {
       for (const item of orderItems) {
         await Products.findByIdAndUpdate(item.productId, { $inc: { openStock: -item.quantity } });
+        await sendOrderConfirmation(order, req.user);
       }
       console.log("Stock decremented for confirmed order");
     } else {
@@ -6797,9 +6835,72 @@ app.get("/api/reviews/order/:orderId/user/:userId", async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to load reviews" });
   }
 });
+app.post("/api/admin/pincodes/add", async (req, res) => {
+  try {
+    const { pincode, deliveryCharge, estimatedDays } = req.body;
 
+    const existing = await Pincode.findOne({ pincode });
+    if (existing) {
+      return res.status(400).json({ message: "Pincode already exists" });
+    }
 
+    const newPincode = await Pincode.create({
+      pincode,
+      deliveryCharge,
+      estimatedDays,
+    });
 
+    res.json({ success: true, data: newPincode });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Get all pincodes
+app.get("/api/admin/pincodes", async (req, res) => {
+  const pincodes = await Pincode.find().sort({ createdAt: -1 });
+  res.json(pincodes);
+});
+
+// Update
+app.put("/api/admin/pincodes/:id", async (req, res) => {
+  const updated = await Pincode.findByIdAndUpdate(
+    req.params.id,
+    req.body,
+    { new: true }
+  );
+  res.json(updated);
+});
+
+// Delete
+app.delete("/api/admin/pincodes/:id", async (req, res) => {
+  await Pincode.findByIdAndDelete(req.params.id);
+  res.json({ success: true });
+});
+app.post("/api/checkout/validate-pincode", async (req, res) => {
+  try {
+    const { pincode } = req.body;
+
+    const area = await Pincode.findOne({ pincode });
+
+    if (!area || !area.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: "Delivery not available in this area",
+      });
+    }
+
+    res.json({
+      success: true,
+      deliveryCharge: area.deliveryCharge,
+      estimatedDays: area.estimatedDays,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+app.post("/api/auth/google", googleAuth);
+console.log("MONGO_URI loaded:", !!process.env.MONGO_URI);
 
 app.use("/uploads", express.static("uploads"));
 

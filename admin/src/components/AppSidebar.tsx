@@ -9,6 +9,7 @@ import {
   DollarSign,
   Settings,
   Grid3x3,
+  MapPin,
 } from "lucide-react";
 import {
   Sidebar,
@@ -31,6 +32,7 @@ const menuItems = [
   { title: "Users", url: "/users", icon: Users },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
   { title: "Referal amount", url: "/withdrow", icon: ShoppingCart },
+  { title: "Pincode", url: "/pincode", icon: MapPin },
   { title: "Forms", url: "/Forms", icon: ShoppingCart },
   { title: "Payouts", url: "/payouts", icon: DollarSign },
   { title: "Settings", url: "/settings", icon: Settings },

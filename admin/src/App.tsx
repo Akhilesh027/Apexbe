@@ -18,6 +18,7 @@ import AddSubcategory from "./pages/AddSubCategories";
 import Forms from "./pages/Form";
 import Businesses from "./pages/Bussiness";
 import Withdrow from "./pages/Withdrow";
+import PincodeManagement from "./pages/Pincode";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +54,7 @@ const App = () => (
             <Route path="users" element={<Users />} />
             <Route path="orders" element={<Orders />} />
             <Route path="payouts" element={<Payouts />} />
+            <Route path="pincode" element={<PincodeManagement />} />
             <Route path="Forms" element={<Forms />} />
             <Route path="settings" element={<Settings />} />
             <Route index element={<Navigate to="/dashboard" />} />
