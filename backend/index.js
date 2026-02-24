@@ -39,6 +39,8 @@ import Bussiness from "./models/Bussiness.js";
 import Form from "./models/Form.js";
 import Pincode from "./models/Pincode.js";
 import User from "./models/User.js";
+const normalizeId = (id) =>
+  mongoose.Types.ObjectId.isValid(id) ? id : null;
 dotenv.config();
 cloudinary.api.ping()
   .then(() => {
