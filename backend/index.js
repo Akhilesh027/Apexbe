@@ -26,7 +26,16 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({
-  origin: "https://apexbee.in",
+  origin: [
+    "https://apexbee.in",
+    "https://www.apexbee.in",
+    "http://localhost:8080",
+    "http://localhost:8082",
+    "http://localhost:8081",
+    "http://localhost:5173",
+    "https://admin.apexbee.in",
+    "https://vendor.apexbee.in"
+  ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
