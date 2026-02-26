@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import "dotenv/config"; // ✅ FIRST LINE
 import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary.js";
@@ -13,6 +14,7 @@ import Cart from "./models/Cart.js";
 import Address from "./models/Address.js";
 import Order from "./models/Order.js";
 import Wishlist from "./models/Wishlist.js";
+import { createHash } from "crypto";
 import Category from "./models/Category.js";
 import Subcategory from "./models/Subcategory.js";
 import BankDetails from "./models/BankDetails.js";
@@ -666,44 +668,67 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(400).json({ error: "All fields are required" });
     }
 
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanPhone = String(phone).trim();
+    const cleanReferralCode = String(referralCode || "").trim();
+
     const existingUser = await User.findOne({
-      $or: [{ email }, { phone }],
+      $or: [{ email: cleanEmail }, { phone: cleanPhone }],
     });
 
     if (existingUser) {
       return res.status(400).json({ error: "Email or Phone already registered" });
     }
 
-    const hashedPass = await bcrypt.hash(password, 10);
+    const hashedPass = await bcrypt.hash(String(password), 10);
     const userReferralCode = generateReferralCode();
 
+    // ====================================================
+    // 🔥 DEFAULT REFERRAL HANDLING (SET referredBy)
+    // ====================================================
+
+    // If user didn't enter referral code -> use ROOT
+    const finalReferralCode = cleanReferralCode || DEFAULT_REFERRAL_CODE;
+
+    // Find referrer user by referralCode (APX-ROOT or user-entered)
+    const refUser = await User.findOne({ referralCode: finalReferralCode });
+
+    // If APX-ROOT doesn't exist, fallback to your SAVITRI user id
+    // (the one you said must be default)
+    const FALLBACK_REFERRER_ID = "693f8a03310a12fba61e0c30";
+
+    const referredById = refUser?._id || FALLBACK_REFERRER_ID;
+
+    if (!cleanReferralCode) {
+      console.log("⚠️ No referral code entered — assigning default ROOT:", DEFAULT_REFERRAL_CODE);
+    }
+
+    console.log(`🔗 Processing referral with code: ${finalReferralCode}`);
+    console.log(`👤 Referrer found: ${refUser ? refUser.email : "NOT FOUND (using fallback id)"}`);
+
+    // ====================================================
+
     const newUser = await User.create({
-      name,
-      email,
-      phone,
+      name: String(name).trim(),
+      email: cleanEmail,
+      phone: cleanPhone,
       password: hashedPass,
       referralCode: userReferralCode,
+
+      // ✅ THIS is what you wanted:
+      // if no referral code, user will be under SAVITRI (fallback),
+      // OR under APX-ROOT user if that exists
+      referredBy: referredById,
     });
 
     console.log(`✅ New user created: ${newUser._id} (${newUser.email})`);
 
     // ====================================================
-    // 🔥 DEFAULT REFERRAL HANDLING
+    // Process referral tree (your existing logic)
+    // NOTE: Use finalReferralCode (already defaulted)
     // ====================================================
 
-    let finalReferralCode = referralCode;
-
-    if (!referralCode) {
-      console.log("⚠️ No referral code entered — assigning default ROOT");
-      finalReferralCode = DEFAULT_REFERRAL_CODE;
-    }
-
-    console.log(`🔗 Processing referral with code: ${finalReferralCode}`);
-
-    const referralResult = await processReferral(
-      newUser._id,
-      finalReferralCode
-    );
+    const referralResult = await processReferral(newUser._id, finalReferralCode);
 
     if (referralResult) {
       console.log(`✅ Referral processing result:`, {
@@ -787,150 +812,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-app.post("/api/auth/request-login", async (req, res) => {
-  try {
-    const { email, mode } = req.body; // "otp" | "magiclink"
-    if (!email) return res.status(400).json({ error: "Email is required" });
 
-    const cleanEmail = String(email).toLowerCase().trim();
-    const chosenMode = mode === "magiclink" ? "magiclink" : "otp";
-
-    // delete old codes for this email (recommended)
-    await AuthCode.deleteMany({ email: cleanEmail, purpose: "login" });
-
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
-
-    if (chosenMode === "otp") {
-      const otp = generateOtp();
-      const otpHash = hashValue(otp);
-
-      await AuthCode.create({ email: cleanEmail, otpHash, expiresAt, attemptsLeft: 5 });
-
-      await sendEmail({
-        to: cleanEmail,
-        subject: "Your login code",
-        html: `<p>Your OTP is:</p><h2>${otp}</h2><p>Expires in 10 minutes.</p>`,
-      });
-
-      return res.json({ message: "OTP sent" });
-    }
-
-    // magic link
-    const token = generateToken();
-    const tokenHash = hashValue(token);
-
-    await AuthCode.create({ email: cleanEmail, tokenHash, expiresAt, attemptsLeft: 5 });
-
-    const link = `${process.env.APP_URL}/auth/magic?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
-
-    await sendEmail({
-      to: cleanEmail,
-      subject: "Your magic login link",
-      html: `<p>Click to login (valid 10 minutes):</p><p><a href="${link}">Login</a></p>`,
-    });
-
-    return res.json({ message: "Magic link sent" });
-  } catch (err) {
-    console.error("request-login error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// ✅ Verify OTP => login
-app.post("/api/auth/verify-otp", async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-    if (!email || !otp) return res.status(400).json({ error: "Email and OTP required" });
-
-    const cleanEmail = String(email).toLowerCase().trim();
-
-    const record = await AuthCode.findOne({ email: cleanEmail, purpose: "login" });
-    if (!record) return res.status(400).json({ error: "Invalid or expired OTP" });
-
-    if (record.expiresAt < new Date()) {
-      await record.deleteOne();
-      return res.status(400).json({ error: "OTP expired" });
-    }
-
-    if (record.attemptsLeft <= 0) {
-      await record.deleteOne();
-      return res.status(400).json({ error: "Too many attempts. Request again." });
-    }
-
-    const otpHash = hashValue(String(otp).trim());
-    if (otpHash !== record.otpHash) {
-      record.attemptsLeft -= 1;
-      await record.save();
-      return res.status(400).json({ error: "Wrong OTP" });
-    }
-
-    // ✅ find existing user (DON'T auto register if you don't want)
-    const user = await User.findOne({ email: cleanEmail });
-    if (!user) return res.status(404).json({ error: "User not registered. Please register first." });
-
-    await record.deleteOne();
-
-    return res.json({
-      message: "Login successful",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        referralCode: user.referralCode,
-        walletBalance: user.walletBalance,
-      },
-      token: createToken(user),
-    });
-  } catch (err) {
-    console.error("verify-otp error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// ✅ Verify Magic Link => login
-app.post("/api/auth/verify-magic", async (req, res) => {
-  try {
-    const { email, token } = req.body;
-    if (!email || !token) return res.status(400).json({ error: "Email and token required" });
-
-    const cleanEmail = String(email).toLowerCase().trim();
-
-    const record = await AuthCode.findOne({ email: cleanEmail, purpose: "login" });
-    if (!record) return res.status(400).json({ error: "Invalid or expired link" });
-
-    if (record.expiresAt < new Date()) {
-      await record.deleteOne();
-      return res.status(400).json({ error: "Link expired" });
-    }
-
-    const tokenHash = hashValue(token);
-    if (tokenHash !== record.tokenHash) {
-      return res.status(400).json({ error: "Invalid or expired link" });
-    }
-
-    const user = await User.findOne({ email: cleanEmail });
-    if (!user) return res.status(404).json({ error: "User not registered. Please register first." });
-
-    await record.deleteOne();
-
-    return res.json({
-      message: "Login successful",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        referralCode: user.referralCode,
-        walletBalance: user.walletBalance,
-      },
-      token: createToken(user),
-    });
-  } catch (err) {
-    console.error("verify-magic error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
 app.get("/api/referrals/debug/:userId", auth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -3485,6 +3367,7 @@ async function processWishLinkIncentive({ buyerId, order, orderAmount, metadata 
  * ✅ UPDATED ORDER API (your code + changes only in referral part)
  * ------------------------------------------------------*/
 import sendOrderConfirmation from "./utils/SendOrderConformation.js"; // (optional) for sending confirmation emails
+import {forgotPasswordOtp, resetPasswordOtp, verifyResetOtp } from "./routes/authController.js";
 app.post("/api/orders", auth, async (req, res) => {
   try {
     const {
@@ -3827,8 +3710,6 @@ app.post("/api/orders", auth, async (req, res) => {
     });
   }
 });
-
-// Helper function for status descriptions
 function getStatusDescription(status) {
   const descriptions = {
     'pending': 'Order received and being processed',
@@ -3843,8 +3724,6 @@ function getStatusDescription(status) {
   };
   return descriptions[status] || 'Order status updated';
 }
-
-// Helper function for success messages
 function getOrderSuccessMessage(paymentMethod, paymentStatus) {
   if (paymentMethod === 'upi' && paymentStatus === 'pending_verification') {
     return "Order placed successfully! Payment verification pending. We'll notify you once verified.";
@@ -6911,6 +6790,190 @@ app.post("/api/checkout/validate-pincode", async (req, res) => {
   }
 });
 app.post("/api/auth/google", googleAuth);
+// helpers
+import { sendMail } from "./utils/mailer.js"; // ✅ THIS LINE
+
+const sha256 = (v) =>
+  createHash("sha256").update(String(v)).digest("hex");const makeOtp = () => String(Math.floor(100000 + Math.random() * 900000)); // 6-digit
+
+const OTP_TTL_MIN = 10;
+const MAX_VERIFY_ATTEMPTS = 8;
+const RESEND_COOLDOWN_SEC = 45;
+
+const safeOk = (res) =>
+  res.json({ success: true, message: "If the email exists, OTP was sent." });
+
+/** ----------------------------------------
+ * POST /api/auth/forgot-password-otp
+ * Body: { email }
+ * ---------------------------------------*/
+app.post("/api/auth/forgot-password-otp/check", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    if (!email)
+      return res.status(400).json({ success: false, error: "Email is required." });
+
+    const user = await User.findOne({ email });
+
+    // Anti-enumeration
+    if (!user) return safeOk(res);
+
+    const lastSentAt = user.resetPasswordOtpLastSentAt
+      ? new Date(user.resetPasswordOtpLastSentAt).getTime()
+      : 0;
+
+    if (lastSentAt && Date.now() - lastSentAt < RESEND_COOLDOWN_SEC * 1000) {
+      return res.status(429).json({
+        success: false,
+        error: `Please wait ${RESEND_COOLDOWN_SEC} seconds before requesting a new OTP.`,
+      });
+    }
+
+    const otp = makeOtp();
+
+    // 🔥 SHOW OTP IN CONSOLE (FOR DEV ONLY)
+    console.log("==================================");
+    console.log("📩 OTP GENERATED");
+    console.log("User:", email);
+    console.log("OTP:", otp);
+    console.log("Expires in:", OTP_TTL_MIN, "minutes");
+    console.log("==================================");
+
+    user.resetPasswordOtpHash = sha256(otp);
+    user.resetPasswordOtpExpiresAt = new Date(Date.now() + OTP_TTL_MIN * 60 * 1000);
+    user.resetPasswordOtpVerified = false;
+    user.resetPasswordOtpAttempts = 0;
+    user.resetPasswordOtpLastSentAt = new Date();
+
+    await user.save();
+
+    const info = await sendMail({
+      to: email,
+      subject: "Your ApexBee password reset OTP",
+      text: `Your OTP is ${otp}. It expires in ${OTP_TTL_MIN} minutes.`,
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6">
+          <h2>Password Reset OTP</h2>
+          <p>Use this OTP to reset your password:</p>
+          <div style="font-size:28px;font-weight:700;letter-spacing:4px">${otp}</div>
+          <p style="color:#666;font-size:12px">Expires in ${OTP_TTL_MIN} minutes.</p>
+        </div>
+      `,
+    });
+
+    console.log("✅ OTP email send result:", {
+      accepted: info?.accepted,
+      rejected: info?.rejected,
+      response: info?.response,
+    });
+
+    return safeOk(res);
+  } catch (err) {
+    console.error("forgot-password-otp error:", err);
+    return res.status(500).json({ success: false, error: "Server error." });
+  }
+});
+
+/** ----------------------------------------
+ * POST /api/auth/verify-reset-otp
+ * Body: { email, otp }
+ * ---------------------------------------*/
+app.post("/api/auth/verify-reset-otp/check", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const otp = String(req.body.otp || "").trim();
+
+    if (!email || !otp) {
+      return res.status(400).json({ success: false, error: "Email and OTP are required." });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ success: false, error: "Invalid OTP." });
+
+    if (!user.resetPasswordOtpHash || !user.resetPasswordOtpExpiresAt) {
+      return res.status(400).json({ success: false, error: "OTP not requested." });
+    }
+
+    if (user.resetPasswordOtpAttempts >= MAX_VERIFY_ATTEMPTS) {
+      return res.status(429).json({ success: false, error: "Too many attempts. Try again later." });
+    }
+
+    // increment attempt
+    user.resetPasswordOtpAttempts += 1;
+
+    // expired
+    if (new Date(user.resetPasswordOtpExpiresAt) <= new Date()) {
+      await user.save();
+      return res.status(400).json({ success: false, error: "OTP expired. Please request again." });
+    }
+
+    // compare
+    if (sha256(otp) !== user.resetPasswordOtpHash) {
+      await user.save();
+      return res.status(400).json({ success: false, error: "Invalid OTP." });
+    }
+
+    user.resetPasswordOtpVerified = true;
+    user.resetPasswordOtpAttempts = 0;
+
+    await user.save();
+    return res.json({ success: true, message: "OTP verified." });
+  } catch (err) {
+    console.error("verify-reset-otp error:", err);
+    return res.status(500).json({ success: false, error: "Server error." });
+  }
+});
+
+/** ----------------------------------------
+ * POST /api/auth/reset-password-otp
+ * Body: { email, newPassword, confirmPassword? }
+ * ---------------------------------------*/
+app.post("/api/auth/reset-password-otp/check", async (req, res) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const newPassword = String(req.body.newPassword || "");
+    const confirmPassword = String(req.body.confirmPassword || "");
+
+    if (!email || !newPassword) {
+      return res.status(400).json({ success: false, error: "Email and newPassword are required." });
+    }
+
+    if (confirmPassword && newPassword !== confirmPassword) {
+      return res.status(400).json({ success: false, error: "Passwords do not match." });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: "Password must be at least 6 characters." });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ success: false, error: "Invalid request." });
+
+    if (!user.resetPasswordOtpVerified) {
+      return res.status(400).json({ success: false, error: "OTP not verified." });
+    }
+
+    if (!user.resetPasswordOtpExpiresAt || new Date(user.resetPasswordOtpExpiresAt) <= new Date()) {
+      return res.status(400).json({ success: false, error: "OTP expired. Please request again." });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+
+    // clear OTP
+    user.resetPasswordOtpHash = undefined;
+    user.resetPasswordOtpExpiresAt = undefined;
+    user.resetPasswordOtpVerified = false;
+    user.resetPasswordOtpAttempts = 0;
+    user.resetPasswordOtpLastSentAt = undefined;
+
+    await user.save();
+    return res.json({ success: true, message: "Password updated successfully." });
+  } catch (err) {
+    console.error("reset-password-otp error:", err);
+    return res.status(500).json({ success: false, error: "Server error." });
+  }
+});
 console.log("MONGO_URI loaded:", !!process.env.MONGO_URI);
 
 app.use("/uploads", express.static("uploads"));

@@ -27,6 +27,7 @@ import Wishlist from "./pages/Wishlist";
 import Register from "./pages/Register";
 import StorePage from "./pages/Vendors";
 import ProductsPage from "./pages/Product";
+import ForgotPasswordOtp from "./pages/ForgotPasswordOtp";
 
 const queryClient = new QueryClient();
 
@@ -52,6 +53,8 @@ const App = () => (
           <Route path="/business/:id" element={<StorePage />} />
           <Route path="/order-success" element={<OrderSuccess />} />
           <Route path="/cart" element={<Cart />} />
+          // App routes
+<Route path="/forgot-password" element={<ForgotPasswordOtp />} />
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/my-orders" element={<MyOrders />} />
           <Route path="/sale" element={<Sale />} />

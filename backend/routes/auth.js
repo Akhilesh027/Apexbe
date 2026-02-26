@@ -1,5 +1,7 @@
+// controllers/googleAuth.js
 import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import User from "../models/User.js";
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -14,7 +16,7 @@ function signToken(user) {
 
 const googleAuth = async (req, res) => {
   try {
-    const { credential } = req.body; // Google ID token
+    const { credential, referralCode } = req.body; // ✅ accept referralCode also
     if (!credential) return res.status(400).json({ error: "Missing credential" });
 
     const ticket = await client.verifyIdToken({
@@ -23,28 +25,36 @@ const googleAuth = async (req, res) => {
     });
 
     const payload = ticket.getPayload();
-    // payload: { email, name, picture, sub, email_verified, ... }
-
     const email = (payload?.email || "").toLowerCase().trim();
     if (!email) return res.status(400).json({ error: "No email from Google" });
 
-    // ✅ find or create user
     let user = await User.findOne({ email });
 
+    // ✅ first time google signup
     if (!user) {
+      // optional: if your User schema requires password, create a random one
+      const randomPassword = crypto.randomBytes(24).toString("hex");
+
       user = await User.create({
         name: payload?.name || "",
         email,
-        // phone optional (Google won’t give phone)
-        // You can also store googleId: payload.sub
-        // referralCode generate if your system needs it
+        password: randomPassword, // if not required in schema, you can remove
+        // picture: payload?.picture || "",
+        // googleId: payload?.sub || "",
+        // ✅ store referral link if your model supports
+        referredBy: referralCode || undefined,
       });
+    } else {
+      // ✅ if user exists but doesn't have name, update it once
+      if (!user.name && payload?.name) {
+        user.name = payload.name;
+        await user.save();
+      }
     }
 
-    // ✅ Issue your JWT
     const token = signToken(user);
 
-    // (Recommended) set cookie instead of localStorage
+    // ✅ cookie (if you use cookie-parser + https in prod)
     const isProd = process.env.NODE_ENV === "production";
     res.cookie("token", token, {
       httpOnly: true,
@@ -57,7 +67,7 @@ const googleAuth = async (req, res) => {
       message: "Google login successful",
       user: {
         id: user._id,
-        name: user.name,
+        name: user.name || "",
         email: user.email,
         phone: user.phone || "",
         referralCode: user.referralCode,
@@ -70,4 +80,5 @@ const googleAuth = async (req, res) => {
     return res.status(500).json({ error: "Google auth failed" });
   }
 };
+
 export default googleAuth;

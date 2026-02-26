@@ -68,7 +68,12 @@ const userSchema = new mongoose.Schema(
     directReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
     indirectReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
     level3Referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", default: [] }],
-
+ // ✅ reset password fields
+    // models/User.js
+resetPasswordOtpHash: { type: String },
+resetPasswordOtpExpiresAt: { type: Date },
+resetPasswordOtpVerified: { type: Boolean, default: false },
+resetPasswordOtpAttempts: { type: Number, default: 0 },
     // Level-specific counts
     level0Count: { type: Number, default: 0 },
     level1Count: { type: Number, default: 0 },
