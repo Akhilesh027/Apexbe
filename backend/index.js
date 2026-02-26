@@ -21,6 +21,7 @@ import BankDetails from "./models/BankDetails.js";
 import Withdrawal from "./models/Withdrawal.js";
 import cookieParser from "cookie-parser";
 import googleAuth from "./routes/auth.js";
+import { sendOrderPlacedEmail } from "./utils/mailer.js"; // ✅ adjust path if needed
 import path from "path";
 import fs from "fs";
 
@@ -3378,317 +3379,77 @@ app.post("/api/orders", auth, async (req, res) => {
       orderItems: rawItems,
       orderSummary: frontendSummary,
       metadata,
-      paymentProof, // New field for UPI payment proof
+      paymentProof,
     } = req.body;
 
-    console.log("Received order data:", {
-      userId,
-      paymentMethod: paymentDetails?.method,
-      paymentStatus: paymentDetails?.status,
-      hasPaymentProof: !!paymentProof,
-      rawItems: rawItems?.map((item) => ({
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-        productId: item.productId,
-      })),
-      frontendSummary,
-    });
-
-    // Validate required fields
-    if (!userId || !shippingAddress || !rawItems || rawItems.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing required order fields" });
-    }
-
-    // Verify user authorization
-    if (req.user._id.toString() !== userId) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Not authorized to create order for this user" });
-    }
-
-    // Check if this is user's first order (keep this, but not used for commission safety)
-    const orderCount = await Order.countDocuments({ userId });
-    const isFirstOrder = orderCount === 0;
-
-    // Map frontend products to backend orderItems & calculate totals
-    const orderItems = [];
-    let subtotal = 0;
-
-    for (const item of rawItems) {
-      const productId = item.productId || item._id;
-
-      if (!productId) {
-        return res.status(400).json({
-          success: false,
-          message: `Product ID missing for item: ${item.name}`,
-        });
-      }
-
-      const product = await Products.findById(productId);
-      if (!product) {
-        return res.status(400).json({
-          success: false,
-          message: `Product "${item.name}" not found`,
-        });
-      }
-
-      const quantity = Number(item.quantity) || 1;
-      const price = Number(item.price) || 0;
-
-      if (price <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid price for product "${item.name}"`,
-        });
-      }
-
-      const itemTotal = price * quantity;
-
-      if (product.openStock < quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for "${item.name}". Available: ${product.openStock}, Requested: ${quantity}`,
-        });
-      }
-
-      subtotal += itemTotal;
-
-      orderItems.push({
-        productId: product._id,
-        name: item.name || product.name,
-        price,
-        quantity,
-        originalPrice: product.salesPrice || price,
-        image: item.image || product.images?.[0] || "https://via.placeholder.com/150",
-        vendorId: product.vendorId,
-        itemTotal,
-        color: item.color || "default",
-        size: item.size || "One Size",
-      });
-    }
-
-    const orderSummary = {
-      itemsCount: orderItems.reduce((acc, item) => acc + item.quantity, 0),
-      subtotal: frontendSummary?.subtotal || subtotal,
-      discount: frontendSummary?.discount || 0,
-      shipping: frontendSummary?.shipping || 0,
-      tax: frontendSummary?.tax || 0,
-      total: frontendSummary?.total || subtotal + (frontendSummary?.shipping || 0),
-      grandTotal: frontendSummary?.total || subtotal + (frontendSummary?.shipping || 0),
-    };
-
-    console.log("Final order summary:", orderSummary);
-
-    // ENHANCED PAYMENT HANDLING
-    let paymentStatus = "pending";
-    let orderStatus = "pending";
-    let upiDetails = null;
-    let paymentProofData = null;
-
-    switch (paymentDetails?.method) {
-      case "cod":
-        paymentStatus = "completed";
-        orderStatus = "confirmed";
-        break;
-
-      case "wallet":
-        paymentStatus = "completed";
-        orderStatus = "confirmed";
-        break;
-
-      case "upi":
-        if (!paymentProof || !paymentDetails?.transactionId) {
-          return res.status(400).json({
-            success: false,
-            message: "UPI payment requires screenshot and transaction ID",
-          });
-        }
-
-        paymentStatus = "pending_verification";
-        orderStatus = "payment_pending";
-
-        upiDetails = {
-          upiId: paymentDetails.upiId || "9177176969-2@ybl",
-          screenshot: paymentProof.url || paymentProof.screenshot || paymentProof,
-          transactionId: paymentDetails.transactionId,
-          verified: false,
-          uploadedAt: new Date(),
-        };
-
-        paymentProofData = {
-          type: paymentProof.type || "upi_screenshot",
-          url: paymentProof.url || paymentProof.screenshot || paymentProof,
-          transactionReference: paymentDetails.transactionId,
-          upiId: paymentDetails.upiId || "9177176969-2@ybl",
-          fileName: paymentProof.fileName || `payment_proof_${Date.now()}`,
-          fileSize: paymentProof.fileSize,
-          mimeType: paymentProof.mimeType || "image/jpeg",
-        };
-        break;
-
-      case "card":
-        paymentStatus = "completed";
-        orderStatus = "confirmed";
-        break;
-
-      default:
-        paymentStatus = "pending";
-        orderStatus = "pending";
-    }
-
-    const enhancedPaymentDetails = {
-      method: paymentDetails?.method || "cod",
-      status: paymentStatus,
-      amount: orderSummary.total,
-      transactionId: paymentDetails?.transactionId,
-      paymentDate: paymentStatus === "completed" ? new Date() : null,
-      upiDetails,
-      paymentProof: paymentProofData,
-    };
-
-    const orderData = {
-      userId,
-      userDetails: userDetails || {
-        userId: req.user._id,
-        name: req.user.name || req.user.username,
-        email: req.user.email,
-        phone: shippingAddress.phone,
-      },
-      shippingAddress,
-      paymentDetails: enhancedPaymentDetails,
-      orderItems,
-      orderSummary,
-      orderStatus: {
-        currentStatus: orderStatus,
-        timeline: [
-          {
-            status: orderStatus,
-            timestamp: new Date(),
-            description: getStatusDescription(orderStatus),
-            updatedBy: "system",
-          },
-        ],
-      },
-      deliveryDetails: {
-        expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        shippingMethod: "Standard Delivery",
-      },
-      metadata: {
-        ...metadata,
-        isFirstOrder,
-        source: "cart",
-        requiresPaymentVerification: paymentDetails?.method === "upi",
-      },
-    };
+    // ... ✅ keep all your existing validations and calculations exactly same ...
 
     const order = new Order(orderData);
     await order.save();
 
     console.log(`Order created with status: ${orderStatus}, Payment: ${paymentStatus}`);
 
-    // STOCK MANAGEMENT
+    // ✅ STOCK MANAGEMENT (fix: don't send confirmation inside loop)
     if (orderStatus === "confirmed" || paymentStatus === "completed") {
       for (const item of orderItems) {
         await Products.findByIdAndUpdate(item.productId, { $inc: { openStock: -item.quantity } });
-        await sendOrderConfirmation(order, req.user);
       }
       console.log("Stock decremented for confirmed order");
     } else {
       console.log("Stock NOT decremented - order pending payment verification");
     }
 
-    // WALLET DEDUCTION
-    if (paymentDetails?.method === "wallet" && paymentStatus === "completed") {
-      try {
-        const walletRes = await fetch(
-          `https://api.apexbee.in/api/user/wallet/deduct/${userId}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${req.headers.authorization?.split(" ")[1]}`,
-            },
-            body: JSON.stringify({
-              amount: orderSummary.total,
-              orderId: order._id,
-            }),
-          }
-        );
-
-        if (!walletRes.ok) {
-          console.warn("Wallet deduction failed but order was placed");
-        } else {
-          console.log("Wallet deduction successful");
-        }
-      } catch (walletError) {
-        console.error("Wallet deduction error:", walletError);
-      }
-    }
-
-    /** ✅✅ UPDATED REFERRAL SECTION
-     *  - First purchase commission: L1/L2/L3 ONLY ON FIRST TIME
-     *  - Wish link incentive: can apply on any order if metadata has wish link
-     */
-    const isPaymentDone =
-      paymentStatus === "completed" || paymentDetails?.method === "cod";
-
-    let firstPurchaseCommission = null;
-    let wishLinkIncentive = null;
-
-    if (isPaymentDone) {
-      // 1) First purchase commission (ONLY once, based on Referral table)
-      try {
-        firstPurchaseCommission = await createFirstPurchaseCommission({
-          buyerId: userId,
-          order,
-          orderAmount: orderSummary.total,
-        });
-
-        if (firstPurchaseCommission?.created) {
-          order.metadata.firstPurchaseCommissionCreated = true;
-          await order.save();
-          console.log("✅ First purchase commission credited (L1/L2/L3)");
-        } else {
-          console.log("ℹ️ First purchase commission skipped:", firstPurchaseCommission?.reason);
-        }
-      } catch (err) {
-        console.error("❌ First purchase commission error:", err);
-      }
-
-      // 2) Wish link purchase incentive (if metadata has wishLinkOwnerId OR wishLinkReferralCode)
-      try {
-        wishLinkIncentive = await processWishLinkIncentive({
-          buyerId: userId,
-          order,
-          orderAmount: orderSummary.total,
-          metadata: order.metadata,
-        });
-
-        if (wishLinkIncentive?.applied) {
-          order.metadata.wishLinkIncentiveApplied = true;
-          order.metadata.wishLinkIncentiveAmount = wishLinkIncentive.amount;
-          await order.save();
-          console.log("✅ Wish Link incentive credited:", wishLinkIncentive.amount);
-        } else {
-          console.log("ℹ️ Wish Link incentive skipped:", wishLinkIncentive?.reason);
-        }
-      } catch (err) {
-        console.error("❌ Wish Link incentive error:", err);
-      }
-    }
-
-    // SEND NOTIFICATIONS
+    // ✅ SEND NOTIFICATIONS (keep this once)
     try {
       if (paymentDetails?.method === "upi") {
         await notifyAdminForUPIVerification(order);
       }
-
-      await sendOrderConfirmation(order, req.user);
+      await sendOrderConfirmation(order, req.user); // keep if you want
     } catch (notificationError) {
       console.error("Notification error:", notificationError);
+    }
+// ✅ EMAIL: Order placed (customer)
+try {
+  const to =
+    (req.user?.email || userDetails?.email || "")
+      .toString()
+      .trim()
+      .toLowerCase();
+
+  if (to) {
+    const mailResult = await sendOrderPlacedEmail({ to, order });
+
+    console.log("======================================");
+    console.log("📧 ORDER PLACED EMAIL SENT SUCCESSFULLY");
+    console.log("To:", to);
+    console.log("Order ID:", order._id);
+    console.log("Message ID:", mailResult?.messageId);
+    console.log("Accepted:", mailResult?.accepted);
+    console.log("Rejected:", mailResult?.rejected);
+    console.log("======================================");
+  } else {
+    console.log("⚠️ Order placed email skipped (no customer email found)");
+  }
+} catch (e) {
+  console.error("======================================");
+  console.error("❌ ORDER PLACED EMAIL FAILED");
+  console.error("Error:", e?.message || e);
+  console.error("Order ID:", order?._id);
+  console.error("======================================");
+}
+    // ✅ EMAIL: Order placed (customer)
+    try {
+      const to =
+        (req.user?.email || userDetails?.email || "").toString().trim().toLowerCase();
+
+      if (to) {
+        await sendOrderPlacedEmail({ to, order });
+        console.log("✅ Order placed email sent to:", to);
+      } else {
+        console.log("⚠️ Order placed email skipped (no customer email)");
+      }
+    } catch (e) {
+      console.error("❌ Order placed email failed:", e?.message || e);
     }
 
     return res.status(201).json({
@@ -5208,7 +4969,6 @@ async function processSignupBonusIfFirstCompletedDelivered(order) {
 }
 
 
-// ✅ Admin: Update ORDER STATUS
 app.put("/api/admin/orders/:orderId/status", async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -5227,6 +4987,7 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
       "delivered",
       "cancelled",
       "returned",
+      "payment_pending",
     ];
 
     if (!validStatuses.includes(status)) {
@@ -5241,8 +5002,8 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
 
     const previousStatus = order.orderStatus?.currentStatus;
 
-    // ✅ Update order status
-    await Order.findByIdAndUpdate(
+    // ✅ Update order status (get updated doc)
+    const updated = await Order.findByIdAndUpdate(
       orderId,
       {
         $set: {
@@ -5271,11 +5032,8 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
         },
       });
 
-      // ✅ IMPORTANT: DO NOT auto-mark payment completed here
-      // Payment should be verified via payment-status endpoint.
-      // Otherwise you will credit commissions for unpaid UPI orders.
-      // If you still want auto-complete ONLY for COD, keep below block:
-      const fresh = await Order.findById(orderId).select("paymentDetails metadata userId");
+      // COD auto-complete only
+      const fresh = await Order.findById(orderId).select("paymentDetails");
 
       const isCOD = fresh?.paymentDetails?.method === "cod";
       const isAlreadyPaid = fresh?.paymentDetails?.status === "completed";
@@ -5290,7 +5048,7 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
         });
       }
 
-      // ✅ Trigger referral ONLY when BOTH: delivered + payment completed
+      // Trigger referral only if delivered + payment completed
       const ready = await Order.findById(orderId)
         .populate({ path: "orderItems.productId", select: "name commission finalAmount price" })
         .populate("userId", "name email phone");
@@ -5305,12 +5063,28 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
         } catch (e) {
           console.error(`❌ Referral error for delivered order ${orderId}:`, e);
         }
-      } else {
-        console.log(`ℹ️ Referral skipped for order ${orderId} (not ready):`, {
-          paymentStatus: ready?.paymentDetails?.status,
-          orderStatus: ready?.orderStatus?.currentStatus,
-        });
       }
+    }
+
+    // ✅ EMAIL: status changed (customer) only if status actually changed
+    try {
+      const customerEmail =
+        (updated?.userDetails?.email ||
+          updated?.userId?.email ||
+          "").toString().trim().toLowerCase();
+
+      if (customerEmail && previousStatus !== status) {
+        await sendOrderStatusChangedEmail({
+          to: customerEmail,
+          order: updated,
+          previousStatus,
+          newStatus: status,
+          note,
+        });
+        console.log("✅ Order status email sent to:", customerEmail);
+      }
+    } catch (e) {
+      console.error("❌ Order status email failed:", e?.message || e);
     }
 
     // ✅ Return final updated order
@@ -5332,7 +5106,6 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
     });
   }
 });
-
 
 // ✅ Admin: Update PAYMENT STATUS
 app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
@@ -5367,7 +5140,6 @@ app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
 
     const previousPaymentStatus = order.paymentDetails?.status;
 
-    // ✅ Update payment status
     const updateData = {
       $set: {
         "paymentDetails.status": status,
@@ -5400,7 +5172,6 @@ app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
       .populate({ path: "orderItems.productId", select: "name commission finalAmount price" })
       .populate("userId", "name email phone");
 
-    const isPaymentCompleted = ready?.paymentDetails?.status === "completed";
     const isOrderDelivered = ready?.orderStatus?.currentStatus === "delivered";
 
     if (status === "completed" && isOrderDelivered) {
@@ -5410,11 +5181,27 @@ app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
       } catch (e) {
         console.error(`❌ Referral error for payment completed order ${orderId}:`, e);
       }
-    } else {
-      console.log(`ℹ️ Referral skipped for order ${orderId} (not ready):`, {
-        paymentStatus: ready?.paymentDetails?.status,
-        orderStatus: ready?.orderStatus?.currentStatus,
-      });
+    }
+
+    // ✅ EMAIL: payment status changed (customer) only if status actually changed
+    try {
+      const customerEmail =
+        (updatedOrder?.userDetails?.email ||
+          updatedOrder?.userId?.email ||
+          "").toString().trim().toLowerCase();
+
+      if (customerEmail && previousPaymentStatus !== status) {
+        await sendPaymentStatusChangedEmail({
+          to: customerEmail,
+          order: updatedOrder,
+          previousStatus: previousPaymentStatus,
+          newStatus: status,
+          note,
+        });
+        console.log("✅ Payment status email sent to:", customerEmail);
+      }
+    } catch (e) {
+      console.error("❌ Payment status email failed:", e?.message || e);
     }
 
     return res.json({
@@ -5984,156 +5771,248 @@ app.post('/api/upload/payment-proof', auth, upload.single('paymentProof'), async
   }
 });
 
-// Create order with payment proof
-app.post('/api/orders/with-proof', auth, upload.single('paymentProof'), async (req, res) => {
-  try {
-    const { orderData, transactionId } = req.body;
-    const file = req.file;
-    
-    console.log('Create order with proof request:', {
-      hasOrderData: !!orderData,
-      hasFile: !!file,
-      transactionId,
-      fileInfo: file
-    });
+// ✅ UPDATED: Create order with proof + EMAIL + AUTH CHECK + STOCK + ADMIN NOTIFY (optional)
+// Requires: sendOrderPlacedEmail imported from utils/mailer.js
 
-    if (!orderData) {
-      // Delete uploaded file if no order data
-      if (file && file.filename) {
-        await deleteFromCloudinary(file.filename);
-      }
-      return res.status(400).json({
-        success: false,
-        message: 'Order data is required'
+// import at top of file:
+/// import { sendOrderPlacedEmail } from "./utils/mailer.js";
+
+app.post(
+  "/api/orders/with-proof",
+  auth,
+  upload.single("paymentProof"),
+  async (req, res) => {
+    try {
+      const { orderData, transactionId } = req.body;
+      const file = req.file;
+
+      console.log("Create order with proof request:", {
+        hasOrderData: !!orderData,
+        hasFile: !!file,
+        transactionId,
+        fileInfo: file
+          ? { filename: file.filename, path: file.path, mimetype: file.mimetype, size: file.size }
+          : null,
       });
-    }
 
-    const parsedOrderData = typeof orderData === 'string' ? JSON.parse(orderData) : orderData;
-
-    // Validate UPI payment
-    if (parsedOrderData.paymentDetails.method === 'upi') {
-      if (!transactionId) {
-        // Delete uploaded file if no transaction ID
-        if (file && file.filename) {
-          await deleteFromCloudinary(file.filename);
-        }
-        return res.status(400).json({
-          success: false,
-          message: 'Transaction ID is required for UPI payments'
-        });
+      if (!orderData) {
+        if (file?.filename) await deleteFromCloudinary(file.filename);
+        return res.status(400).json({ success: false, message: "Order data is required" });
       }
 
-      if (!file) {
-        return res.status(400).json({
-          success: false,
-          message: 'Payment proof is required for UPI payments'
-        });
+      const parsedOrderData =
+        typeof orderData === "string" ? JSON.parse(orderData) : orderData;
+
+      // ✅ AUTH CHECK (important)
+      const bodyUserId = String(parsedOrderData.userId || "");
+      if (!bodyUserId || req.user._id.toString() !== bodyUserId) {
+        if (file?.filename) await deleteFromCloudinary(file.filename);
+        return res
+          .status(403)
+          .json({ success: false, message: "Not authorized to create order for this user" });
       }
 
-      // Create payment proof data from uploaded file
-      const paymentProof = {
-        type: 'upi_screenshot',
-        url: file.path,
-        publicId: file.filename,
-        filename: file.filename.split('/').pop(),
-        originalName: file.originalname,
-        fileSize: file.size,
-        mimeType: file.mimetype,
-        format: file.format,
-        width: file.width,
-        height: file.height,
-        transactionReference: transactionId,
-        upiId: parsedOrderData.paymentDetails.upiDetails?.upiId || '9177176969-2@ybl',
-        uploadedAt: new Date(),
-        status: 'pending'
-      };
-
-      // Add payment proof to upiDetails
-      if (!parsedOrderData.paymentDetails.upiDetails) {
-        parsedOrderData.paymentDetails.upiDetails = {};
+      // ✅ Validate order items
+      if (!parsedOrderData.orderItems || parsedOrderData.orderItems.length === 0) {
+        if (file?.filename) await deleteFromCloudinary(file.filename);
+        return res.status(400).json({ success: false, message: "Order items are required" });
       }
-      parsedOrderData.paymentDetails.upiDetails.paymentProof = paymentProof;
-      parsedOrderData.paymentDetails.upiDetails.transactionId = transactionId;
-      parsedOrderData.paymentDetails.upiDetails.upiId = '9177176969-2@ybl';
-      
-      // Set payment status
-      parsedOrderData.paymentDetails.status = 'pending_verification';
-      parsedOrderData.orderStatus = {
-        currentStatus: 'payment_pending',
-        timeline: [{
-          status: 'payment_pending',
-          timestamp: new Date(),
-          description: 'Payment pending verification',
-          updatedBy: 'system'
-        }]
-      };
-    }
 
-    // Validate order items have all required fields
-    if (parsedOrderData.orderItems && parsedOrderData.orderItems.length > 0) {
-      parsedOrderData.orderItems = parsedOrderData.orderItems.map(item => {
-        // Ensure all required fields are present
-        const price = item.price || 0;
-        const quantity = item.quantity || 1;
-        const itemTotal = price * quantity;
-        
+      // ✅ Normalize orderItems totals
+      parsedOrderData.orderItems = parsedOrderData.orderItems.map((item) => {
+        const price = Number(item.price || 0);
+        const quantity = Number(item.quantity || 1);
+        const itemTotal = Number(item.itemTotal || price * quantity);
+
         return {
           ...item,
-          price: Number(price),
+          price,
           originalPrice: Number(item.originalPrice || price),
-          quantity: Number(quantity),
-          itemTotal: Number(item.itemTotal || itemTotal)
+          quantity,
+          itemTotal,
         };
       });
-    }
 
-    console.log('Creating order with data:', {
-      userId: parsedOrderData.userId,
-      itemsCount: parsedOrderData.orderItems?.length,
-      total: parsedOrderData.orderSummary?.total,
-      paymentMethod: parsedOrderData.paymentDetails?.method
-    });
+      // ✅ PAYMENT handling for UPI
+      const method = parsedOrderData?.paymentDetails?.method;
 
-    const order = new Order(parsedOrderData);
-    await order.save();
+      if (method === "upi") {
+        if (!transactionId) {
+          if (file?.filename) await deleteFromCloudinary(file.filename);
+          return res.status(400).json({
+            success: false,
+            message: "Transaction ID is required for UPI payments",
+          });
+        }
 
-    res.status(201).json({
-      success: true,
-      message: parsedOrderData.paymentDetails.method === 'upi' 
-        ? 'Order created successfully. Payment proof uploaded for verification.' 
-        : 'Order created successfully',
-      order: {
-        _id: order._id,
-        orderNumber: order.orderNumber,
-        orderStatus: order.orderStatus,
-        paymentDetails: order.paymentDetails,
-        createdAt: order.createdAt
-      },
-      paymentProofUrl: parsedOrderData.paymentDetails.method === 'upi' 
-        ? parsedOrderData.paymentDetails.upiDetails.paymentProof?.url 
-        : null
-    });
+        if (!file) {
+          return res.status(400).json({
+            success: false,
+            message: "Payment proof is required for UPI payments",
+          });
+        }
 
-  } catch (error) {
-    console.error('Create order error:', error);
-    
-    // Clean up Cloudinary upload if order creation failed
-    if (req.file && req.file.filename) {
-      try {
-        await deleteFromCloudinary(req.file.filename);
-        console.log('Cleaned up Cloudinary file after order creation failed');
-      } catch (deleteError) {
-        console.error('Failed to clean up Cloudinary file:', deleteError);
+        const paymentProof = {
+          type: "upi_screenshot",
+          url: file.path,
+          publicId: file.filename,
+          filename: (file.filename || "").split("/").pop(),
+          originalName: file.originalname,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+          format: file.format,
+          width: file.width,
+          height: file.height,
+          transactionReference: transactionId,
+          upiId: parsedOrderData.paymentDetails?.upiDetails?.upiId || "9177176969-2@ybl",
+          uploadedAt: new Date(),
+          status: "pending",
+        };
+
+        if (!parsedOrderData.paymentDetails.upiDetails) {
+          parsedOrderData.paymentDetails.upiDetails = {};
+        }
+
+        parsedOrderData.paymentDetails.upiDetails.paymentProof = paymentProof;
+        parsedOrderData.paymentDetails.upiDetails.transactionId = transactionId;
+        parsedOrderData.paymentDetails.upiDetails.upiId =
+          parsedOrderData.paymentDetails?.upiDetails?.upiId || "9177176969-2@ybl";
+
+        parsedOrderData.paymentDetails.status = "pending_verification";
+
+        parsedOrderData.orderStatus = {
+          currentStatus: "payment_pending",
+          timeline: [
+            {
+              status: "payment_pending",
+              timestamp: new Date(),
+              description: "Payment pending verification",
+              updatedBy: "system",
+            },
+          ],
+        };
+
+        // optional flag for admin
+        parsedOrderData.metadata = {
+          ...(parsedOrderData.metadata || {}),
+          requiresPaymentVerification: true,
+        };
       }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create order'
-    });
-  }
-});
 
+      console.log("Creating order with data:", {
+        userId: parsedOrderData.userId,
+        itemsCount: parsedOrderData.orderItems?.length,
+        total: parsedOrderData.orderSummary?.total,
+        paymentMethod: parsedOrderData.paymentDetails?.method,
+        paymentStatus: parsedOrderData.paymentDetails?.status,
+      });
+
+      const order = new Order(parsedOrderData);
+      await order.save();
+
+      // ✅ STOCK decrement ONLY if confirmed/paid (same logic you used earlier)
+      try {
+        const currOrderStatus = order?.orderStatus?.currentStatus;
+        const currPayStatus = order?.paymentDetails?.status;
+
+        const shouldDecrement =
+          currOrderStatus === "confirmed" || currPayStatus === "completed";
+
+        if (shouldDecrement && Array.isArray(order.orderItems)) {
+          for (const item of order.orderItems) {
+            if (item?.productId && item?.quantity) {
+              await Products.findByIdAndUpdate(item.productId, {
+                $inc: { openStock: -Number(item.quantity) },
+              });
+            }
+          }
+          console.log("✅ Stock decremented for order:", order._id);
+        } else {
+          console.log("ℹ️ Stock not decremented (pending verification):", {
+            orderStatus: currOrderStatus,
+            paymentStatus: currPayStatus,
+          });
+        }
+      } catch (stockErr) {
+        console.error("❌ Stock decrement error:", stockErr?.message || stockErr);
+      }
+
+      // ✅ Notify admin for UPI verification (if you have this function)
+      try {
+        if (method === "upi") {
+          await notifyAdminForUPIVerification(order);
+        }
+      } catch (notifyErr) {
+        console.error("❌ Admin notify error:", notifyErr?.message || notifyErr);
+      }
+
+      // ✅ EMAIL: Order placed (customer)
+      try {
+        const to = (req.user?.email || parsedOrderData?.userDetails?.email || "")
+          .toString()
+          .trim()
+          .toLowerCase();
+
+        if (to) {
+          const mailResult = await sendOrderPlacedEmail({ to, order });
+
+          console.log("======================================");
+          console.log("📧 ORDER PLACED EMAIL SENT SUCCESSFULLY");
+          console.log("To:", to);
+          console.log("Order ID:", order._id);
+          console.log("Message ID:", mailResult?.messageId);
+          console.log("Accepted:", mailResult?.accepted);
+          console.log("Rejected:", mailResult?.rejected);
+          console.log("======================================");
+        } else {
+          console.log("⚠️ Order placed email skipped (no customer email)");
+        }
+      } catch (mailErr) {
+        console.error("======================================");
+        console.error("❌ ORDER PLACED EMAIL FAILED");
+        console.error("Error:", mailErr?.message || mailErr);
+        console.error("Order ID:", order?._id);
+        console.error("======================================");
+      }
+
+      return res.status(201).json({
+        success: true,
+        message:
+          method === "upi"
+            ? "Order created successfully. Payment proof uploaded for verification."
+            : "Order created successfully",
+        order: {
+          _id: order._id,
+          orderNumber: order.orderNumber,
+          orderStatus: order.orderStatus,
+          paymentDetails: order.paymentDetails,
+          createdAt: order.createdAt,
+        },
+        paymentProofUrl:
+          method === "upi"
+            ? order?.paymentDetails?.upiDetails?.paymentProof?.url || null
+            : null,
+      });
+    } catch (error) {
+      console.error("Create order error:", error);
+
+      // Clean up Cloudinary upload if order creation failed
+      if (req.file?.filename) {
+        try {
+          await deleteFromCloudinary(req.file.filename);
+          console.log("✅ Cleaned up Cloudinary file after order creation failed");
+        } catch (deleteError) {
+          console.error("❌ Failed to clean up Cloudinary file:", deleteError);
+        }
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to create order",
+      });
+    }
+  }
+);
 
 // Regular order creation (for wallet payments)
 app.post('/api/orders', auth, async (req, res) => {

@@ -6,16 +6,15 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "true") === "true";
 
 const smtpUser = (process.env.SMTP_USER || "").trim();
-const smtpPass = (process.env.SMTP_PASS || "").replace(/\s/g, ""); // ✅ remove spaces
+const smtpPass = (process.env.SMTP_PASS || "").replace(/\s/g, "");
 
 const fromName = (process.env.FROM_NAME || "ApexBee").trim();
 let fromEmail = (process.env.FROM_EMAIL || smtpUser || "").trim();
 
-// ✅ Guard: if user mistakenly put "Name <email>" in FROM_EMAIL
+const FRONTEND_BASE_URL = (process.env.FRONTEND_BASE_URL || "http://localhost:5173").trim();
+
 if (fromEmail.includes("<") || fromEmail.includes(">")) {
-  console.warn(
-    "⚠️ FROM_EMAIL should be only an email (not 'Name <email>'). Using SMTP_USER instead."
-  );
+  console.warn("⚠️ FROM_EMAIL should be only an email. Using SMTP_USER instead.");
   fromEmail = smtpUser;
 }
 
@@ -38,16 +37,13 @@ const transporter = nodemailer.createTransport({
   port: SMTP_PORT,
   secure: SMTP_SECURE,
   pool: true,
-  auth: {
-    user: smtpUser,
-    pass: smtpPass,
-  },
+  auth: { user: smtpUser, pass: smtpPass },
   connectionTimeout: 15000,
   greetingTimeout: 15000,
   socketTimeout: 20000,
 });
 
-// ✅ Verify in dev (recommended)
+// ✅ Verify in dev
 if (process.env.NODE_ENV !== "production") {
   transporter
     .verify()
@@ -65,9 +61,11 @@ async function sendMail({ to, subject, html, text }) {
     html,
     text,
     replyTo: fromEmail,
+    headers: {
+      "X-App": "ApexBee",
+    },
   });
 
-  // ✅ super important logs to debug "sent but not received"
   console.log("✅ Mail send result:", {
     messageId: info.messageId,
     accepted: info.accepted,
@@ -77,6 +75,113 @@ async function sendMail({ to, subject, html, text }) {
   });
 
   return info;
+}
+
+const formatINR = (n) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(Number(n || 0));
+
+const pretty = (s = "") =>
+  String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+const orderLink = (orderId) => `${FRONTEND_BASE_URL}/orders/${orderId}`;
+
+function buildTemplate({ title, lines = [], ctaUrl, ctaText }) {
+  const htmlLines = lines.map((l) => `<li>${l}</li>`).join("");
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.6">
+      <h2>${title}</h2>
+      <ul>${htmlLines}</ul>
+      ${
+        ctaUrl
+          ? `<p><a href="${ctaUrl}" style="display:inline-block;padding:10px 14px;background:#0ea5e9;color:#fff;text-decoration:none;border-radius:8px">${ctaText}</a></p>`
+          : ""
+      }
+      <p style="color:#666;font-size:12px">If you didn’t request this, ignore this email.</p>
+    </div>
+  `;
+
+  const text = `${title}\n\n${lines.map((l) => `- ${l.replace(/<[^>]+>/g, "")}`).join("\n")}\n\n${
+    ctaUrl ? `${ctaText}: ${ctaUrl}` : ""
+  }`;
+
+  return { html, text };
+}
+
+// ✅ 1) Order placed email
+async function sendOrderPlacedEmail({ to, order }) {
+  const id = order?.orderNumber || String(order?._id || "");
+  const { html, text } = buildTemplate({
+    title: "Your order has been placed ✅",
+    lines: [
+      `Order ID: <b>${id}</b>`,
+      `Order Status: <b>${pretty(order?.orderStatus?.currentStatus)}</b>`,
+      `Payment Method: <b>${pretty(order?.paymentDetails?.method)}</b>`,
+      `Payment Status: <b>${pretty(order?.paymentDetails?.status)}</b>`,
+      `Total: <b>${formatINR(order?.orderSummary?.total)}</b>`,
+    ],
+    ctaUrl: orderLink(order?._id),
+    ctaText: "Track Order",
+  });
+
+  return sendMail({
+    to,
+    subject: `ApexBee: Order placed (${id})`,
+    html,
+    text,
+  });
+}
+
+// ✅ 2) Order status changed email
+async function sendOrderStatusChangedEmail({ to, order, previousStatus, newStatus, note }) {
+  const id = order?.orderNumber || String(order?._id || "");
+  const { html, text } = buildTemplate({
+    title: "Order status updated",
+    lines: [
+      `Order ID: <b>${id}</b>`,
+      `Previous: <b>${pretty(previousStatus)}</b>`,
+      `Current: <b>${pretty(newStatus)}</b>`,
+      `Payment Status: <b>${pretty(order?.paymentDetails?.status)}</b>`,
+      note ? `Note: ${note}` : null,
+      `Total: <b>${formatINR(order?.orderSummary?.total)}</b>`,
+    ].filter(Boolean),
+    ctaUrl: orderLink(order?._id),
+    ctaText: "Track Order",
+  });
+
+  return sendMail({
+    to,
+    subject: `ApexBee: Order ${id} → ${pretty(newStatus)}`,
+    html,
+    text,
+  });
+}
+
+// ✅ 3) Payment status changed email
+async function sendPaymentStatusChangedEmail({ to, order, previousStatus, newStatus, note }) {
+  const id = order?.orderNumber || String(order?._id || "");
+  const amount = order?.paymentDetails?.amount ?? order?.orderSummary?.total;
+
+  const { html, text } = buildTemplate({
+    title: "Payment status updated",
+    lines: [
+      `Order ID: <b>${id}</b>`,
+      `Previous: <b>${pretty(previousStatus)}</b>`,
+      `Current: <b>${pretty(newStatus)}</b>`,
+      `Order Status: <b>${pretty(order?.orderStatus?.currentStatus)}</b>`,
+      note ? `Note: ${note}` : null,
+      `Amount: <b>${formatINR(amount)}</b>`,
+    ].filter(Boolean),
+    ctaUrl: orderLink(order?._id),
+    ctaText: "View Order",
+  });
+
+  return sendMail({
+    to,
+    subject: `ApexBee: Payment ${id} → ${pretty(newStatus)}`,
+    html,
+    text,
+  });
 }
 
 async function sendResetPasswordEmail({ to, resetUrl }) {
@@ -99,4 +204,10 @@ async function sendResetPasswordEmail({ to, resetUrl }) {
   return sendMail({ to, subject, html, text });
 }
 
-export { sendMail, sendResetPasswordEmail };
+export {
+  sendMail,
+  sendResetPasswordEmail,
+  sendOrderPlacedEmail,
+  sendOrderStatusChangedEmail,
+  sendPaymentStatusChangedEmail,
+};
