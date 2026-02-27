@@ -7,6 +7,13 @@ import {
   User,
   Settings,
   BarChart3,
+  MessageCircle,
+  TicketPercent,
+  RotateCcw,
+  Wallet,
+  Truck,
+  Store,
+  Building2,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -26,13 +33,23 @@ import {
 
 const menuItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Bussiness", url: "/business", icon: LayoutDashboard },
-  { title: "Vendor", url: "/vendor", icon: LayoutDashboard },
+
+  { title: "Business", url: "/business", icon: Building2 },
+  { title: "Vendor Profile", url: "/vendor", icon: Store },
+
   { title: "Products", url: "/products", icon: Package },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
-  { title: "Profile", url: "/profile", icon: User },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "Shipping", url: "/shipping", icon: Truck },
+
+  { title: "Earnings", url: "/earnings", icon: Wallet },
+  { title: "Returns", url: "/returns", icon: RotateCcw },
   { title: "Reports", url: "/reports", icon: BarChart3 },
+
+  { title: "Promotions", url: "/promotions", icon: TicketPercent },
+  { title: "Support", url: "/support", icon: MessageCircle },
+
+  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "Profile", url: "/profile", icon: User },
 ];
 
 export function AppSidebar() {

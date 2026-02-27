@@ -22,10 +22,9 @@ import Withdrawal from "./models/Withdrawal.js";
 import cookieParser from "cookie-parser";
 import googleAuth from "./routes/auth.js";
 import { sendOrderPlacedEmail } from "./utils/mailer.js"; // ✅ adjust path if needed
-import path from "path";
-import fs from "fs";
 
 const app = express();
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({

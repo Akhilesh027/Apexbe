@@ -27,6 +27,11 @@ import ManageBusiness from "./pages/AddBussiness";
 import BusinessDetails from "./pages/Bussiness";
 import VendorAccount from "./pages/Vendor";
 import AddBussiness from "./pages/AddBussiness";
+import ShippingManagement from "./pages/ShippingMangment";
+import Earnings from "./pages/EarningMangment";
+import ReturnsPage from "./pages/ReturnPage";
+import PromotionsPage from "./pages/PromotionMangement";
+import SupportPage from "./pages/Support";
 
 const queryClient = new QueryClient();
 
@@ -54,6 +59,11 @@ const App = () => (
           <Route path="/orders" element={<Orders />} />
           <Route path="/orders/:id" element={<OrderDetails />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/shipping" element={<ShippingManagement />} />
+          <Route path="/earnings" element={<Earnings />} />
+          <Route path="/returns" element={<ReturnsPage />} />
+          <Route path="/promotions" element={<PromotionsPage />} />
+          <Route path="/support" element={<SupportPage />} />
           <Route path="/profile/edit" element={<EditProfile />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/reports" element={<Reports />} />
