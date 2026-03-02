@@ -10,6 +10,19 @@ import {
   Settings,
   Grid3x3,
   MapPin,
+  ShieldCheck,
+  ClipboardList,
+  LayoutTemplate,
+  Bell,
+  MessageCircle,
+  FileText,
+  TicketPercent,
+  BarChart3,
+  IndianRupee,
+  Truck,
+  RotateCcw,
+  Boxes,
+  Building2,
 } from "lucide-react";
 import {
   Sidebar,
@@ -25,16 +38,34 @@ import {
 
 const menuItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+
   { title: "Vendors", url: "/vendors", icon: Store },
-  { title: "Bussiness", url: "/bussiness", icon: Store },
+  { title: "Business", url: "/business", icon: Building2 },
+  { title: "Users", url: "/users", icon: Users },
+
   { title: "Products", url: "/products", icon: Package },
   { title: "Categories", url: "/categories", icon: Grid3x3 },
-  { title: "Users", url: "/users", icon: Users },
+  { title: "Inventory", url: "/inventory", icon: Boxes },
+
   { title: "Orders", url: "/orders", icon: ShoppingCart },
-  { title: "Referal amount", url: "/withdrow", icon: ShoppingCart },
-  { title: "Pincode", url: "/pincode", icon: MapPin },
-  { title: "Forms", url: "/Forms", icon: ShoppingCart },
+  { title: "Returns & Refunds", url: "/returns", icon: RotateCcw },
+  { title: "Shipping", url: "/shipping", icon: Truck},
+
   { title: "Payouts", url: "/payouts", icon: DollarSign },
+  { title: "Referral Amount", url: "/withdrow", icon: IndianRupee },
+
+  { title: "Reports / Analytics", url: "/reports", icon: BarChart3 },
+  { title: "Promotions", url: "/promotions", icon: TicketPercent },
+
+  { title: "Forms", url: "/forms", icon: FileText },
+  { title: "Support", url: "/support", icon: MessageCircle },
+  { title: "Notifications", url: "/notifications", icon: Bell },
+
+  { title: "CMS", url: "/cms", icon: LayoutTemplate },
+  { title: "Audit Logs", url: "/audit-logs", icon: ClipboardList },
+  { title: "Roles & Permissions", url: "/roles", icon: ShieldCheck },
+
+  { title: "Pincode", url: "/pincode", icon: MapPin },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 

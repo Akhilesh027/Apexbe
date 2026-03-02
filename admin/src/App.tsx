@@ -19,6 +19,11 @@ import Forms from "./pages/Form";
 import Businesses from "./pages/Bussiness";
 import Withdrow from "./pages/Withdrow";
 import PincodeManagement from "./pages/Pincode";
+import ReturnsRefunds from "./pages/Return";
+import ReportsAnalytics from "./pages/Reports";
+import PromotionsAdmin from "./pages/Promotion";
+import ShippingAdmin from "./pages/Shiping";
+import SupportAdmin from "./pages/Support";
 
 const queryClient = new QueryClient();
 
@@ -57,6 +62,11 @@ const App = () => (
             <Route path="pincode" element={<PincodeManagement />} />
             <Route path="Forms" element={<Forms />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="returns" element={<ReturnsRefunds />} />
+            <Route path="reports" element={<ReportsAnalytics />} />
+            <Route path="promotions" element={<PromotionsAdmin />} />
+            <Route path="shipping" element={<ShippingAdmin />} />
+            <Route path="Support" element={<SupportAdmin />} />
             <Route index element={<Navigate to="/dashboard" />} />
           </Route>
         </Routes>

@@ -30,16 +30,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import Navbar from "@/components/Navbar";
 import { useToast } from "@/hooks/use-toast";
-import upi from "../Web images/Web images/upi.jpg";
+import upi from "../Web images/Web images/upi.jpeg";
 
 const API_BASE = "https://api.apexbee.in/api";
 
 // ✅ Pincode validate endpoint
 const PINCODE_VALIDATE_API = `${API_BASE}/checkout/validate-pincode`;
 
-/** -----------------------------
- * Types
- * ---------------------------- */
 type CartItem = any;
 
 type Address = {
@@ -280,7 +277,7 @@ const Checkout = () => {
 
   const upiConfig = useMemo(
     () => ({
-      upiId: "9177176969-2@ybl",
+      upiId: "9908587023@ybl",
       qrCodeUrl: upi,
       merchantName: "ApexBee Store",
       amount: orderDetails.total,
@@ -812,286 +809,304 @@ const Checkout = () => {
   /** -----------------------------
    * Order
    * ---------------------------- */
-  const handlePlaceOrder = async (
-    paymentMethod: "upi" | "wallet" = selectedPayment
-  ) => {
-    // Delivery requires address
-    if (fulfillmentType === "delivery" && !selectedAddress) {
+ const handlePlaceOrder = async (
+  paymentMethod: "upi" | "wallet" = selectedPayment
+) => {
+  // Delivery requires address
+  if (fulfillmentType === "delivery" && !selectedAddress) {
+    toast({
+      title: "Address required",
+      description: "Please select a delivery address",
+      variant: "destructive",
+    });
+    return;
+  }
+
+  // ✅ block order if pincode is not deliverable
+  if (fulfillmentType === "delivery") {
+    if (pinCheckLoading) {
       toast({
-        title: "Address required",
-        description: "Please select a delivery address",
+        title: "Checking pincode...",
+        description: "Please wait",
         variant: "destructive",
       });
       return;
     }
+    if (pinValid === false) {
+      toast({
+        title: "Delivery not available",
+        description: pinError || "Invalid pincode",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (pinValid === null) {
+      toast({
+        title: "Select address",
+        description: "Please select a valid pincode address",
+        variant: "destructive",
+      });
+      return;
+    }
+  }
 
-    // ✅ block order if pincode is not deliverable
-    if (fulfillmentType === "delivery") {
-      if (pinCheckLoading) {
-        toast({
-          title: "Checking pincode...",
-          description: "Please wait",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (pinValid === false) {
-        toast({
-          title: "Delivery not available",
-          description: pinError || "Invalid pincode",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (pinValid === null) {
-        toast({
-          title: "Select address",
-          description: "Please select a valid pincode address",
-          variant: "destructive",
-        });
-        return;
-      }
+  // Pickup requirements
+  if (fulfillmentType === "pickup") {
+    if (!pickupPossible) {
+      toast({
+        title: "Pickup not allowed",
+        description:
+          "Pickup is available only when your pincode matches the shop pincode for these items.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!pickupLocationId) {
+      toast({ title: "Pickup location required", variant: "destructive" });
+      return;
+    }
+    if (!pickupSlot?.date || !pickupSlot?.time) {
+      toast({ title: "Pickup slot required", variant: "destructive" });
+      return;
+    }
+  }
+
+  const calculatedSubtotal = calcItemsSubtotal(orderDetails.items);
+  const baseForCoupon = calculatedSubtotal;
+
+  let finalCouponDiscount = 0;
+  if (appliedCoupon) {
+    const validity = checkCouponValidity(appliedCoupon, baseForCoupon, paymentMethod);
+    if (!validity.ok) {
+      toast({
+        title: "Coupon removed",
+        description: validity.msg,
+        variant: "destructive",
+      });
+      setAppliedCoupon(null);
+      setCouponDiscount(0);
+    } else {
+      finalCouponDiscount = computeCouponDiscount(appliedCoupon, baseForCoupon);
+    }
+  }
+
+  // ✅ shipping is already updated by pincode validation
+  const finalShipping =
+    fulfillmentType === "pickup" || preOrderInfo.hasPreOrder
+      ? 0
+      : Number(orderDetails.shipping || 0);
+
+  const finalTotal = Math.max(
+    0,
+    calculatedSubtotal +
+      finalShipping -
+      (orderDetails.discount || 0) -
+      finalCouponDiscount
+  );
+
+  if (paymentMethod === "wallet" && walletBalance < finalTotal) {
+    toast({
+      title: "Insufficient Wallet",
+      description: `Wallet balance ₹${walletBalance.toFixed(2)} is not enough`,
+      variant: "destructive",
+    });
+    return;
+  }
+
+  setIsLoading(true);
+
+  try {
+    const user = JSON.parse(localStorage.getItem("user") || "null");
+    const token = localStorage.getItem("token");
+
+    if (!user || !token) {
+      toast({
+        title: "Login required",
+        description: "Please login again",
+        variant: "destructive",
+      });
+      navigate("/login");
+      return;
     }
 
-    // Pickup requirements
-    if (fulfillmentType === "pickup") {
-      if (!pickupPossible) {
-        toast({
-          title: "Pickup not allowed",
-          description:
-            "Pickup is available only when your pincode matches the shop pincode for these items.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (!pickupLocationId) {
-        toast({ title: "Pickup location required", variant: "destructive" });
-        return;
-      }
-      if (!pickupSlot?.date || !pickupSlot?.time) {
-        toast({ title: "Pickup slot required", variant: "destructive" });
-        return;
-      }
-    }
+    const mappedItems = orderDetails.items.map((item: any) => {
+      const price = getItemPrice(item);
+      const quantity = Number(item.quantity || 1);
 
-    const calculatedSubtotal = calcItemsSubtotal(orderDetails.items);
-    const baseForCoupon = calculatedSubtotal;
+      return {
+        productId: item.productId || item._id || item.id,
+        name: item.itemName || item.name || "Unnamed Product",
+        price,
+        originalPrice: Number(item.originalPrice || item.userPrice || price),
+        image: item.images?.[0] || item.image || "/placeholder.png",
+        quantity,
+        color: item.selectedColor || item.color || "default",
+        size: item.size || "One Size",
+        vendorId: item.vendorId || null,
+        itemTotal: price * quantity,
+        fulfillment: item.fulfillment || null,
+        preOrder: item.preOrder || null,
+      };
+    });
 
-    let finalCouponDiscount = 0;
-    if (appliedCoupon) {
-      const validity = checkCouponValidity(appliedCoupon, baseForCoupon, paymentMethod);
-      if (!validity.ok) {
-        toast({
-          title: "Coupon removed",
-          description: validity.msg,
-          variant: "destructive",
-        });
-        setAppliedCoupon(null);
-        setCouponDiscount(0);
-      } else {
-        finalCouponDiscount = computeCouponDiscount(appliedCoupon, baseForCoupon);
-      }
-    }
-
-    // ✅ shipping is already updated by pincode validation
-    const finalShipping =
-      fulfillmentType === "pickup" || preOrderInfo.hasPreOrder
-        ? 0
-        : Number(orderDetails.shipping || 0);
-
-    const finalTotal = Math.max(
-      0,
-      calculatedSubtotal +
-        finalShipping -
-        (orderDetails.discount || 0) -
-        finalCouponDiscount
+    const finalSubtotal = mappedItems.reduce(
+      (acc: number, it: any) => acc + it.price * it.quantity,
+      0
     );
 
-    if (paymentMethod === "wallet" && walletBalance < finalTotal) {
-      toast({
-        title: "Insufficient Wallet",
-        description: `Wallet balance ₹${walletBalance.toFixed(
-          2
-        )} is not enough`,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const user = JSON.parse(localStorage.getItem("user") || "null");
-      const token = localStorage.getItem("token");
-
-      if (!user || !token) {
-        toast({
-          title: "Login required",
-          description: "Please login again",
-          variant: "destructive",
-        });
-        navigate("/login");
-        return;
-      }
-
-      const mappedItems = orderDetails.items.map((item: any) => {
-        const price = getItemPrice(item);
-        const quantity = Number(item.quantity || 1);
-
-        return {
-          productId: item.productId || item._id || item.id,
-          name: item.itemName || item.name || "Unnamed Product",
-          price,
-          originalPrice: Number(item.originalPrice || item.userPrice || price),
-          image: item.images?.[0] || item.image || "/placeholder.png",
-          quantity,
-          color: item.selectedColor || item.color || "default",
-          size: item.size || "One Size",
-          vendorId: item.vendorId || null,
-          itemTotal: price * quantity,
-
-          fulfillment: item.fulfillment || null,
-          preOrder: item.preOrder || null,
-        };
-      });
-
-      const finalSubtotal = mappedItems.reduce(
-        (acc: number, it: any) => acc + it.price * it.quantity,
-        0
-      );
-
-      let upiDetails: any = null;
-      if (paymentMethod === "upi") {
-        upiDetails = {
-          upiId: upiConfig.upiId,
-          transactionId: upiTransactionId || `UPI_${Date.now()}`,
-          paymentProof: null,
-        };
-      }
-
-      const fulfillment =
-        fulfillmentType === "pickup"
-          ? { type: "pickup", pickupLocationId, pickupSlot, userPincode }
-          : { type: "delivery" };
-
-      const orderData: any = {
-        userId: user.id,
-
-        userDetails: {
-          userId: user.id,
-          name: user.name || user.username || "Customer",
-          email: user.email || "",
-          phone:
-            fulfillmentType === "delivery"
-              ? selectedAddress?.phone
-              : user.phone || "",
-        },
-
-        shippingAddress: fulfillmentType === "delivery" ? selectedAddress : null,
-        fulfillment,
-
-        preOrder: {
-          isPreOrder: preOrderInfo.hasPreOrder,
-          availableOn: preOrderInfo.availableOnMax,
-        },
-
-        paymentDetails: {
-          method: paymentMethod,
-          amount: finalTotal,
-          status: paymentMethod === "upi" ? "pending_verification" : "completed",
-          transactionId:
-            paymentMethod === "wallet"
-              ? `WALLET_${Date.now()}`
-              : upiTransactionId || `TXN_${Date.now()}`,
-          upiDetails,
-        },
-
-        orderItems: mappedItems,
-
-        coupon: appliedCoupon
-          ? {
-              code: appliedCoupon.code,
-              type: appliedCoupon.type,
-              value: appliedCoupon.value,
-              discount: finalCouponDiscount,
-            }
-          : null,
-
-        orderSummary: {
-          itemsCount: mappedItems.reduce((acc: number, it: any) => acc + it.quantity, 0),
-          subtotal: finalSubtotal,
-          shipping: finalShipping,
-          discount: (orderDetails.discount || 0) + finalCouponDiscount,
-          total: finalTotal,
-          tax: 0,
-          grandTotal: finalTotal,
-        },
-
-        status: paymentMethod === "upi" ? "payment_pending" : "confirmed",
+    let upiDetails: any = null;
+    if (paymentMethod === "upi") {
+      upiDetails = {
+        upiId: upiConfig.upiId,
+        transactionId: upiTransactionId || `UPI_${Date.now()}`,
+        paymentProof: null,
       };
-
-      let response: Response;
-
-      if (paymentMethod === "upi" && paymentProof) {
-        const formData = new FormData();
-        formData.append("orderData", JSON.stringify(orderData));
-        formData.append("paymentProof", paymentProof);
-        formData.append("transactionId", upiTransactionId);
-
-        response = await fetch(`${API_BASE}/orders/with-proof`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-          body: formData,
-        });
-      } else {
-        response = await fetch(`${API_BASE}/orders`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify(orderData),
-        });
-      }
-
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || result.error || "Order failed");
-
-      localStorage.removeItem("cart");
-      localStorage.setItem("hasOrderedOnce", "true");
-
-      setUpiTransactionId("");
-      setPaymentProof(null);
-      setPaymentProofPreview(null);
-      setShowUPIDialog(false);
-
-      toast({
-        title: "Success!",
-        description:
-          paymentMethod === "upi"
-            ? "Order placed! Proof uploaded. We'll verify shortly."
-            : "Order placed successfully!",
-      });
-
-      navigate("/order-success", {
-        state: {
-          orderId: result.order?._id || result.order?.orderNumber,
-          paymentMethod,
-          requiresVerification: paymentMethod === "upi",
-          coupon: appliedCoupon ? appliedCoupon.code : null,
-          fulfillmentType,
-        },
-      });
-    } catch (err: any) {
-      console.error("Order error:", err);
-      toast({
-        title: "Order Failed",
-        description: err?.message || "Failed",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-      setIsUploading(false);
     }
-  };
 
+    const fulfillment =
+      fulfillmentType === "pickup"
+        ? { type: "pickup", pickupLocationId, pickupSlot, userPincode }
+        : { type: "delivery" };
+
+    const orderData: any = {
+      userId: user.id,
+
+      userDetails: {
+        userId: user.id,
+        name: user.name || user.username || "Customer",
+        email: user.email || "",
+        phone:
+          fulfillmentType === "delivery"
+            ? selectedAddress?.phone
+            : user.phone || "",
+      },
+
+      shippingAddress: fulfillmentType === "delivery" ? selectedAddress : null,
+      fulfillment,
+
+      preOrder: {
+        isPreOrder: preOrderInfo.hasPreOrder,
+        availableOn: preOrderInfo.availableOnMax,
+      },
+
+      paymentDetails: {
+        method: paymentMethod,
+        amount: finalTotal,
+        status: paymentMethod === "upi" ? "pending_verification" : "completed",
+        transactionId:
+          paymentMethod === "wallet"
+            ? `WALLET_${Date.now()}`
+            : upiTransactionId || `TXN_${Date.now()}`,
+        upiDetails,
+      },
+
+      orderItems: mappedItems,
+
+      coupon: appliedCoupon
+        ? {
+            code: appliedCoupon.code,
+            type: appliedCoupon.type,
+            value: appliedCoupon.value,
+            discount: finalCouponDiscount,
+          }
+        : null,
+
+      orderSummary: {
+        itemsCount: mappedItems.reduce(
+          (acc: number, it: any) => acc + it.quantity,
+          0
+        ),
+        subtotal: finalSubtotal,
+        shipping: finalShipping,
+        discount: (orderDetails.discount || 0) + finalCouponDiscount,
+        total: finalTotal,
+        tax: 0,
+        grandTotal: finalTotal,
+      },
+
+      status: paymentMethod === "upi" ? "payment_pending" : "confirmed",
+    };
+
+    let response: Response;
+
+    if (paymentMethod === "upi" && paymentProof) {
+      const formData = new FormData();
+      formData.append("orderData", JSON.stringify(orderData));
+      formData.append("paymentProof", paymentProof);
+      formData.append("transactionId", upiTransactionId);
+
+      response = await fetch(`${API_BASE}/orders/with-proof`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+    } else {
+      response = await fetch(`${API_BASE}/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(orderData),
+      });
+    }
+
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || result.error || "Order failed");
+
+    // ✅ Clear cart from backend (DB)
+    try {
+      await fetch(`${API_BASE}/clear/cart`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`, // keep if backend verifies token
+        },
+        body: JSON.stringify({ userId: user.id }), // remove body if backend uses req.user.id
+      });
+    } catch (clearErr) {
+      console.error("Cart clear failed:", clearErr);
+      // do NOT block order success
+    }
+
+    // ✅ Clear local cart
+    localStorage.removeItem("cart");
+    localStorage.setItem("hasOrderedOnce", "true");
+
+    setUpiTransactionId("");
+    setPaymentProof(null);
+    setPaymentProofPreview(null);
+    setShowUPIDialog(false);
+
+    toast({
+      title: "Success!",
+      description:
+        paymentMethod === "upi"
+          ? "Order placed! Proof uploaded. We'll verify shortly."
+          : "Order placed successfully!",
+    });
+
+    navigate("/order-success", {
+      state: {
+        orderId: result.order?._id || result.order?.orderNumber,
+        paymentMethod,
+        requiresVerification: paymentMethod === "upi",
+        coupon: appliedCoupon ? appliedCoupon.code : null,
+        fulfillmentType,
+      },
+    });
+  } catch (err: any) {
+    console.error("Order error:", err);
+    toast({
+      title: "Order Failed",
+      description: err?.message || "Failed",
+      variant: "destructive",
+    });
+  } finally {
+    setIsLoading(false);
+    setIsUploading(false);
+  }
+};
   const handleUPIPayment = async () => {
     if (!upiTransactionId.trim()) {
       toast({

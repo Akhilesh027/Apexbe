@@ -104,7 +104,7 @@ const Home = () => {
   const [openLocationModal, setOpenLocationModal] = useState(false);
   const [userLocation, setUserLocation] = useState<StoredLocation | null>(null);
 
-  // Nearby shops
+  // Nearby shops (kept, but UI + fetch are commented below as requested)
   const [nearbyShops, setNearbyShops] = useState<Business[]>([]);
   const [shopsLoading, setShopsLoading] = useState(false);
   const [shopsError, setShopsError] = useState<string | null>(null);
@@ -191,7 +191,7 @@ const Home = () => {
   const fetchFeaturedProducts = async () => {
     try {
       setFeaturedLoading(true);
-      const list = await fetchProducts(10); // ✅ upto 10 products
+      const list = await fetchProducts(12);
       setFeaturedProducts(list);
     } catch (e) {
       console.error("fetchFeaturedProducts:", e);
@@ -204,7 +204,7 @@ const Home = () => {
   const fetchDealsProducts = async () => {
     try {
       setDealsLoading(true);
-      const list = await fetchProducts(10); // ✅ upto 10 products
+      const list = await fetchProducts(12);
       setDealProducts(list);
     } catch (e) {
       console.error("fetchDealsProducts:", e);
@@ -221,6 +221,7 @@ const Home = () => {
 
   /** ---------------------------
    * Fetch nearby shops by PINCODE
+   * (kept, but not used if shops section is commented)
    * -------------------------- */
   const fetchNearbyShops = async (pincode: string) => {
     try {
@@ -251,12 +252,13 @@ const Home = () => {
     }
   };
 
-  useEffect(() => {
-    const pin = normPincode(userLocation?.pincode);
-    if (pin.length !== 6) return;
-    fetchNearbyShops(pin);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userLocation?.pincode]);
+  // ✅ COMMENTED: nearby shops auto fetch (as requested)
+  // useEffect(() => {
+  //   const pin = normPincode(userLocation?.pincode);
+  //   if (pin.length !== 6) return;
+  //   fetchNearbyShops(pin);
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [userLocation?.pincode]);
 
   /** ---------------------------
    * UI helpers
@@ -266,14 +268,6 @@ const Home = () => {
     if (!container) return;
     const amount = 240;
     container.scrollLeft += direction === "left" ? -amount : amount;
-  };
-
-  // ✅ horizontal scrollers for featured/deals
-  const scrollRow = (id: string, direction: "left" | "right") => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const amount = 420;
-    el.scrollLeft += direction === "left" ? -amount : amount;
   };
 
   const handleViewAllCategories = () => navigate("/categories");
@@ -296,7 +290,7 @@ const Home = () => {
       <button
         key={p._id}
         onClick={() => navigate(`/product/${p._id}`)}
-        className="text-left bg-white border rounded-2xl overflow-hidden hover:shadow-lg transition-shadow group min-w-[170px] sm:min-w-[220px]"
+        className="text-left bg-white border rounded-2xl overflow-hidden hover:shadow-lg transition-shadow group w-full"
       >
         <div className="h-44 bg-muted overflow-hidden">
           <img
@@ -474,7 +468,7 @@ const Home = () => {
         </div>
       </section>
 
-      {/* Featured (✅ one row horizontal scroll) */}
+      {/* Featured (✅ grid 4 in a row, no side scroll) */}
       <section className="container mx-auto px-4 py-10">
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -487,9 +481,9 @@ const Home = () => {
         </div>
 
         {featuredLoading ? (
-          <div className="flex gap-5 overflow-x-auto scrollbar-hide pb-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="min-w-[170px] sm:min-w-[220px] rounded-2xl border bg-white overflow-hidden">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="rounded-2xl border bg-white overflow-hidden">
                 <Skeleton className="h-44 w-full" />
                 <div className="p-4 space-y-2">
                   <Skeleton className="h-4 w-3/4" />
@@ -503,35 +497,13 @@ const Home = () => {
             No featured products available.
           </div>
         ) : (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="hidden md:flex"
-              onClick={() => scrollRow("featured-row", "left")}
-              aria-label="Scroll featured left"
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-
-            <div id="featured-row" className="flex gap-5 overflow-x-auto scrollbar-hide scroll-smooth flex-1 pb-2">
-              {featuredProducts.slice(0, 10).map(renderProductCard)}
-            </div>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="hidden md:flex"
-              onClick={() => scrollRow("featured-row", "right")}
-              aria-label="Scroll featured right"
-            >
-              <ChevronRight className="h-5 w-5" />
-            </Button>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
+            {featuredProducts.slice(0, 12).map(renderProductCard)}
           </div>
         )}
       </section>
 
-      {/* Deals (✅ one row horizontal scroll) */}
+      {/* Deals (✅ grid 4 in a row, no side scroll) */}
       <section className="container mx-auto px-4 pb-12">
         <div className="rounded-3xl border bg-gradient-to-r from-yellow-50 to-orange-50 p-6 md:p-8">
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
@@ -540,7 +512,9 @@ const Home = () => {
                 <Flame className="h-4 w-4" /> DAILY DEALS
               </div>
               <h2 className="text-2xl font-extrabold text-navy mt-3">Daily Deals</h2>
-              <p className="text-sm text-muted-foreground mt-1">Limited time offers. Grab them before they end!</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Limited time offers. Grab them before they end!
+              </p>
             </div>
             <Button className="bg-yellow-500 hover:bg-yellow-600 text-navy font-bold" onClick={() => navigate("/deals")}>
               See All Deals
@@ -548,9 +522,9 @@ const Home = () => {
           </div>
 
           {dealsLoading ? (
-            <div className="flex gap-5 overflow-x-auto scrollbar-hide pb-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="min-w-[170px] sm:min-w-[220px] rounded-2xl border bg-white overflow-hidden">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="rounded-2xl border bg-white overflow-hidden">
                   <Skeleton className="h-44 w-full" />
                   <div className="p-4 space-y-2">
                     <Skeleton className="h-4 w-3/4" />
@@ -564,36 +538,15 @@ const Home = () => {
               No deals available right now.
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="hidden md:flex"
-                onClick={() => scrollRow("deals-row", "left")}
-                aria-label="Scroll deals left"
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </Button>
-
-              <div id="deals-row" className="flex gap-5 overflow-x-auto scrollbar-hide scroll-smooth flex-1 pb-2">
-                {dealProducts.slice(0, 10).map(renderProductCard)}
-              </div>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                className="hidden md:flex"
-                onClick={() => scrollRow("deals-row", "right")}
-                aria-label="Scroll deals right"
-              >
-                <ChevronRight className="h-5 w-5" />
-              </Button>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
+              {dealProducts.slice(0, 12).map(renderProductCard)}
             </div>
           )}
         </div>
       </section>
 
-      {/* Nearby Stores */}
+      {/* ✅ COMMENTED: Nearby Stores section (as requested) */}
+      {/*
       <section className="container mx-auto px-4 py-12">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
           <div>
@@ -739,6 +692,7 @@ const Home = () => {
           </Button>
         </div>
       </section>
+      */}
 
       {/* Location Modal */}
       <LocationModal
@@ -747,8 +701,10 @@ const Home = () => {
         onConfirm={(loc) => {
           setUserLocation(loc);
           localStorage.setItem(LOCATION_KEY, JSON.stringify(loc));
-          const pin = normPincode(loc?.pincode);
-          if (pin) fetchNearbyShops(pin);
+
+          // ✅ COMMENTED: nearby shops fetch on confirm (since shops section is commented)
+          // const pin = normPincode(loc?.pincode);
+          // if (pin) fetchNearbyShops(pin);
         }}
       />
 

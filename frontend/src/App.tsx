@@ -53,7 +53,7 @@ const App = () => (
           <Route path="/business/:id" element={<StorePage />} />
           <Route path="/order-success" element={<OrderSuccess />} />
           <Route path="/cart" element={<Cart />} />
-          // App routes
+       
 <Route path="/forgot-password" element={<ForgotPasswordOtp />} />
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/my-orders" element={<MyOrders />} />

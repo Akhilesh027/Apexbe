@@ -5458,160 +5458,318 @@ app.get('/api/admin/orders/:orderId/referral-details', async (req, res) => {
     });
   }
 });
-app.get('/api/orders/:orderId/invoice', async (req, res) => {
+// ✅ Requires:
+// import PDFDocument from "pdfkit";
+// import mongoose from "mongoose";
+
+app.get("/api/orders/:orderId/invoice", async (req, res) => {
   try {
     const { orderId } = req.params;
-    
+
+    // ✅ validate id
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid orderId" });
+    }
+
     const order = await Order.findById(orderId)
-      .populate('userId', 'name email phone')
-      .populate('orderItems.productId', 'name sku');
-    
+      .populate("userId", "name email phone")
+      .populate("orderItems.productId", "name sku"); // keep if you really have these fields
+
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
-    
-    // Check authorization - user must be admin or order owner
- 
-    // Create PDF document
-    const doc = new PDFDocument({ margin: 50 });
-    
+
+    // ✅ Safe helpers
+    const safe = (v) => (v == null ? "" : String(v));
+    const formatINR = (n) =>
+      new Intl.NumberFormat("en-IN", {
+        style: "currency",
+        currency: "INR",
+        maximumFractionDigits: 2,
+      }).format(Number(n || 0));
+
+    const toDate = (d) => {
+      try {
+        return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      } catch {
+        return "";
+      }
+    };
+
+    // ✅ Use snapshot details if present
+    const customerName = safe(order?.userDetails?.name || order?.userId?.name || "Customer");
+    const customerEmail = safe(order?.userDetails?.email || order?.userId?.email || "");
+    const customerPhone = safe(order?.userDetails?.phone || order?.userId?.phone || order?.shippingAddress?.phone || "");
+
+    const ship = order?.shippingAddress || null;
+
+    // ✅ Create PDF
+    const doc = new PDFDocument({ size: "A4", margin: 40 });
+
     // Set response headers
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=invoice-${order.orderNumber}.pdf`);
-    
-    // Pipe PDF to response
+    const filename = `invoice-${safe(order.orderNumber || order._id)}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`); // ✅ inline looks better for "View"
+    // If you want download always:
+    // res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
     doc.pipe(res);
-    
-    // Header
-    doc.fontSize(25).text('INVOICE', { align: 'center' });
-    doc.moveDown();
-    
-    // Invoice details
-    doc.fontSize(12);
-    doc.text(`Invoice Number: ${order.invoiceNumber}`);
-    doc.text(`Order Number: ${order.orderNumber}`);
-    doc.text(`Invoice Date: ${new Date(order.createdAt).toLocaleDateString()}`);
-    doc.moveDown();
-    
-    // Company details
-    doc.fontSize(14).text('ApexBee Store', { underline: true });
-    doc.fontSize(10);
-    doc.text('123 Business Street');
-    doc.text('Mumbai, Maharashtra 400001');
-    doc.text('GSTIN: 27ABCDE1234F1Z5');
-    doc.text('Phone: +91 1234567890');
-    doc.text('Email: support@apexbee.com');
-    doc.moveDown();
-    
-    // Billing details
-    doc.fontSize(12).text('Bill To:', { underline: true });
-    doc.fontSize(10);
-    doc.text(order.userDetails.name);
-    if (order.userId.email) doc.text(order.userId.email);
-    if (order.shippingAddress.phone) doc.text(`Phone: ${order.shippingAddress.phone}`);
-    doc.moveDown();
-    
-    // Shipping address
-    doc.fontSize(12).text('Ship To:', { underline: true });
-    doc.fontSize(10);
-    doc.text(order.shippingAddress.name);
-    doc.text(order.shippingAddress.address);
-    doc.text(`${order.shippingAddress.city}, ${order.shippingAddress.state} - ${order.shippingAddress.pincode}`);
-    doc.text(`Phone: ${order.shippingAddress.phone}`);
-    doc.moveDown();
-    
-    // Table header
-    const tableTop = doc.y;
-    doc.fontSize(10);
-    
-    // Table columns
-    doc.text('Description', 50, tableTop);
-    doc.text('Qty', 300, tableTop);
-    doc.text('Price', 350, tableTop);
-    doc.text('Amount', 400, tableTop);
-    
-    // Draw line
-    doc.moveTo(50, tableTop + 15)
-       .lineTo(550, tableTop + 15)
-       .stroke();
-    
-    let y = tableTop + 25;
-    
-    // Order items
-    order.orderItems.forEach((item, i) => {
-      doc.text(item.name, 50, y);
-      doc.text(item.quantity.toString(), 300, y);
-      doc.text(`₹${item.price.toFixed(2)}`, 350, y);
-      doc.text(`₹${(item.price * item.quantity).toFixed(2)}`, 400, y);
-      y += 20;
+
+    // ========= Styles =========
+    const PAGE_W = doc.page.width;
+    const LEFT = doc.page.margins.left;
+    const RIGHT = PAGE_W - doc.page.margins.right;
+
+    const COLORS = {
+      navy: "#0f172a",
+      gray: "#475569",
+      light: "#e2e8f0",
+      faint: "#f1f5f9",
+      accent: "#f59e0b",
+      green: "#16a34a",
+    };
+
+    const line = (y) => {
+      doc.save();
+      doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(1).strokeColor(COLORS.light).stroke();
+      doc.restore();
+    };
+
+    const pill = (x, y, text, bg, fg) => {
+      doc.save();
+      doc.roundedRect(x, y, doc.widthOfString(text) + 16, 18, 9).fill(bg);
+      doc.fillColor(fg).fontSize(9).text(text, x + 8, y + 4);
+      doc.restore();
+    };
+
+    // ========= Header =========
+    doc.save();
+    doc.rect(0, 0, PAGE_W, 90).fill(COLORS.faint);
+    doc.restore();
+
+    doc
+      .fillColor(COLORS.navy)
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .text("INVOICE", LEFT, 28);
+
+    // Company block (right)
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(12)
+      .fillColor(COLORS.navy)
+      .text("ApexBee Store", RIGHT - 220, 24, { width: 220, align: "right" });
+
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(COLORS.gray)
+      .text("support@apexbee.in", RIGHT - 220, 42, { width: 220, align: "right" })
+      .text("+91 12345 67890", RIGHT - 220, 56, { width: 220, align: "right" })
+      .text("GSTIN: 27ABCDE1234F1Z5", RIGHT - 220, 70, { width: 220, align: "right" });
+
+    // Invoice meta
+    const metaTop = 105;
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor(COLORS.gray)
+      .text(`Invoice Date: ${toDate(order.createdAt)}`, LEFT, metaTop)
+      .text(`Order No: ${safe(order.orderNumber || order._id)}`, LEFT, metaTop + 16)
+      .text(`Invoice No: ${safe(order.invoiceNumber || order.orderNumber || order._id)}`, LEFT, metaTop + 32);
+
+    // Status pill
+    const payStatus = safe(order?.paymentDetails?.status || "").toLowerCase();
+    const isPaid = payStatus.includes("complete") || payStatus.includes("paid");
+    pill(
+      RIGHT - 120,
+      metaTop,
+      isPaid ? "PAID" : "PENDING",
+      isPaid ? "#dcfce7" : "#ffedd5",
+      isPaid ? COLORS.green : COLORS.accent
+    );
+
+    line(metaTop + 55);
+
+    // ========= Bill To / Ship To =========
+    const blockTop = metaTop + 70;
+
+    // Bill To
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .fillColor(COLORS.navy)
+      .text("Bill To", LEFT, blockTop);
+
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor(COLORS.gray)
+      .text(customerName, LEFT, blockTop + 18)
+      .text(customerEmail, LEFT, blockTop + 34)
+      .text(customerPhone ? `Phone: ${customerPhone}` : "", LEFT, blockTop + 50);
+
+    // Ship To
+    const shipX = LEFT + 290;
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .fillColor(COLORS.navy)
+      .text("Ship To", shipX, blockTop);
+
+    if (ship) {
+      const shipLines = [
+        safe(ship.name || customerName),
+        safe(ship.address),
+        `${safe(ship.city)}, ${safe(ship.state)} - ${safe(ship.pincode)}`,
+        ship.phone ? `Phone: ${safe(ship.phone)}` : "",
+      ].filter(Boolean);
+
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .fillColor(COLORS.gray)
+        .text(shipLines.join("\n"), shipX, blockTop + 18, { width: RIGHT - shipX });
+    } else {
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .fillColor(COLORS.gray)
+        .text("—", shipX, blockTop + 18);
+    }
+
+    line(blockTop + 95);
+
+    // ========= Items Table =========
+    let y = blockTop + 110;
+
+    // Table header background
+    doc.save();
+    doc.roundedRect(LEFT, y, RIGHT - LEFT, 26, 8).fill(COLORS.faint);
+    doc.restore();
+
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor(COLORS.navy)
+      .text("Item", LEFT + 10, y + 7)
+      .text("Qty", LEFT + 310, y + 7, { width: 40, align: "right" })
+      .text("Price", LEFT + 360, y + 7, { width: 80, align: "right" })
+      .text("Amount", RIGHT - 10 - 90, y + 7, { width: 90, align: "right" });
+
+    y += 36;
+
+    const items = Array.isArray(order.orderItems) ? order.orderItems : [];
+
+    const ensureSpace = (need = 80) => {
+      if (y + need > doc.page.height - 90) {
+        doc.addPage();
+        y = doc.page.margins.top;
+      }
+    };
+
+    items.forEach((item) => {
+      ensureSpace(40);
+
+      const name = safe(item?.name || item?.productId?.name || "Item");
+      const sku = safe(item?.productId?.sku || item?.sku || "");
+      const qty = Number(item?.quantity || 0);
+      const price = Number(item?.price || 0);
+      const amount = price * qty;
+
+      // row
+      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(name, LEFT + 10, y, { width: 280 });
+      if (sku) {
+        doc.font("Helvetica").fontSize(8).fillColor(COLORS.gray).text(`SKU: ${sku}`, LEFT + 10, y + 14);
+      }
+
+      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(String(qty), LEFT + 310, y, { width: 40, align: "right" });
+      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(formatINR(price), LEFT + 360, y, { width: 80, align: "right" });
+      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(formatINR(amount), RIGHT - 10 - 90, y, { width: 90, align: "right" });
+
+      // light divider
+      line(y + 28);
+      y += 36;
     });
-    
-    // Draw line after items
-    doc.moveTo(50, y + 5)
-       .lineTo(550, y + 5)
-       .stroke();
-    
-    y += 20;
-    
-    // Order summary
-    doc.text('Subtotal:', 350, y);
-    doc.text(`₹${order.orderSummary.subtotal.toFixed(2)}`, 400, y);
-    y += 20;
-    
-    if (order.orderSummary.shipping > 0) {
-      doc.text('Shipping:', 350, y);
-      doc.text(`₹${order.orderSummary.shipping.toFixed(2)}`, 400, y);
-      y += 20;
+
+    // ========= Summary =========
+    ensureSpace(160);
+
+    const summaryX = LEFT + 310;
+    const summaryW = RIGHT - summaryX;
+
+    const subtotal = Number(order?.orderSummary?.subtotal || 0);
+    const shipping = Number(order?.orderSummary?.shipping || 0);
+    const discount = Number(order?.orderSummary?.discount || 0);
+    const tax = Number(order?.orderSummary?.tax || 0);
+    const total = Number(order?.orderSummary?.total || order?.orderSummary?.grandTotal || 0);
+
+    const row = (label, value, bold = false) => {
+      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(bold ? 11 : 10).fillColor(COLORS.gray).text(label, summaryX, y, { width: summaryW - 110 });
+      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(bold ? 11 : 10).fillColor(COLORS.navy).text(value, RIGHT - 10 - 100, y, { width: 100, align: "right" });
+      y += 18;
+    };
+
+    // box
+    doc.save();
+    doc.roundedRect(summaryX - 10, y - 10, summaryW + 10, 110, 10).strokeColor(COLORS.light).lineWidth(1).stroke();
+    doc.restore();
+
+    row("Subtotal", formatINR(subtotal));
+    if (shipping > 0) row("Shipping", formatINR(shipping));
+    if (discount > 0) row("Discount", `- ${formatINR(discount)}`);
+    if (tax > 0) row("Tax", formatINR(tax));
+
+    line(y + 2);
+    y += 10;
+
+    doc.font("Helvetica-Bold").fontSize(12).fillColor(COLORS.navy).text("Total", summaryX, y, { width: summaryW - 110 });
+    doc.font("Helvetica-Bold").fontSize(12).fillColor(COLORS.navy).text(formatINR(total), RIGHT - 10 - 100, y, { width: 100, align: "right" });
+    y += 26;
+
+    // ========= Payment Details =========
+    ensureSpace(90);
+
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(COLORS.navy).text("Payment Details", LEFT, y);
+    y += 16;
+
+    doc.font("Helvetica").fontSize(10).fillColor(COLORS.gray).text(`Method: ${safe(order?.paymentDetails?.method || "").toUpperCase()}`, LEFT, y);
+    y += 14;
+    doc.text(`Status: ${safe(order?.paymentDetails?.status || "")}`, LEFT, y);
+    y += 14;
+
+    const txn = safe(order?.paymentDetails?.transactionId || "");
+    if (txn) {
+      doc.text(`Transaction ID: ${txn}`, LEFT, y);
+      y += 14;
     }
-    
-    if (order.orderSummary.discount > 0) {
-      doc.text('Discount:', 350, y);
-      doc.text(`-₹${order.orderSummary.discount.toFixed(2)}`, 400, y);
-      y += 20;
-    }
-    
-    if (order.orderSummary.tax > 0) {
-      doc.text('Tax:', 350, y);
-      doc.text(`₹${order.orderSummary.tax.toFixed(2)}`, 400, y);
-      y += 20;
-    }
-    
-    // Total
-    doc.fontSize(12).font('Helvetica-Bold');
-    doc.text('Total:', 350, y + 10);
-    doc.text(`₹${order.orderSummary.total.toFixed(2)}`, 400, y + 10);
-    
-    y += 40;
-    
-    // Payment details
-    doc.fontSize(10).font('Helvetica');
-    doc.text('Payment Details:', 50, y);
-    y += 15;
-    doc.text(`Method: ${order.paymentDetails.method.toUpperCase()}`);
-    y += 15;
-    doc.text(`Status: ${order.paymentDetails.status}`);
-    y += 15;
-    if (order.paymentDetails.transactionId) {
-      doc.text(`Transaction ID: ${order.paymentDetails.transactionId}`);
-      y += 15;
-    }
-    
-    // Footer
-    doc.fontSize(8).text('Thank you for your business!', 50, 700, { align: 'center', width: 500 });
-    doc.text('Terms & Conditions: Goods sold are not returnable unless damaged during shipping.', 50, 720, { align: 'center', width: 500 });
-    
-    // Finalize PDF
+
+    // ========= Footer =========
+    const footerY = doc.page.height - 60;
+    line(footerY - 10);
+
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(COLORS.gray)
+      .text("Thank you for your business!", LEFT, footerY, { width: RIGHT - LEFT, align: "center" });
+
+    doc
+      .font("Helvetica")
+      .fontSize(7.5)
+      .fillColor(COLORS.gray)
+      .text("Terms: Goods sold are not returnable unless damaged during shipping.", LEFT, footerY + 14, {
+        width: RIGHT - LEFT,
+        align: "center",
+      });
+
     doc.end();
-    
   } catch (error) {
-    console.error('Generate invoice error:', error);
+    console.error("Generate invoice error:", error);
     res.status(500).json({
       success: false,
-      message: 'Failed to generate invoice',
-      error: error.message
+      message: "Failed to generate invoice",
+      error: error.message,
     });
   }
 });
@@ -5863,7 +6021,7 @@ app.post(
           width: file.width,
           height: file.height,
           transactionReference: transactionId,
-          upiId: parsedOrderData.paymentDetails?.upiDetails?.upiId || "9177176969-2@ybl",
+          upiId: parsedOrderData.paymentDetails?.upiDetails?.upiId || "9908587023@ybl",
           uploadedAt: new Date(),
           status: "pending",
         };
@@ -5875,7 +6033,7 @@ app.post(
         parsedOrderData.paymentDetails.upiDetails.paymentProof = paymentProof;
         parsedOrderData.paymentDetails.upiDetails.transactionId = transactionId;
         parsedOrderData.paymentDetails.upiDetails.upiId =
-          parsedOrderData.paymentDetails?.upiDetails?.upiId || "9177176969-2@ybl";
+          parsedOrderData.paymentDetails?.upiDetails?.upiId || "9908587023@ybl";
 
         parsedOrderData.paymentDetails.status = "pending_verification";
 
@@ -6546,26 +6704,32 @@ app.get("/api/reviews/product/:productId", async (req, res) => {
   try {
     const { productId } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid productId",
+      });
+    }
+
     const reviews = await Review.find({ productId })
       .populate("userId", "name")
       .sort({ createdAt: -1 });
 
     const totalReviews = reviews.length;
-    const averageRating =
+
+    const avg =
       totalReviews > 0
-        ? (
-            reviews.reduce((acc, r) => acc + r.rating, 0) /
-            totalReviews
-          ).toFixed(1)
+        ? reviews.reduce((acc, r) => acc + Number(r.rating || 0), 0) / totalReviews
         : 0;
 
     res.json({
       success: true,
       totalReviews,
-      averageRating,
+      averageRating: Number(avg.toFixed(1)), // ✅ number
       reviews,
     });
   } catch (e) {
+    console.error("reviews fetch error:", e);
     res.status(500).json({
       success: false,
       message: "Failed to fetch reviews",
@@ -6852,6 +7016,29 @@ app.post("/api/auth/reset-password-otp/check", async (req, res) => {
     return res.status(500).json({ success: false, error: "Server error." });
   }
 });
+
+
+app.post("/api/clear/cart", async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "userId required" });
+    }
+
+    const result = await Cart.deleteMany({ userId: String(userId) });
+
+    return res.json({
+      success: true,
+      message: "Cart cleared",
+      deletedCount: result.deletedCount || 0,
+    });
+  } catch (err) {
+    console.error("clear cart error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 console.log("MONGO_URI loaded:", !!process.env.MONGO_URI);
 
 app.use("/uploads", express.static("uploads"));
