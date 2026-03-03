@@ -5772,6 +5772,8 @@ const buildInvoiceHTML = ({
 };
 app.get("/api/orders/:orderId/invoice", async (req, res) => {
   let browser;
+  let page;
+
   try {
     const { orderId } = req.params;
 
@@ -5815,8 +5817,8 @@ app.get("/api/orders/:orderId/invoice", async (req, res) => {
 
     const logoDataUri = readFileAsDataUri(COMPANY.logoPath);
 
-    // ✅ GST (overall) — if you want product-wise GST tell me, I’ll update.
-    const DEFAULT_GST_PERCENT = Number(order?.orderSummary?.gstPercent || 0); // if stored
+    // ✅ GST (overall)
+    const DEFAULT_GST_PERCENT = Number(order?.orderSummary?.gstPercent || 0);
     const subtotal = Number(order?.orderSummary?.subtotal || 0);
     const discount = Number(order?.orderSummary?.discount || 0);
     const taxableValue = Math.max(0, subtotal - discount);
@@ -5841,13 +5843,17 @@ app.get("/api/orders/:orderId/invoice", async (req, res) => {
       logoDataUri,
     });
 
-    // ✅ Puppeteer render
+    // ✅ Puppeteer render (ONLY ONCE)
     browser = await puppeteer.launch({
       headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+      ],
     });
 
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setContent(html, { waitUntil: "networkidle0" });
 
     const pdfBuffer = await page.pdf({
@@ -5855,25 +5861,28 @@ app.get("/api/orders/:orderId/invoice", async (req, res) => {
       printBackground: true,
       margin: { top: "14mm", bottom: "14mm", left: "12mm", right: "12mm" },
     });
-const browser = await puppeteer.launch({
-  headless: "new",
-  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-});
-    const filename = `invoice-${orderNumber}.pdf`;
-    res.setHeader("Content-Type", "application/pdf");
 
-    if (req.query.download === "1") {
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    } else {
-      res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
-    }
+    const filename = `invoice-${orderNumber}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      req.query.download === "1"
+        ? `attachment; filename="${filename}"`
+        : `inline; filename="${filename}"`
+    );
 
     return res.end(pdfBuffer);
   } catch (err) {
     console.error("invoice html->pdf error:", err);
-    return res.status(500).json({ success: false, message: "Failed to generate invoice", error: err.message });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to generate invoice",
+      error: err.message,
+    });
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    try { if (page) await page.close(); } catch {}
+    try { if (browser) await browser.close(); } catch {}
   }
 });
 app.patch('/api/user/profile/:userId', auth, async (req, res) => {
