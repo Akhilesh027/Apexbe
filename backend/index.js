@@ -5855,7 +5855,10 @@ app.get("/api/orders/:orderId/invoice", async (req, res) => {
       printBackground: true,
       margin: { top: "14mm", bottom: "14mm", left: "12mm", right: "12mm" },
     });
-
+const browser = await puppeteer.launch({
+  headless: "new",
+  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+});
     const filename = `invoice-${orderNumber}.pdf`;
     res.setHeader("Content-Type", "application/pdf");
 
