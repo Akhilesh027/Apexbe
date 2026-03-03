@@ -124,7 +124,7 @@ const Products = () => {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const res = await axios.get("https://api.apexbee.in/api/products");
+        const res = await axios.get("http://localhost:5000/api/products");
         const list = extractProductsArray(res.data);
         setProducts(list);
       } catch (error) {
@@ -383,7 +383,7 @@ const Products = () => {
     }
 
     try {
-      const endpoint = `https://api.apexbee.in/api/products/${selectedProduct._id}/${action}`;
+      const endpoint = `http://localhost:5000/api/products/${selectedProduct._id}/${action}`;
 
       await axios.post(endpoint, {
         commission: action === "approve" ? vendorCommissionValue : 0, // ✅ vendor %

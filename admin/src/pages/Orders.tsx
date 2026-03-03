@@ -32,9 +32,6 @@ import {
   User,
   MapPin,
   Smartphone,
-  Mail,
-  Calendar,
-  ShoppingBag,
   IndianRupee,
   Download,
   RefreshCw,
@@ -47,6 +44,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+const API_BASE = "http://localhost:5000";
+const TOKEN_KEY = "token";
+
 const Orders = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
@@ -54,18 +54,101 @@ const Orders = () => {
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [verifyingPayment, setVerifyingPayment] = useState(false);
 
+  // Shiprocket UI states
+  const [shiprocketLoading, setShiprocketLoading] = useState<string | null>(null);
+  const [shiprocketTrack, setShiprocketTrack] = useState<any>(null);
+
+  // -----------------------------
+  // Helpers
+  // -----------------------------
+  const getToken = () => localStorage.getItem(TOKEN_KEY);
+
+  const authHeaders = () => {
+    const token = getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const fail401 = () => {
+    toast.error("Session expired. Please login again.");
+    localStorage.removeItem(TOKEN_KEY);
+    window.location.href = "/login";
+  };
+
+  const safe = (v: any, fallback = "") => (v == null ? fallback : v);
+
+  // -----------------------------
+  // Shiprocket APIs
+  // -----------------------------
+  const shiprocketCreateShipment = async (orderId: string) => {
+    const token = getToken();
+    if (!token) return fail401();
+
+    const res = await fetch(`${API_BASE}/api/shiprocket/create-shipment/${orderId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401) return fail401();
+    if (!res.ok || json?.success === false) throw new Error(json?.message || "Create shipment failed");
+    return json;
+  };
+
+  const shiprocketGenerateLabel = async (shipmentId: string) => {
+    const token = getToken();
+    if (!token) return fail401();
+
+    const res = await fetch(`${API_BASE}/api/shiprocket/label`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ shipmentIds: [shipmentId] }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401) return fail401();
+    if (!res.ok || json?.success === false) throw new Error(json?.message || "Label generation failed");
+    return json;
+  };
+
+  const shiprocketTrackShipment = async (shipmentId: string) => {
+    const token = getToken();
+    if (!token) return fail401();
+
+    const res = await fetch(`${API_BASE}/api/shiprocket/track/${shipmentId}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401) return fail401();
+    if (!res.ok || json?.success === false) throw new Error(json?.message || "Track failed");
+    return json;
+  };
+
+  const shiprocketCancelShipment = async (shipmentId: string) => {
+    const token = getToken();
+    if (!token) return fail401();
+
+    const res = await fetch(`${API_BASE}/api/shiprocket/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ shipmentId }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 401) return fail401();
+    if (!res.ok || json?.success === false) throw new Error(json?.message || "Cancel shipment failed");
+    return json;
+  };
+
+  // -----------------------------
   // Fetch orders
+  // -----------------------------
   const fetchOrders = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      
-      const { data } = await axios.get("https://api.apexbee.in/api/admin/orders", {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      const token = getToken();
+
+      const { data } = await axios.get(`${API_BASE}/api/admin/orders`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      
+
       if (data.success) {
         setOrders(data.orders);
         toast.success(`Loaded ${data.orders.length} orders`);
@@ -76,9 +159,7 @@ const Orders = () => {
     } catch (error: any) {
       console.error(error);
       if (error.response?.status === 401) {
-        toast.error("Session expired. Please login again.");
-        localStorage.removeItem('token');
-        window.location.href = '/login';
+        fail401();
       } else {
         toast.error(error.response?.data?.message || "Failed to fetch orders");
       }
@@ -92,9 +173,11 @@ const Orders = () => {
     fetchOrders();
   }, []);
 
-  // Order status badge display
+  // -----------------------------
+  // Status badge helpers
+  // -----------------------------
   const getStatusBadge = (status: string, type: "delivery" | "payment" = "delivery") => {
-    const deliveryConfig = {
+    const deliveryConfig: any = {
       pending: { className: "bg-yellow-100 text-yellow-800 border-yellow-200", icon: Package },
       confirmed: { className: "bg-blue-100 text-blue-800 border-blue-200", icon: CheckCircle2 },
       processing: { className: "bg-purple-100 text-purple-800 border-purple-200", icon: Package },
@@ -108,7 +191,7 @@ const Orders = () => {
       payment_failed: { className: "bg-red-100 text-red-800 border-red-200", icon: ShieldX },
     };
 
-    const paymentConfig = {
+    const paymentConfig: any = {
       pending: { className: "bg-yellow-100 text-yellow-800 border-yellow-200", icon: Clock },
       processing: { className: "bg-purple-100 text-purple-800 border-purple-200", icon: CreditCard },
       completed: { className: "bg-green-100 text-green-800 border-green-200", icon: CheckCircle2 },
@@ -121,102 +204,351 @@ const Orders = () => {
     };
 
     const config = type === "delivery" ? deliveryConfig : paymentConfig;
-    const { className, icon: Icon } = config[status as keyof typeof config] || { 
-      className: "bg-gray-100 text-gray-800 border-gray-200", 
-      icon: AlertCircle 
-    };
+    const picked = config[status] || { className: "bg-gray-100 text-gray-800 border-gray-200", icon: AlertCircle };
+    const Icon = picked.icon;
 
     return (
-      <Badge variant="outline" className={`${className} font-medium capitalize`}>
+      <Badge variant="outline" className={`${picked.className} font-medium capitalize`}>
         <Icon className="h-3 w-3 mr-1" />
-        {status ? status.replace(/_/g, ' ') : 'Unknown'}
+        {status ? status.replace(/_/g, " ") : "Unknown"}
       </Badge>
     );
   };
 
-  // Format date
   const formatDate = (dateString: string) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+    if (!dateString) return "N/A";
+    return new Date(dateString).toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
-  // Get payment proof URL from order - with null safety
+  // Payment proof helpers
   const getPaymentProof = (order: any) => {
-    if (!order || !order.paymentDetails?.upiDetails?.paymentProof) {
-      return null;
-    }
-    
+    if (!order || !order.paymentDetails?.upiDetails?.paymentProof) return null;
     const proof = order.paymentDetails.upiDetails.paymentProof;
-    
-    // Handle different proof formats
-    if (typeof proof === 'string') {
-      return proof;
-    }
-    
-    if (proof.url) {
-      return proof.url;
-    }
-    
+    if (typeof proof === "string") return proof;
+    if (proof?.url) return proof.url;
     return null;
   };
 
-  // Check if order has payment proof - with null safety
-  const hasPaymentProof = (order: any) => {
-    if (!order) return false;
-    return !!getPaymentProof(order);
-  };
+  const hasPaymentProof = (order: any) => !!getPaymentProof(order);
 
-  // Get payment proof details - with null safety
   const getPaymentProofDetails = (order: any) => {
-    if (!order || !order.paymentDetails?.upiDetails?.paymentProof) {
-      return null;
-    }
-    
+    if (!order || !order.paymentDetails?.upiDetails?.paymentProof) return null;
     return order.paymentDetails.upiDetails.paymentProof;
   };
 
-  // Table columns
+  // -----------------------------
+  // Update delivery status (AUTO shiprocket on shipped)
+  // -----------------------------
+  const handleUpdateDeliveryStatus = async (orderId: string, newStatus: string) => {
+    try {
+      setUpdatingStatus(`delivery-${orderId}`);
+      const token = getToken();
+      if (!token) return fail401();
+
+      const response = await fetch(`${API_BASE}/api/admin/orders/${orderId}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) return fail401();
+      if (!response.ok) throw new Error(data.message || "Failed to update status");
+
+      toast.success(data.message || `Status updated to ${newStatus}`);
+
+      // Update local state
+      setOrders((prev) =>
+        prev.map((order) =>
+          order._id === orderId
+            ? { ...order, orderStatus: { ...order.orderStatus, currentStatus: newStatus } }
+            : order
+        )
+      );
+
+      if (selectedOrder && selectedOrder._id === orderId) {
+        setSelectedOrder((prev: any) => ({
+          ...prev,
+          orderStatus: { ...prev.orderStatus, currentStatus: newStatus },
+        }));
+      }
+
+      // 🚀 Auto create Shiprocket shipment when shipped
+      if (newStatus === "shipped") {
+        try {
+          setShiprocketLoading(`create-${orderId}`);
+          const sr = await shiprocketCreateShipment(orderId);
+
+          toast.success(sr?.message || "Shiprocket shipment created");
+
+          // refresh from backend to get shiprocket fields
+          await fetchOrders();
+
+          // keep dialog in sync
+          const updated = orders.find((o) => o._id === orderId);
+          if (updated) setSelectedOrder(updated);
+        } catch (e: any) {
+          toast.error(e?.message || "Shiprocket create shipment failed");
+        } finally {
+          setShiprocketLoading(null);
+        }
+      }
+    } catch (error: any) {
+      console.error("Update delivery status error:", error);
+      toast.error(error.message || "Failed to update status");
+    } finally {
+      setUpdatingStatus(null);
+    }
+  };
+
+  // -----------------------------
+  // Update payment status
+  // -----------------------------
+  const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => {
+    try {
+      setUpdatingStatus(`payment-${orderId}`);
+      const token = getToken();
+      if (!token) return fail401();
+
+      const response = await fetch(`${API_BASE}/api/admin/orders/${orderId}/payment-status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) return fail401();
+      if (!response.ok) throw new Error(data.message || "Failed to update payment status");
+
+      toast.success(data.message || `Payment status updated to ${newStatus}`);
+
+      setOrders((prev) =>
+        prev.map((order) =>
+          order._id === orderId ? { ...order, paymentDetails: { ...order.paymentDetails, status: newStatus } } : order
+        )
+      );
+
+      if (selectedOrder && selectedOrder._id === orderId) {
+        setSelectedOrder((prev: any) => ({
+          ...prev,
+          paymentDetails: { ...prev.paymentDetails, status: newStatus },
+        }));
+      }
+    } catch (error: any) {
+      console.error("Update payment status error:", error);
+      toast.error(error.message || "Failed to update payment status");
+    } finally {
+      setUpdatingStatus(null);
+    }
+  };
+
+  // Verify UPI payment (unchanged, but API_BASE)
+  const handleVerifyUPIPayment = async (orderId: string, verified: boolean, notes = "") => {
+    try {
+      setVerifyingPayment(true);
+      const token = getToken();
+      if (!token) return fail401();
+
+      const response = await fetch(`${API_BASE}/api/orders/${orderId}/verify-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ verified, notes }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) return fail401();
+      if (!response.ok) throw new Error(data.message || "Failed to verify payment");
+
+      toast.success(data.message || `Payment ${verified ? "verified" : "rejected"} successfully`);
+
+      setOrders((prev) =>
+        prev.map((order) =>
+          order._id === orderId
+            ? {
+                ...order,
+                paymentDetails: {
+                  ...order.paymentDetails,
+                  status: verified ? "verified" : "rejected",
+                  upiDetails: {
+                    ...order.paymentDetails?.upiDetails,
+                    verified,
+                    verifiedAt: new Date().toISOString(),
+                    verificationNotes: notes,
+                  },
+                },
+                orderStatus: {
+                  ...order.orderStatus,
+                  currentStatus: verified ? "payment_verified" : "payment_failed",
+                },
+              }
+            : order
+        )
+      );
+
+      if (selectedOrder && selectedOrder._id === orderId) {
+        setSelectedOrder((prev: any) => ({
+          ...prev,
+          paymentDetails: {
+            ...prev.paymentDetails,
+            status: verified ? "verified" : "rejected",
+            upiDetails: {
+              ...prev.paymentDetails?.upiDetails,
+              verified,
+              verifiedAt: new Date().toISOString(),
+              verificationNotes: notes,
+            },
+          },
+          orderStatus: {
+            ...prev.orderStatus,
+            currentStatus: verified ? "payment_verified" : "payment_failed",
+          },
+        }));
+      }
+    } catch (error: any) {
+      console.error("Verify payment error:", error);
+      toast.error(error.message || "Failed to verify payment");
+    } finally {
+      setVerifyingPayment(false);
+    }
+  };
+
+  // Payment proof viewer (unchanged)
+  const handleViewPaymentProof = () => {
+    if (!selectedOrder) return;
+
+    const proofUrl = getPaymentProof(selectedOrder);
+    if (!proofUrl) {
+      toast.info("No payment proof available");
+      return;
+    }
+
+    const newWindow = window.open();
+    if (newWindow) {
+      newWindow.document.write(`
+        <html>
+          <head>
+            <title>Payment Proof - ${selectedOrder?.orderNumber || "Order"}</title>
+            <style>
+              body { margin:0; padding:20px; display:flex; justify-content:center; align-items:center; min-height:100vh; background:#f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+              .container { max-width:800px; width:100%; background:white; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.1); overflow:hidden; }
+              .header { padding:20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:white; }
+              .content { padding:20px; }
+              img { max-width:100%; height:auto; border:1px solid #e5e7eb; border-radius:8px; }
+              .info { margin-top:20px; padding:15px; background:#f8fafc; border-radius:8px; border-left:4px solid #3b82f6; }
+              .info-item { margin:5px 0; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>Payment Proof</h1>
+                <p>Order: ${selectedOrder?.orderNumber || "N/A"}</p>
+              </div>
+              <div class="content">
+                <img src="${proofUrl}" alt="Payment Proof" />
+                <div class="info">
+                  <div class="info-item"><strong>Transaction ID:</strong> ${safe(selectedOrder?.paymentDetails?.upiDetails?.transactionId, "N/A")}</div>
+                  <div class="info-item"><strong>UPI ID:</strong> ${safe(selectedOrder?.paymentDetails?.upiDetails?.upiId, "N/A")}</div>
+                  <div class="info-item"><strong>Amount:</strong> ₹${safe(selectedOrder?.paymentDetails?.amount?.toFixed?.(2), "0.00")}</div>
+                  <div class="info-item"><strong>Uploaded:</strong> ${
+                    selectedOrder?.paymentDetails?.upiDetails?.paymentProof?.uploadedAt
+                      ? formatDate(selectedOrder.paymentDetails.upiDetails.paymentProof.uploadedAt)
+                      : "N/A"
+                  }</div>
+                </div>
+              </div>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+  };
+
+  // Download invoice (API_BASE)
+  const handleDownloadInvoice = async (orderId: string) => {
+    try {
+      const token = getToken();
+      if (!token) return fail401();
+
+      const response = await fetch(`${API_BASE}/api/orders/${orderId}/invoice`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.status === 401) return fail401();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to download invoice");
+      }
+
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `invoice-${orderId}.pdf`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (filenameMatch?.[1]) filename = filenameMatch[1];
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      toast.success("Invoice downloaded successfully");
+    } catch (error: any) {
+      console.error("Download invoice error:", error);
+      toast.error(error.message || "Failed to download invoice");
+    }
+  };
+
+  const isLoading = (orderId: string, type: "delivery" | "payment") => updatingStatus === `${type}-${orderId}`;
+
+  // -----------------------------
+  // Columns (added shiprocket quick actions)
+  // -----------------------------
   const columns = [
-    { 
-      header: "Order ID", 
+    {
+      header: "Order ID",
       accessor: (item: any) => (
-        <div className="font-mono text-sm">{item.orderNumber || item._id?.slice(-8) || 'N/A'}</div>
-      ) 
+        <div className="font-mono text-sm">{item.orderNumber || item._id?.slice(-8) || "N/A"}</div>
+      ),
     },
-    { 
-      header: "Customer", 
+    {
+      header: "Customer",
       accessor: (item: any) => (
         <div>
           <div className="font-medium">{item.userDetails?.name || "Guest"}</div>
-          <div className="text-xs text-muted-foreground">{item.userDetails?.email || 'No email'}</div>
+          <div className="text-xs text-muted-foreground">{item.userDetails?.email || "No email"}</div>
         </div>
-      ) 
+      ),
     },
-    { 
-      header: "Amount", 
+    {
+      header: "Amount",
       accessor: (item: any) => (
-        <div className="font-semibold">₹{item.orderSummary?.total?.toFixed(2) || '0.00'}</div>
-      ) 
+        <div className="font-semibold">₹{item.orderSummary?.total?.toFixed(2) || "0.00"}</div>
+      ),
     },
-    { 
-      header: "Delivery Status", 
-      accessor: (item: any) => getStatusBadge(item.orderStatus?.currentStatus || 'pending') 
+    {
+      header: "Delivery Status",
+      accessor: (item: any) => getStatusBadge(item.orderStatus?.currentStatus || "pending"),
     },
-    { 
-      header: "Payment Status", 
+    {
+      header: "Payment Status",
       accessor: (item: any) => {
         const hasProof = hasPaymentProof(item);
-        const isPendingVerification = item.paymentDetails?.status === 'pending_verification';
-        
+        const isPendingVerification = item.paymentDetails?.status === "pending_verification";
         return (
           <div className="flex items-center gap-2">
-            {getStatusBadge(item.paymentDetails?.status || 'pending', 'payment')}
+            {getStatusBadge(item.paymentDetails?.status || "pending", "payment")}
             {isPendingVerification && hasProof && (
               <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
                 <ImageIcon className="h-3 w-3 mr-1" />
@@ -225,43 +557,89 @@ const Orders = () => {
             )}
           </div>
         );
-      }
+      },
     },
-    { 
-      header: "Payment Method", 
+    {
+      header: "Payment Method",
       accessor: (item: any) => (
         <Badge variant="secondary" className="capitalize">
-          {item.paymentDetails?.method || 'N/A'}
+          {item.paymentDetails?.method || "N/A"}
         </Badge>
-      ) 
+      ),
+    },
+    {
+      header: "Shiprocket",
+      accessor: (item: any) => {
+        const sr = item.shiprocket;
+        if (!sr?.shipment_id) return <span className="text-muted-foreground text-xs">—</span>;
+        return (
+          <div className="text-xs space-y-1">
+            <div className="font-mono">SID: {sr.shipment_id}</div>
+            <div className="font-mono">AWB: {sr.awb_code || "—"}</div>
+            <div className="text-muted-foreground">{sr.courier_name || "Shiprocket"}</div>
+          </div>
+        );
+      },
     },
     {
       header: "Order Date",
-      accessor: (item: any) => formatDate(item.createdAt)
+      accessor: (item: any) => formatDate(item.createdAt),
     },
     {
       header: "Actions",
       accessor: (item: any) => (
-        <div className="flex items-center gap-2">
-          <Button 
-            size="sm" 
-            variant="outline" 
-            onClick={() => setSelectedOrder(item)}
+        <div className="flex items-center gap-2 justify-end">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setSelectedOrder(item);
+              setShiprocketTrack(null);
+            }}
             className="h-8 w-8 p-0"
           >
             <Eye className="h-4 w-4" />
           </Button>
+
+          {/* Quick Shiprocket create if not created */}
+          {!item.shiprocket?.shipment_id && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-8 px-2"
+              disabled={shiprocketLoading === `create-${item._id}`}
+              onClick={async () => {
+                try {
+                  setShiprocketLoading(`create-${item._id}`);
+                  await shiprocketCreateShipment(item._id);
+                  toast.success("Shipment created");
+                  await fetchOrders();
+                } catch (e: any) {
+                  toast.error(e?.message || "Create shipment failed");
+                } finally {
+                  setShiprocketLoading(null);
+                }
+              }}
+              title="Create Shiprocket Shipment"
+            >
+              {shiprocketLoading === `create-${item._id}` ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Truck className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+
           {hasPaymentProof(item) && (
-            <Button 
-              size="sm" 
-              variant="ghost" 
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={() => {
                 setSelectedOrder(item);
+                setShiprocketTrack(null);
                 setTimeout(() => {
                   const proofTab = document.querySelector('[data-tab="proof"]') as HTMLElement;
-                  if (proofTab) {
-                    proofTab.click();
-                  }
+                  proofTab?.click();
                 }, 100);
               }}
               className="h-8 w-8 p-0"
@@ -276,338 +654,6 @@ const Orders = () => {
     },
   ];
 
-  // Update delivery status
-  const handleUpdateDeliveryStatus = async (orderId: string, newStatus: string) => {
-    try {
-      setUpdatingStatus(`delivery-${orderId}`);
-      const token = localStorage.getItem('token');
-
-      const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/status`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to update status");
-      }
-
-      toast.success(data.message || `Status updated to ${newStatus}`);
-
-      // Update local state
-      setOrders(prevOrders =>
-        prevOrders.map(order =>
-          order._id === orderId
-            ? {
-                ...order,
-                orderStatus: {
-                  ...order.orderStatus,
-                  currentStatus: newStatus,
-                },
-              }
-            : order
-        )
-      );
-
-      // Update selected order if open
-      if (selectedOrder && selectedOrder._id === orderId) {
-        setSelectedOrder(prev => ({
-          ...prev,
-          orderStatus: {
-            ...prev.orderStatus,
-            currentStatus: newStatus,
-          },
-        }));
-      }
-    } catch (error: any) {
-      console.error("Update delivery status error:", error);
-      toast.error(error.message || "Failed to update status");
-    } finally {
-      setUpdatingStatus(null);
-    }
-  };
-
-  // Update payment status
-  const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => {
-    try {
-      setUpdatingStatus(`payment-${orderId}`);
-      const token = localStorage.getItem('token');
-
-      const response = await fetch(`https://api.apexbee.in/api/admin/orders/${orderId}/payment-status`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to update payment status");
-      }
-
-      toast.success(data.message || `Payment status updated to ${newStatus}`);
-
-      setOrders(prevOrders =>
-        prevOrders.map(order =>
-          order._id === orderId
-            ? {
-                ...order,
-                paymentDetails: {
-                  ...order.paymentDetails,
-                  status: newStatus,
-                },
-              }
-            : order
-        )
-      );
-
-      if (selectedOrder && selectedOrder._id === orderId) {
-        setSelectedOrder(prev => ({
-          ...prev,
-          paymentDetails: {
-            ...prev.paymentDetails,
-            status: newStatus,
-          },
-        }));
-      }
-    } catch (error: any) {
-      console.error("Update payment status error:", error);
-      toast.error(error.message || "Failed to update payment status");
-    } finally {
-      setUpdatingStatus(null);
-    }
-  };
-
-  // Verify UPI payment
-  const handleVerifyUPIPayment = async (orderId: string, verified: boolean, notes = '') => {
-    try {
-      setVerifyingPayment(true);
-      const token = localStorage.getItem('token');
-
-      const response = await fetch(`https://api.apexbee.in/api/orders/${orderId}/verify-payment`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ 
-          verified, 
-          notes 
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to verify payment");
-      }
-
-      toast.success(data.message || `Payment ${verified ? 'verified' : 'rejected'} successfully`);
-
-      // Update local state
-      setOrders(prevOrders =>
-        prevOrders.map(order =>
-          order._id === orderId
-            ? {
-                ...order,
-                paymentDetails: {
-                  ...order.paymentDetails,
-                  status: verified ? 'verified' : 'rejected',
-                  upiDetails: {
-                    ...order.paymentDetails?.upiDetails,
-                    verified,
-                    verifiedAt: new Date().toISOString(),
-                    verificationNotes: notes
-                  }
-                },
-                orderStatus: {
-                  ...order.orderStatus,
-                  currentStatus: verified ? 'payment_verified' : 'payment_failed',
-                }
-              }
-            : order
-        )
-      );
-
-      if (selectedOrder && selectedOrder._id === orderId) {
-        setSelectedOrder(prev => ({
-          ...prev,
-          paymentDetails: {
-            ...prev.paymentDetails,
-            status: verified ? 'verified' : 'rejected',
-            upiDetails: {
-              ...prev.paymentDetails?.upiDetails,
-              verified,
-              verifiedAt: new Date().toISOString(),
-              verificationNotes: notes
-            }
-          },
-          orderStatus: {
-            ...prev.orderStatus,
-            currentStatus: verified ? 'payment_verified' : 'payment_failed',
-          }
-        }));
-      }
-    } catch (error: any) {
-      console.error("Verify payment error:", error);
-      toast.error(error.message || "Failed to verify payment");
-    } finally {
-      setVerifyingPayment(false);
-    }
-  };
-
-  // View payment proof
-  const handleViewPaymentProof = () => {
-    if (!selectedOrder) return;
-    
-    const proofUrl = getPaymentProof(selectedOrder);
-    
-    if (!proofUrl) {
-      toast.info("No payment proof available");
-      return;
-    }
-
-    const newWindow = window.open();
-    if (newWindow) {
-      newWindow.document.write(`
-        <html>
-          <head>
-            <title>Payment Proof - ${selectedOrder?.orderNumber || 'Order'}</title>
-            <style>
-              body {
-                margin: 0;
-                padding: 20px;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                min-height: 100vh;
-                background: #f5f5f5;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              }
-              .container {
-                max-width: 800px;
-                width: 100%;
-                background: white;
-                border-radius: 12px;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-                overflow: hidden;
-              }
-              .header {
-                padding: 20px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-              }
-              .content {
-                padding: 20px;
-              }
-              img {
-                max-width: 100%;
-                height: auto;
-                border: 1px solid #e5e7eb;
-                border-radius: 8px;
-              }
-              .info {
-                margin-top: 20px;
-                padding: 15px;
-                background: #f8fafc;
-                border-radius: 8px;
-                border-left: 4px solid #3b82f6;
-              }
-              .info-item {
-                margin: 5px 0;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>Payment Proof</h1>
-                <p>Order: ${selectedOrder?.orderNumber || 'N/A'}</p>
-              </div>
-              <div class="content">
-                <img src="${proofUrl}" alt="Payment Proof" />
-                <div class="info">
-                  <div class="info-item"><strong>Transaction ID:</strong> ${selectedOrder?.paymentDetails?.upiDetails?.transactionId || 'N/A'}</div>
-                  <div class="info-item"><strong>UPI ID:</strong> ${selectedOrder?.paymentDetails?.upiDetails?.upiId || 'N/A'}</div>
-                  <div class="info-item"><strong>Amount:</strong> ₹${selectedOrder?.paymentDetails?.amount?.toFixed(2) || '0.00'}</div>
-                  <div class="info-item"><strong>Uploaded:</strong> ${selectedOrder?.paymentDetails?.upiDetails?.paymentProof?.uploadedAt ? formatDate(selectedOrder.paymentDetails.upiDetails.paymentProof.uploadedAt) : 'N/A'}</div>
-                </div>
-              </div>
-            </div>
-          </body>
-        </html>
-      `);
-    }
-  };
-
-  // Download invoice
-  const handleDownloadInvoice = async (orderId: string) => {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        toast.error("Please login again");
-        return;
-      }
-
-      const response = await fetch(`https://api.apexbee.in/api/orders/${orderId}/invoice`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to download invoice');
-      }
-
-      // Get filename from Content-Disposition header or generate one
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `invoice-${orderId}.pdf`;
-      
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1];
-        }
-      }
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      
-      toast.success("Invoice downloaded successfully");
-    } catch (error: any) {
-      console.error('Download invoice error:', error);
-      toast.error(error.message || 'Failed to download invoice');
-    }
-  };
-
-  // Get the loading state for specific order
-  const isLoading = (orderId: string, type: 'delivery' | 'payment') => {
-    return updatingStatus === `${type}-${orderId}`;
-  };
-
-  // Get file icon based on type
-  const getFileIcon = (mimeType: string) => {
-    if (mimeType?.startsWith('image/')) return ImageIcon;
-    if (mimeType === 'application/pdf') return FileText;
-    return FileText;
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -616,18 +662,14 @@ const Orders = () => {
           <p className="text-muted-foreground">Manage customer orders and track status</p>
         </div>
         <div className="flex gap-2">
-          <Button 
-            variant="outline" 
-            onClick={fetchOrders}
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          <Button variant="outline" onClick={fetchOrders} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
         </div>
       </div>
 
-      {/* Orders Count Stats */}
+      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -636,7 +678,7 @@ const Orders = () => {
                 <p className="text-sm font-medium text-muted-foreground">Total Orders</p>
                 <p className="text-2xl font-bold">{orders.length}</p>
               </div>
-              <ShoppingBag className="h-8 w-8 text-muted-foreground" />
+              <Package className="h-8 w-8 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
@@ -646,7 +688,7 @@ const Orders = () => {
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Pending Verification</p>
                 <p className="text-2xl font-bold">
-                  {orders.filter(o => o.paymentDetails?.status === 'pending_verification').length}
+                  {orders.filter((o) => o.paymentDetails?.status === "pending_verification").length}
                 </p>
               </div>
               <AlertCircle className="h-8 w-8 text-blue-500" />
@@ -659,7 +701,7 @@ const Orders = () => {
               <div>
                 <p className="text-sm font-medium text-muted-foreground">To Ship</p>
                 <p className="text-2xl font-bold">
-                  {orders.filter(o => ['confirmed', 'processing'].includes(o.orderStatus?.currentStatus)).length}
+                  {orders.filter((o) => ["confirmed", "processing"].includes(o.orderStatus?.currentStatus)).length}
                 </p>
               </div>
               <Truck className="h-8 w-8 text-blue-500" />
@@ -671,9 +713,7 @@ const Orders = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Completed</p>
-                <p className="text-2xl font-bold">
-                  {orders.filter(o => o.orderStatus?.currentStatus === 'delivered').length}
-                </p>
+                <p className="text-2xl font-bold">{orders.filter((o) => o.orderStatus?.currentStatus === "delivered").length}</p>
               </div>
               <CheckCircle2 className="h-8 w-8 text-green-500" />
             </div>
@@ -681,25 +721,29 @@ const Orders = () => {
         </Card>
       </div>
 
-      <DataTable 
-        data={orders} 
-        columns={columns} 
-        searchKey="orderNumber" 
+      <DataTable
+        data={orders}
+        columns={columns}
+        searchKey="orderNumber"
         loading={loading}
         emptyMessage="No orders found"
       />
 
-      {/* Order Details Dialog */}
-      <Dialog open={!!selectedOrder} onOpenChange={() => setSelectedOrder(null)}>
+      {/* Details Dialog */}
+      <Dialog
+        open={!!selectedOrder}
+        onOpenChange={() => {
+          setSelectedOrder(null);
+          setShiprocketTrack(null);
+        }}
+      >
         <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ShoppingBag className="h-5 w-5" />
+              <Package className="h-5 w-5" />
               Order Details: {selectedOrder?.orderNumber}
             </DialogTitle>
-            <DialogDescription>
-              Complete information about the order
-            </DialogDescription>
+            <DialogDescription>Complete information about the order</DialogDescription>
           </DialogHeader>
 
           {selectedOrder && (
@@ -709,10 +753,12 @@ const Orders = () => {
                 <TabsTrigger value="products">Products</TabsTrigger>
                 <TabsTrigger value="shipping">Shipping</TabsTrigger>
                 <TabsTrigger value="payment">Payment</TabsTrigger>
-                <TabsTrigger value="proof" data-tab="proof">Payment Proof</TabsTrigger>
+                <TabsTrigger value="proof" data-tab="proof">
+                  Payment Proof
+                </TabsTrigger>
               </TabsList>
 
-              {/* Overview Tab */}
+              {/* Overview */}
               <TabsContent value="overview" className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Card>
@@ -724,15 +770,15 @@ const Orders = () => {
                       <div className="space-y-2">
                         <div className="flex justify-between">
                           <span className="text-sm text-muted-foreground">Name:</span>
-                          <span className="text-sm font-medium">{selectedOrder.userDetails?.name || 'N/A'}</span>
+                          <span className="text-sm font-medium">{selectedOrder.userDetails?.name || "N/A"}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-sm text-muted-foreground">Email:</span>
-                          <span className="text-sm font-medium">{selectedOrder.userDetails?.email || 'N/A'}</span>
+                          <span className="text-sm font-medium">{selectedOrder.userDetails?.email || "N/A"}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-sm text-muted-foreground">Phone:</span>
-                          <span className="text-sm font-medium">{selectedOrder.shippingAddress?.phone || 'N/A'}</span>
+                          <span className="text-sm font-medium">{selectedOrder.shippingAddress?.phone || "N/A"}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-sm text-muted-foreground">Order Date:</span>
@@ -751,22 +797,28 @@ const Orders = () => {
                       <div className="space-y-2">
                         <div className="flex justify-between">
                           <span className="text-sm text-muted-foreground">Subtotal:</span>
-                          <span className="text-sm font-medium">₹{selectedOrder.orderSummary?.subtotal?.toFixed(2) || '0.00'}</span>
+                          <span className="text-sm font-medium">
+                            ₹{selectedOrder.orderSummary?.subtotal?.toFixed(2) || "0.00"}
+                          </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-sm text-muted-foreground">Shipping:</span>
-                          <span className="text-sm font-medium">₹{selectedOrder.orderSummary?.shipping?.toFixed(2) || '0.00'}</span>
+                          <span className="text-sm font-medium">
+                            ₹{selectedOrder.orderSummary?.shipping?.toFixed(2) || "0.00"}
+                          </span>
                         </div>
                         {(selectedOrder.orderSummary?.discount || 0) > 0 && (
                           <div className="flex justify-between text-green-600">
                             <span className="text-sm">Discount:</span>
-                            <span className="text-sm font-medium">-₹{selectedOrder.orderSummary?.discount?.toFixed(2)}</span>
+                            <span className="text-sm font-medium">
+                              -₹{selectedOrder.orderSummary?.discount?.toFixed(2)}
+                            </span>
                           </div>
                         )}
                         <Separator />
                         <div className="flex justify-between font-semibold text-base">
                           <span>Total Amount:</span>
-                          <span>₹{selectedOrder.orderSummary?.total?.toFixed(2) || '0.00'}</span>
+                          <span>₹{selectedOrder.orderSummary?.total?.toFixed(2) || "0.00"}</span>
                         </div>
                       </div>
                     </CardContent>
@@ -779,15 +831,16 @@ const Orders = () => {
                     <CardContent className="pt-6">
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="font-semibold">Delivery Status</h3>
-                        {getStatusBadge(selectedOrder.orderStatus?.currentStatus || 'pending')}
+                        {getStatusBadge(selectedOrder.orderStatus?.currentStatus || "pending")}
                       </div>
+
                       <Select
-                        value={selectedOrder.orderStatus?.currentStatus || 'pending'}
+                        value={selectedOrder.orderStatus?.currentStatus || "pending"}
                         onValueChange={(value) => handleUpdateDeliveryStatus(selectedOrder._id, value)}
-                        disabled={isLoading(selectedOrder._id, 'delivery')}
+                        disabled={isLoading(selectedOrder._id, "delivery")}
                       >
                         <SelectTrigger>
-                          {isLoading(selectedOrder._id, 'delivery') ? (
+                          {isLoading(selectedOrder._id, "delivery") ? (
                             <div className="flex items-center gap-2">
                               <Loader2 className="h-4 w-4 animate-spin" />
                               <span>Updating...</span>
@@ -800,7 +853,7 @@ const Orders = () => {
                           <SelectItem value="pending">Pending</SelectItem>
                           <SelectItem value="confirmed">Confirmed</SelectItem>
                           <SelectItem value="processing">Processing</SelectItem>
-                          <SelectItem value="shipped">Shipped</SelectItem>
+                          <SelectItem value="shipped">Shipped (Shiprocket)</SelectItem>
                           <SelectItem value="out_for_delivery">Out for Delivery</SelectItem>
                           <SelectItem value="delivered">Delivered</SelectItem>
                           <SelectItem value="cancelled">Cancelled</SelectItem>
@@ -810,6 +863,16 @@ const Orders = () => {
                           <SelectItem value="payment_failed">Payment Failed</SelectItem>
                         </SelectContent>
                       </Select>
+
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        When you set <b>Shipped</b>, it will auto-create a Shiprocket shipment.
+                      </p>
+
+                      {shiprocketLoading === `create-${selectedOrder._id}` ? (
+                        <div className="mt-2 text-xs text-muted-foreground flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" /> Creating Shiprocket shipment...
+                        </div>
+                      ) : null}
                     </CardContent>
                   </Card>
 
@@ -817,15 +880,16 @@ const Orders = () => {
                     <CardContent className="pt-6">
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="font-semibold">Payment Status</h3>
-                        {getStatusBadge(selectedOrder.paymentDetails?.status || 'pending', 'payment')}
+                        {getStatusBadge(selectedOrder.paymentDetails?.status || "pending", "payment")}
                       </div>
+
                       <Select
-                        value={selectedOrder.paymentDetails?.status || 'pending'}
+                        value={selectedOrder.paymentDetails?.status || "pending"}
                         onValueChange={(value) => handleUpdatePaymentStatus(selectedOrder._id, value)}
-                        disabled={isLoading(selectedOrder._id, 'payment')}
+                        disabled={isLoading(selectedOrder._id, "payment")}
                       >
                         <SelectTrigger>
-                          {isLoading(selectedOrder._id, 'payment') ? (
+                          {isLoading(selectedOrder._id, "payment") ? (
                             <div className="flex items-center gap-2">
                               <Loader2 className="h-4 w-4 animate-spin" />
                               <span>Updating...</span>
@@ -851,7 +915,7 @@ const Orders = () => {
                 </div>
               </TabsContent>
 
-              {/* Products Tab */}
+              {/* Products */}
               <TabsContent value="products" className="space-y-4">
                 <Card>
                   <CardContent className="pt-6">
@@ -860,8 +924,8 @@ const Orders = () => {
                       {selectedOrder.orderItems?.map((item: any, index: number) => (
                         <div key={index} className="flex items-center gap-4 p-3 border rounded-lg">
                           <div className="h-16 w-16 bg-muted rounded-md overflow-hidden flex-shrink-0">
-                            <img 
-                              src={item.image || "/placeholder.png"} 
+                            <img
+                              src={item.image || "/placeholder.png"}
                               alt={item.name}
                               className="h-full w-full object-cover"
                               onError={(e) => {
@@ -870,7 +934,7 @@ const Orders = () => {
                             />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="font-medium truncate">{item.name || 'Unnamed Product'}</h4>
+                            <h4 className="font-medium truncate">{item.name || "Unnamed Product"}</h4>
                             <div className="flex items-center gap-3 text-sm text-muted-foreground">
                               <span>Qty: {item.quantity || 1}</span>
                               {item.color && <span>• Color: {item.color}</span>}
@@ -878,7 +942,9 @@ const Orders = () => {
                             </div>
                           </div>
                           <div className="text-right">
-                            <p className="font-semibold">₹{((item.price || 0) * (item.quantity || 1)).toFixed(2)}</p>
+                            <p className="font-semibold">
+                              ₹{((item.price || 0) * (item.quantity || 1)).toFixed(2)}
+                            </p>
                             <p className="text-xs text-muted-foreground">₹{item.price?.toFixed(2)} each</p>
                           </div>
                         </div>
@@ -888,7 +954,7 @@ const Orders = () => {
                 </Card>
               </TabsContent>
 
-              {/* Shipping Tab */}
+              {/* Shipping */}
               <TabsContent value="shipping" className="space-y-4">
                 <Card>
                   <CardContent className="pt-6">
@@ -896,6 +962,7 @@ const Orders = () => {
                       <MapPin className="h-4 w-4" />
                       Shipping Address
                     </h3>
+
                     {selectedOrder.shippingAddress ? (
                       <div className="space-y-3">
                         <div className="flex items-center gap-2">
@@ -909,39 +976,134 @@ const Orders = () => {
                         <div className="mt-2 p-3 bg-muted rounded-lg">
                           <p className="font-medium">{selectedOrder.shippingAddress.address}</p>
                           <p className="text-sm">
-                            {selectedOrder.shippingAddress.city}, {selectedOrder.shippingAddress.state} - {selectedOrder.shippingAddress.pincode}
+                            {selectedOrder.shippingAddress.city}, {selectedOrder.shippingAddress.state} -{" "}
+                            {selectedOrder.shippingAddress.pincode}
                           </p>
                         </div>
-                        
-                        {selectedOrder.deliveryDetails && (
-                          <>
-                            <Separator />
-                            <h4 className="font-semibold mt-4">Delivery Information</h4>
-                            {selectedOrder.deliveryDetails.trackingNumber && (
-                              <div className="flex justify-between">
-                                <span className="text-sm text-muted-foreground">Tracking Number:</span>
-                                <span className="text-sm font-medium font-mono">{selectedOrder.deliveryDetails.trackingNumber}</span>
+
+                        {/* Shiprocket details */}
+                        <Separator />
+                        <h4 className="font-semibold mt-4 flex items-center gap-2">
+                          <Truck className="h-4 w-4" />
+                          Shiprocket
+                        </h4>
+
+                        {selectedOrder.shiprocket?.shipment_id ? (
+                          <div className="space-y-2">
+                            <div className="flex justify-between">
+                              <span className="text-sm text-muted-foreground">Shipment ID:</span>
+                              <span className="text-sm font-mono">{selectedOrder.shiprocket.shipment_id}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm text-muted-foreground">AWB:</span>
+                              <span className="text-sm font-mono">{selectedOrder.shiprocket.awb_code || "—"}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm text-muted-foreground">Courier:</span>
+                              <span className="text-sm">{selectedOrder.shiprocket.courier_name || "Shiprocket"}</span>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2 pt-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={shiprocketLoading === `label-${selectedOrder._id}`}
+                                onClick={async () => {
+                                  try {
+                                    setShiprocketLoading(`label-${selectedOrder._id}`);
+                                    const res = await shiprocketGenerateLabel(selectedOrder.shiprocket.shipment_id);
+                                    const url =
+                                      res?.data?.label_url ||
+                                      res?.data?.label_created?.[0] ||
+                                      res?.label_url;
+
+                                    if (url) {
+                                      window.open(url, "_blank");
+                                      toast.success("Label opened");
+                                    } else {
+                                      toast.error("Label URL not found in response");
+                                    }
+                                  } catch (e: any) {
+                                    toast.error(e?.message || "Label generation failed");
+                                  } finally {
+                                    setShiprocketLoading(null);
+                                  }
+                                }}
+                              >
+                                {shiprocketLoading === `label-${selectedOrder._id}` ? (
+                                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                ) : (
+                                  <FileText className="h-4 w-4 mr-2" />
+                                )}
+                                Generate Label
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={shiprocketLoading === `track-${selectedOrder._id}`}
+                                onClick={async () => {
+                                  try {
+                                    setShiprocketLoading(`track-${selectedOrder._id}`);
+                                    const tr = await shiprocketTrackShipment(selectedOrder.shiprocket.shipment_id);
+                                    setShiprocketTrack(tr?.data || tr);
+                                    toast.success("Tracking fetched");
+                                  } catch (e: any) {
+                                    toast.error(e?.message || "Tracking failed");
+                                  } finally {
+                                    setShiprocketLoading(null);
+                                  }
+                                }}
+                              >
+                                {shiprocketLoading === `track-${selectedOrder._id}` ? (
+                                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                ) : (
+                                  <RefreshCw className="h-4 w-4 mr-2" />
+                                )}
+                                Track
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                disabled={shiprocketLoading === `cancel-${selectedOrder._id}`}
+                                onClick={async () => {
+                                  try {
+                                    setShiprocketLoading(`cancel-${selectedOrder._id}`);
+                                    await shiprocketCancelShipment(selectedOrder.shiprocket.shipment_id);
+                                    toast.success("Shipment cancelled");
+                                    await fetchOrders();
+                                  } catch (e: any) {
+                                    toast.error(e?.message || "Cancel failed");
+                                  } finally {
+                                    setShiprocketLoading(null);
+                                  }
+                                }}
+                              >
+                                {shiprocketLoading === `cancel-${selectedOrder._id}` ? (
+                                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 mr-2" />
+                                )}
+                                Cancel Shipment
+                              </Button>
+                            </div>
+
+                            {/* Tracking display */}
+                            {shiprocketTrack ? (
+                              <div className="mt-3 rounded-lg border p-3 text-sm bg-muted/30">
+                                <div className="font-semibold mb-2">Tracking</div>
+                                <pre className="text-xs overflow-auto max-h-56">
+                                  {JSON.stringify(shiprocketTrack, null, 2)}
+                                </pre>
                               </div>
-                            )}
-                            {selectedOrder.deliveryDetails.carrier && (
-                              <div className="flex justify-between">
-                                <span className="text-sm text-muted-foreground">Carrier:</span>
-                                <span className="text-sm font-medium">{selectedOrder.deliveryDetails.carrier}</span>
-                              </div>
-                            )}
-                            {selectedOrder.deliveryDetails.estimatedDelivery && (
-                              <div className="flex justify-between">
-                                <span className="text-sm text-muted-foreground">Estimated Delivery:</span>
-                                <span className="text-sm font-medium">{formatDate(selectedOrder.deliveryDetails.estimatedDelivery)}</span>
-                              </div>
-                            )}
-                            {selectedOrder.deliveryDetails.actualDelivery && (
-                              <div className="flex justify-between">
-                                <span className="text-sm text-muted-foreground">Delivered On:</span>
-                                <span className="text-sm font-medium">{formatDate(selectedOrder.deliveryDetails.actualDelivery)}</span>
-                              </div>
-                            )}
-                          </>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-muted-foreground">
+                            Shipment not created yet. Set delivery status to <b>Shipped</b> or click Create Shipment in
+                            table.
+                          </div>
                         )}
                       </div>
                     ) : (
@@ -951,7 +1113,7 @@ const Orders = () => {
                 </Card>
               </TabsContent>
 
-              {/* Payment Tab */}
+              {/* Payment */}
               <TabsContent value="payment" className="space-y-4">
                 <Card>
                   <CardContent className="pt-6">
@@ -959,26 +1121,25 @@ const Orders = () => {
                       <CreditCard className="h-4 w-4" />
                       Payment Information
                     </h3>
+
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <p className="text-sm text-muted-foreground">Payment Method</p>
-                          <p className="font-medium capitalize">{selectedOrder.paymentDetails?.method || 'N/A'}</p>
+                          <p className="font-medium capitalize">{selectedOrder.paymentDetails?.method || "N/A"}</p>
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground">Amount</p>
-                          <p className="font-medium">₹{selectedOrder.paymentDetails?.amount?.toFixed(2) || '0.00'}</p>
+                          <p className="font-medium">₹{selectedOrder.paymentDetails?.amount?.toFixed(2) || "0.00"}</p>
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground">Transaction ID</p>
-                          <p className="font-mono text-sm truncate">{selectedOrder.paymentDetails?.transactionId || 'N/A'}</p>
+                          <p className="font-mono text-sm truncate">{selectedOrder.paymentDetails?.transactionId || "N/A"}</p>
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground">Payment Date</p>
                           <p className="text-sm font-medium">
-                            {selectedOrder.paymentDetails?.paymentDate 
-                              ? formatDate(selectedOrder.paymentDetails.paymentDate) 
-                              : 'N/A'}
+                            {selectedOrder.paymentDetails?.paymentDate ? formatDate(selectedOrder.paymentDetails.paymentDate) : "N/A"}
                           </p>
                         </div>
                       </div>
@@ -990,13 +1151,14 @@ const Orders = () => {
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <p className="text-sm text-muted-foreground">UPI ID</p>
-                              <p className="font-mono text-sm">{selectedOrder.paymentDetails.upiDetails.upiId || 'N/A'}</p>
+                              <p className="font-mono text-sm">{selectedOrder.paymentDetails.upiDetails.upiId || "N/A"}</p>
                             </div>
                             <div>
                               <p className="text-sm text-muted-foreground">Transaction ID</p>
-                              <p className="font-mono text-sm truncate">{selectedOrder.paymentDetails.upiDetails.transactionId || 'N/A'}</p>
+                              <p className="font-mono text-sm truncate">{selectedOrder.paymentDetails.upiDetails.transactionId || "N/A"}</p>
                             </div>
                           </div>
+
                           {selectedOrder.paymentDetails.upiDetails.verified !== undefined && (
                             <div>
                               <p className="text-sm text-muted-foreground">Verified</p>
@@ -1007,7 +1169,7 @@ const Orders = () => {
                                   <XCircle className="h-4 w-4 text-red-500" />
                                 )}
                                 <span className="text-sm">
-                                  {selectedOrder.paymentDetails.upiDetails.verified ? 'Yes' : 'No'}
+                                  {selectedOrder.paymentDetails.upiDetails.verified ? "Yes" : "No"}
                                   {selectedOrder.paymentDetails.upiDetails.verifiedAt && (
                                     <span className="text-muted-foreground ml-2">
                                       on {formatDate(selectedOrder.paymentDetails.upiDetails.verifiedAt)}
@@ -1017,10 +1179,34 @@ const Orders = () => {
                               </div>
                             </div>
                           )}
+
                           {selectedOrder.paymentDetails.upiDetails.verificationNotes && (
                             <div>
                               <p className="text-sm text-muted-foreground">Verification Notes</p>
                               <p className="text-sm p-2 bg-muted rounded">{selectedOrder.paymentDetails.upiDetails.verificationNotes}</p>
+                            </div>
+                          )}
+
+                          {/* Optional: Verify buttons (if you want quick verify/reject) */}
+                          {selectedOrder.paymentDetails?.status === "pending_verification" && (
+                            <div className="flex gap-2 pt-2">
+                              <Button
+                                size="sm"
+                                disabled={verifyingPayment}
+                                onClick={() => handleVerifyUPIPayment(selectedOrder._id, true, "Verified by admin")}
+                              >
+                                {verifyingPayment ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                                Verify Payment
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                disabled={verifyingPayment}
+                                onClick={() => handleVerifyUPIPayment(selectedOrder._id, false, "Rejected by admin")}
+                              >
+                                {verifyingPayment ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                                Reject Payment
+                              </Button>
                             </div>
                           )}
                         </div>
@@ -1030,7 +1216,7 @@ const Orders = () => {
                 </Card>
               </TabsContent>
 
-              {/* Payment Proof Tab */}
+              {/* Proof */}
               <TabsContent value="proof" className="space-y-4">
                 <Card>
                   <CardContent className="pt-6">
@@ -1040,36 +1226,28 @@ const Orders = () => {
                         Payment Proof
                       </h3>
                       {getPaymentProof(selectedOrder) && (
-                        <div className="flex gap-2">
-                          <Button 
-                            size="sm" 
-                            variant="outline"
-                            onClick={handleViewPaymentProof}
-                          >
-                            <ExternalLink className="h-4 w-4 mr-2" />
-                            Open Full View
-                          </Button>
-                        </div>
+                        <Button size="sm" variant="outline" onClick={handleViewPaymentProof}>
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Open Full View
+                        </Button>
                       )}
                     </div>
 
                     {getPaymentProof(selectedOrder) ? (
                       <div className="space-y-4">
-                        {/* Payment Proof Image */}
                         <div className="flex justify-center">
-                          <img 
-                            src={getPaymentProof(selectedOrder)} 
+                          <img
+                            src={getPaymentProof(selectedOrder)}
                             alt="Payment Proof"
                             className="max-w-full h-auto max-h-80 rounded-lg border shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
                             onClick={handleViewPaymentProof}
                             onError={(e) => {
-                              (e.target as HTMLImageElement).src = '/placeholder.png';
+                              (e.target as HTMLImageElement).src = "/placeholder.png";
                               toast.error("Failed to load payment proof image");
                             }}
                           />
                         </div>
 
-                        {/* Payment Proof Details */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <Card>
                             <CardContent className="pt-4">
@@ -1078,23 +1256,23 @@ const Orders = () => {
                                 <div className="flex justify-between">
                                   <span className="text-sm text-muted-foreground">File Type:</span>
                                   <span className="text-sm font-medium capitalize">
-                                    {getPaymentProofDetails(selectedOrder)?.mimeType?.split('/')[1] || 'Image'}
+                                    {getPaymentProofDetails(selectedOrder)?.mimeType?.split("/")?.[1] || "Image"}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-sm text-muted-foreground">File Size:</span>
                                   <span className="text-sm font-medium">
-                                    {getPaymentProofDetails(selectedOrder)?.fileSize ? 
-                                      `${(getPaymentProofDetails(selectedOrder).fileSize / 1024).toFixed(2)} KB` : 
-                                      'N/A'}
+                                    {getPaymentProofDetails(selectedOrder)?.fileSize
+                                      ? `${(getPaymentProofDetails(selectedOrder).fileSize / 1024).toFixed(2)} KB`
+                                      : "N/A"}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-sm text-muted-foreground">Uploaded:</span>
                                   <span className="text-sm font-medium">
-                                    {getPaymentProofDetails(selectedOrder)?.uploadedAt ? 
-                                      formatDate(getPaymentProofDetails(selectedOrder).uploadedAt) : 
-                                      'N/A'}
+                                    {getPaymentProofDetails(selectedOrder)?.uploadedAt
+                                      ? formatDate(getPaymentProofDetails(selectedOrder).uploadedAt)
+                                      : "N/A"}
                                   </span>
                                 </div>
                               </div>
@@ -1108,27 +1286,25 @@ const Orders = () => {
                                 <div className="flex justify-between">
                                   <span className="text-sm text-muted-foreground">Reference ID:</span>
                                   <span className="text-sm font-medium font-mono">
-                                    {getPaymentProofDetails(selectedOrder)?.transactionReference || 'N/A'}
+                                    {getPaymentProofDetails(selectedOrder)?.transactionReference || "N/A"}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-sm text-muted-foreground">UPI ID:</span>
                                   <span className="text-sm font-medium font-mono">
-                                    {getPaymentProofDetails(selectedOrder)?.upiId || 'N/A'}
+                                    {getPaymentProofDetails(selectedOrder)?.upiId || "N/A"}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span className="text-sm text-muted-foreground">Verification Status:</span>
                                   <span className="text-sm font-medium capitalize">
-                                    {getPaymentProofDetails(selectedOrder)?.status || 'pending'}
+                                    {getPaymentProofDetails(selectedOrder)?.status || "pending"}
                                   </span>
                                 </div>
                               </div>
                             </CardContent>
                           </Card>
                         </div>
-
-                     
                       </div>
                     ) : (
                       <div className="text-center py-8">
@@ -1145,9 +1321,9 @@ const Orders = () => {
             </Tabs>
           )}
 
-          {/* Action Buttons */}
+          {/* Bottom action bar */}
           <div className="flex justify-between pt-4 border-t">
-            <Button 
+            <Button
               variant="outline"
               onClick={() => selectedOrder && handleDownloadInvoice(selectedOrder._id)}
               className="flex items-center gap-2"
@@ -1156,15 +1332,14 @@ const Orders = () => {
               <Download className="h-4 w-4" />
               Download Invoice
             </Button>
+
             <div className="flex gap-2">
               {selectedOrder && hasPaymentProof(selectedOrder) && (
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => {
                     const proofTab = document.querySelector('[data-tab="proof"]') as HTMLElement;
-                    if (proofTab) {
-                      proofTab.click();
-                    }
+                    proofTab?.click();
                   }}
                   className="flex items-center gap-2"
                 >
@@ -1172,10 +1347,7 @@ const Orders = () => {
                   View Proof
                 </Button>
               )}
-              <Button 
-                variant="outline"
-                onClick={() => setSelectedOrder(null)}
-              >
+              <Button variant="outline" onClick={() => setSelectedOrder(null)}>
                 Close
               </Button>
             </div>

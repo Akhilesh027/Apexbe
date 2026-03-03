@@ -25,7 +25,7 @@ const AddSubcategory = () => {
   // Fetch categories from backend
   useEffect(() => {
     axios
-      .get("https://api.apexbee.in/api/categories")
+      .get("http://localhost:5000/api/categories")
       .then((res) => {
         if (res.data.success) {
           setCategories(res.data.categories);
@@ -58,7 +58,7 @@ const AddSubcategory = () => {
       data.append("category", formData.category);
       if (formData.image) data.append("image", formData.image);
 
-      const res = await axios.post("https://api.apexbee.in/api/subcategories", data, {
+      const res = await axios.post("http://localhost:5000/api/subcategories", data, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 

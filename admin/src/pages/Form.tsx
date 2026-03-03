@@ -9,7 +9,7 @@ const Forms = () => {
   // Fetch form submissions
   const fetchForms = async () => {
     try {
-      const res = await axios.get("https://api.apexbee.in/api/admin/forms");
+      const res = await axios.get("http://localhost:5000/api/admin/forms");
       setForms(res.data.forms || []);
     } catch (error) {
       console.error(error);

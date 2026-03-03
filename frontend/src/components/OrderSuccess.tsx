@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 
-const API_ORIGIN = "https://api.apexbee.in";
+const API_ORIGIN = "http://localhost:5000";
 
 type OrderItem = {
   name: string;

@@ -89,7 +89,7 @@ const AddBussiness = () => {
       formData.append("gstNumber", gstNumber);
 
       const res = await axios.post(
-        "https://api.apexbee.in/api/business/add-business",
+        "http://localhost:5000/api/business/add-business",
         formData,
         { headers: { "Content-Type": "multipart/form-data" } }
       );

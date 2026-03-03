@@ -102,7 +102,7 @@ const Addproduct = () => {
     const load = async () => {
       setLoading(true);
       try {
-        const res = await axios.get(`https://api.apexbee.in/api/business/get-business/${vendorId}`);
+        const res = await axios.get(`http://localhost:5000/api/business/get-business/${vendorId}`);
         setBusiness(res.data.business);
       } catch (err) {
         console.error(err);
@@ -125,7 +125,7 @@ const Addproduct = () => {
   useEffect(() => {
     setCategoriesLoading(true);
     axios
-      .get("https://api.apexbee.in/api/categories")
+      .get("http://localhost:5000/api/categories")
       .then((res) => setCategories(res.data.categories || []))
       .catch(console.error)
       .finally(() => setCategoriesLoading(false));
@@ -149,7 +149,7 @@ const Addproduct = () => {
 
     setAddingSubcategory(true);
     try {
-      const res = await axios.post(`https://api.apexbee.in/api/categories/${category}/subcategories`, {
+      const res = await axios.post(`http://localhost:5000/api/categories/${category}/subcategories`, {
         name: subName,
       });
 
@@ -429,7 +429,7 @@ const Addproduct = () => {
     images.forEach((img) => fd.append("images", img));
 
     try {
-      await axios.post("https://api.apexbee.in/api/products/add-product", fd, {
+      await axios.post("http://localhost:5000/api/products/add-product", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 

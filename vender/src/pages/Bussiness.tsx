@@ -27,7 +27,7 @@ const BusinessDetails = () => {
         const fetchBusiness = async () => {
             try {
                 const res = await axios.get(
-                    `https://api.apexbee.in/api/business/get-business/${vendorId}`
+                    `http://localhost:5000/api/business/get-business/${vendorId}`
                 );
 
                 const biz = res.data.business || null;
@@ -140,7 +140,7 @@ const BusinessDetails = () => {
 
         try {
             const res = await axios.patch(
-                `https://api.apexbee.in/api/business/update-business/${vendorId}`,
+                `http://localhost:5000/api/business/update-business/${vendorId}`,
                 data,
                 {
                     headers: { 'Content-Type': 'multipart/form-data' },

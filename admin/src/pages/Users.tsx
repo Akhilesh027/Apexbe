@@ -21,7 +21,7 @@ const Users = () => {
   // Fetch all users from backend
   const fetchUsers = async () => {
     try {
-      const res = await axios.get("https://api.apexbee.in/api/admin/users");
+      const res = await axios.get("http://localhost:5000/api/admin/users");
       setUsers(res.data.user || []);
     } catch (error) {
       toast.error("Failed to load users");
@@ -36,7 +36,7 @@ const Users = () => {
   // Change User Role
   const changeUserRole = async (userId: string, newRole: string) => {
     try {
-      await axios.put(`https://api.apexbee.in/api/admin/users/${userId}/role`, {
+      await axios.put(`http://localhost:5000/api/admin/users/${userId}/role`, {
         role: newRole,
       });
 
@@ -57,7 +57,7 @@ const Users = () => {
   const toggleUserStatus = async (userId: string, currentStatus: string) => {
     const newStatus = currentStatus === "active" ? "blocked" : "active";
     try {
-      await axios.put(`https://api.apexbee.in/api/admin/users/${userId}/status`, {
+      await axios.put(`http://localhost:5000/api/admin/users/${userId}/status`, {
         status: newStatus,
       });
 

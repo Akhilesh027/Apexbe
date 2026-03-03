@@ -25,7 +25,7 @@ useEffect(() => {
     // Fetch dashboard earnings
     const fetchDashboardData = async () => {
       try {
-        const res = await fetch(`https://api.apexbee.in/api/dashboard/${vendorId}`);
+        const res = await fetch(`http://localhost:5000/api/dashboard/${vendorId}`);
         const data = await res.json();
 
         setTotalSales(data.totalSales || 0);

@@ -9,7 +9,7 @@ import LocationModal from "@/components/LocationModal";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const API_BASE = "https://api.apexbee.in/api";
+const API_BASE = "http://localhost:5000/api";
 const LOCATION_KEY = "user_location";
 
 /** ---------------------------

@@ -5458,322 +5458,421 @@ app.get('/api/admin/orders/:orderId/referral-details', async (req, res) => {
     });
   }
 });
-// ✅ Requires:
-// import PDFDocument from "pdfkit";
-// import mongoose from "mongoose";
+import puppeteer from "puppeteer";
+import QRCode from "qrcode";
+import bwipjs from "bwip-js";
+import path from "path";
+import fs from "fs";
 
+// helpers
+const safe = (v) => (v == null ? "" : String(v));
+const formatINR = (n) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(
+    Number(n || 0)
+  );
+const formatDate = (d) => {
+  try {
+    return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return "";
+  }
+};
+
+// ✅ Company config (edit)
+const COMPANY = {
+  name: "ApexBee Store",
+  website: "https://apexbee.in",
+  email: "info@apexbee.in",
+  phone: "+91 12345 67890",
+  addressLine1: "123 Business Street",
+  addressLine2: "Mumbai, Maharashtra 400001",
+  gstin: "27ABCDE1234F1Z5",
+  state: "Maharashtra",
+  // ✅ put your logo file
+  logoPath: path.join(process.cwd(), "public", "brand", "apexbee-logo.png"),
+};
+
+// ✅ Terms
+const TERMS = [
+  "Goods once sold cannot be returned unless damaged during shipping.",
+  "For support, contact ApexBee using phone/email mentioned on invoice.",
+  "Invoice generated electronically and is valid without physical seal.",
+];
+
+const readFileAsDataUri = (filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return "";
+    const ext = path.extname(filePath).toLowerCase().replace(".", "");
+    const mime =
+      ext === "png" ? "image/png" :
+      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
+      ext === "webp" ? "image/webp" :
+      "application/octet-stream";
+    const base64 = fs.readFileSync(filePath).toString("base64");
+    return `data:${mime};base64,${base64}`;
+  } catch {
+    return "";
+  }
+};
+const MAX_ITEMS_ONE_PAGE = 8; // ✅ keep invoice 1 page
+
+const buildInvoiceHTML = ({
+  order,
+  orderNumber,
+  invoiceNumber,
+  isSameState,
+  taxPercent,
+  cgst,
+  sgst,
+  igst,
+  qrDataUri,
+  barcodeDataUri,
+  logoDataUri,
+}) => {
+  const ship = order.shippingAddress || {};
+  const customerName = safe(order?.userDetails?.name || order?.userId?.name || "Customer");
+  const customerEmail = safe(order?.userDetails?.email || order?.userId?.email || "");
+  const customerPhone = safe(order?.userDetails?.phone || order?.userId?.phone || ship?.phone || "");
+
+  const shipLines = [
+    safe(ship.name || customerName),
+    safe(ship.address),
+    `${safe(ship.city)}, ${safe(ship.state)} - ${safe(ship.pincode)}`,
+    ship.phone ? `Phone: ${safe(ship.phone)}` : "",
+  ].filter(Boolean);
+
+  const subtotal = Number(order?.orderSummary?.subtotal || 0);
+  const shipping = Number(order?.orderSummary?.shipping || 0);
+  const discount = Number(order?.orderSummary?.discount || 0);
+  const total = Number(order?.orderSummary?.total || order?.orderSummary?.grandTotal || 0);
+
+  const payStatus = safe(order?.paymentDetails?.status || "").toLowerCase();
+  const isPaid = payStatus.includes("paid") || payStatus.includes("complete") || payStatus.includes("completed");
+
+  const itemsAll = Array.isArray(order.orderItems) ? order.orderItems : [];
+  const items = itemsAll.slice(0, MAX_ITEMS_ONE_PAGE);
+  const moreCount = Math.max(0, itemsAll.length - items.length);
+
+  const rows = items
+    .map((it) => {
+      const productName = safe(it?.name || it?.productId?.itemName || it?.productId?.name || "Item");
+      const variant = safe(it?.variant || it?.color || it?.size || it?.selectedColor || "—");
+      const hsn = safe(it?.hsnCode || it?.productId?.hsnCode || it?.productId?.hsn || "—");
+      const sku = safe(it?.sku || it?.productId?.skuCode || it?.productId?.sku || "—");
+      const qty = Number(it?.quantity || 0);
+      const price = Number(it?.price || 0);
+      const amount = price * qty;
+
+      return `
+        <tr class="border-b border-slate-200">
+          <td class="py-1.5 px-2">
+            <div class="font-semibold text-slate-900 leading-tight">${productName}</div>
+            <div class="text-[10px] text-slate-500 leading-tight">Variant: ${variant}</div>
+          </td>
+          <td class="py-1.5 px-2 text-[11px] text-slate-700">${hsn}</td>
+          <td class="py-1.5 px-2 text-[11px] text-slate-700">${sku}</td>
+          <td class="py-1.5 px-2 text-right text-[11px] text-slate-900">${qty}</td>
+          <td class="py-1.5 px-2 text-right text-[11px] text-slate-900">${formatINR(price)}</td>
+          <td class="py-1.5 px-2 text-right text-[11px] font-semibold text-slate-900">${formatINR(amount)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const gstRows =
+    taxPercent > 0
+      ? isSameState
+        ? `
+          <div class="flex justify-between">
+            <span class="text-slate-600">CGST (${(taxPercent / 2).toFixed(1)}%)</span>
+            <span class="font-semibold text-slate-900">${formatINR(cgst)}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-600">SGST (${(taxPercent / 2).toFixed(1)}%)</span>
+            <span class="font-semibold text-slate-900">${formatINR(sgst)}</span>
+          </div>
+        `
+        : `
+          <div class="flex justify-between">
+            <span class="text-slate-600">IGST (${taxPercent.toFixed(1)}%)</span>
+            <span class="font-semibold text-slate-900">${formatINR(igst)}</span>
+          </div>
+        `
+      : "";
+
+  // ✅ very short terms for one-page
+  const compactTerms = [
+    "No returns unless damaged.",
+    "Support via email/phone.",
+    "Electronic invoice valid.",
+  ];
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Invoice ${orderNumber}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @page { size: A4; margin: 10mm; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system; }
+    .brand-border { border: 2px solid #0B1F3A; }
+    .brand-border-inner { border: 2px solid #F5B400; }
+    table { page-break-inside: avoid; }
+    tr { page-break-inside: avoid; }
+  </style>
+</head>
+
+<body class="text-slate-800">
+  <div class="brand-border rounded-xl p-1">
+    <div class="brand-border-inner rounded-xl p-3">
+
+      <!-- HEADER (compact) -->
+      <div class="flex items-start justify-between">
+        <div class="flex items-center gap-3">
+          ${
+            logoDataUri
+              ? `<img src="${logoDataUri}" class="w-10 h-10 object-contain" />`
+              : `<div class="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center font-bold text-slate-900">AB</div>`
+          }
+          <div class="leading-tight">
+            <div class="text-lg font-extrabold text-[#0B1F3A]">ApexBee Store</div>
+            <div class="text-[11px] text-slate-600">https://apexbee.in</div>
+            <div class="text-[11px] text-slate-600">info@apexbee.in • +91 12345 67890</div>
+          </div>
+        </div>
+
+        <div class="text-right leading-tight">
+          <div class="text-xl font-extrabold text-[#0B1F3A]">INVOICE</div>
+          <div class="mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+            isPaid ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-800"
+          }">
+            ${isPaid ? "PAID" : "PENDING"}
+          </div>
+          <div class="mt-1 text-[11px] text-slate-600">GSTIN: ${safe(COMPANY.gstin)}</div>
+        </div>
+      </div>
+
+      <!-- META + QR -->
+      <div class="mt-2 grid grid-cols-3 gap-2">
+        <div class="col-span-2 rounded-lg border border-slate-200 p-2 text-[11px]">
+          <div class="grid grid-cols-2 gap-y-1">
+            <div class="text-slate-600">Invoice No</div><div class="font-semibold">${invoiceNumber}</div>
+            <div class="text-slate-600">Order No</div><div class="font-semibold">${orderNumber}</div>
+            <div class="text-slate-600">Date</div><div class="font-semibold">${formatDate(order.createdAt)}</div>
+            <div class="text-slate-600">Payment</div><div class="font-semibold">${safe(order?.paymentDetails?.method || "").toUpperCase()}</div>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 p-2 flex items-center justify-between gap-2">
+          <div class="text-[10px] text-slate-600 leading-tight">
+            <div class="font-bold text-slate-900">QR</div>
+            <div>View Order</div>
+          </div>
+          <img src="${qrDataUri}" class="w-14 h-14" />
+        </div>
+      </div>
+
+      <!-- BILL/SHIP -->
+      <div class="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+        <div class="rounded-lg border border-slate-200 p-2">
+          <div class="font-extrabold text-[#0B1F3A]">Bill To</div>
+          <div class="mt-1">
+            <div class="font-semibold text-slate-900">${customerName}</div>
+            ${customerEmail ? `<div class="text-slate-600">${customerEmail}</div>` : ""}
+            ${customerPhone ? `<div class="text-slate-600">Phone: ${customerPhone}</div>` : ""}
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 p-2">
+          <div class="font-extrabold text-[#0B1F3A]">Ship To</div>
+          <div class="mt-1 text-slate-600 whitespace-pre-line">${shipLines.join("\n") || "—"}</div>
+        </div>
+      </div>
+
+      <!-- ITEMS -->
+      <div class="mt-2 rounded-lg border border-slate-200 overflow-hidden">
+        <div class="bg-slate-50 px-2 py-1.5 text-[11px] font-extrabold text-[#0B1F3A]">Items</div>
+        <table class="w-full text-[11px]">
+          <thead class="bg-slate-50 text-slate-700">
+            <tr>
+              <th class="text-left py-1.5 px-2">Product</th>
+              <th class="text-left py-1.5 px-2">HSN</th>
+              <th class="text-left py-1.5 px-2">SKU</th>
+              <th class="text-right py-1.5 px-2">Qty</th>
+              <th class="text-right py-1.5 px-2">Price</th>
+              <th class="text-right py-1.5 px-2">Amount</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white">
+            ${rows || `<tr><td class="p-3 text-slate-500" colspan="6">No items</td></tr>`}
+            ${
+              moreCount
+                ? `<tr>
+                    <td class="py-2 px-2 text-slate-600" colspan="6">
+                      + ${moreCount} more items (not shown to keep invoice one-page)
+                    </td>
+                  </tr>`
+                : ""
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <!-- BARCODE + SUMMARY -->
+      <div class="mt-2 grid grid-cols-3 gap-2">
+        <div class="rounded-lg border border-slate-200 p-2">
+          <div class="text-[11px] font-extrabold text-[#0B1F3A]">Barcode</div>
+          <img src="${barcodeDataUri}" class="w-full h-14 object-contain" />
+        </div>
+
+        <div class="col-span-2 rounded-lg border border-slate-200 p-2 text-[11px]">
+          <div class="flex justify-between"><span class="text-slate-600">Subtotal</span><span class="font-semibold">${formatINR(subtotal)}</span></div>
+          ${shipping > 0 ? `<div class="flex justify-between"><span class="text-slate-600">Shipping</span><span class="font-semibold">${formatINR(shipping)}</span></div>` : ""}
+          ${discount > 0 ? `<div class="flex justify-between"><span class="text-slate-600">Discount</span><span class="font-semibold">- ${formatINR(discount)}</span></div>` : ""}
+          ${gstRows ? `<div class="mt-1 space-y-0.5">${gstRows}</div>` : ""}
+
+          <div class="my-1 border-t border-slate-200"></div>
+          <div class="flex justify-between">
+            <span class="text-[13px] font-extrabold text-[#0B1F3A]">Total</span>
+            <span class="text-[13px] font-extrabold text-[#0B1F3A]">${formatINR(total)}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TERMS + SIGN -->
+      <div class="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+        <div class="rounded-lg border border-slate-200 p-2">
+          <div class="font-extrabold text-[#0B1F3A]">Terms</div>
+          <ul class="mt-1 text-slate-600 list-disc pl-4 space-y-0.5">
+            ${compactTerms.map((t) => `<li>${t}</li>`).join("")}
+          </ul>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 p-2 flex flex-col justify-between">
+          <div class="font-extrabold text-[#0B1F3A]">Signature</div>
+          <div class="h-8 border-b border-dashed border-slate-300"></div>
+          <div class="text-[10px] text-slate-500">For ApexBee Store</div>
+        </div>
+      </div>
+
+      <!-- FOOTER -->
+      <div class="mt-2 rounded-lg bg-slate-50 border border-slate-200 px-2 py-1.5 text-[10px] text-slate-600 flex justify-between">
+        <span>${COMPANY.website}</span>
+        <span>${COMPANY.email} • ${COMPANY.phone}</span>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
 app.get("/api/orders/:orderId/invoice", async (req, res) => {
+  let browser;
   try {
     const { orderId } = req.params;
 
-    // ✅ validate id
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
       return res.status(400).json({ success: false, message: "Invalid orderId" });
     }
 
     const order = await Order.findById(orderId)
       .populate("userId", "name email phone")
-      .populate("orderItems.productId", "name sku"); // keep if you really have these fields
+      .populate("orderItems.productId");
 
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // ✅ Safe helpers
-    const safe = (v) => (v == null ? "" : String(v));
-    const formatINR = (n) =>
-      new Intl.NumberFormat("en-IN", {
-        style: "currency",
-        currency: "INR",
-        maximumFractionDigits: 2,
-      }).format(Number(n || 0));
+    const ship = order.shippingAddress || {};
+    const shipState = safe(ship.state || ship.State || "");
+    const isSameState =
+      shipState && COMPANY.state
+        ? shipState.trim().toLowerCase() === COMPANY.state.trim().toLowerCase()
+        : true;
 
-    const toDate = (d) => {
-      try {
-        return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-      } catch {
-        return "";
-      }
-    };
+    const orderNumber = safe(order.orderNumber || order._id);
+    const invoiceNumber = safe(order.invoiceNumber || orderNumber);
 
-    // ✅ Use snapshot details if present
-    const customerName = safe(order?.userDetails?.name || order?.userId?.name || "Customer");
-    const customerEmail = safe(order?.userDetails?.email || order?.userId?.email || "");
-    const customerPhone = safe(order?.userDetails?.phone || order?.userId?.phone || order?.shippingAddress?.phone || "");
+    // ✅ QR points to order page
+    const invoiceUrl = `${COMPANY.website}/my-orders/${encodeURIComponent(orderNumber)}`;
 
-    const ship = order?.shippingAddress || null;
+    const qrPng = await QRCode.toBuffer(invoiceUrl, { type: "png", margin: 1, width: 200 });
+    const qrDataUri = `data:image/png;base64,${qrPng.toString("base64")}`;
 
-    // ✅ Create PDF
-    const doc = new PDFDocument({ size: "A4", margin: 40 });
-
-    // Set response headers
-    const filename = `invoice-${safe(order.orderNumber || order._id)}.pdf`;
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${filename}"`); // ✅ inline looks better for "View"
-    // If you want download always:
-    // res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-
-    doc.pipe(res);
-
-    // ========= Styles =========
-    const PAGE_W = doc.page.width;
-    const LEFT = doc.page.margins.left;
-    const RIGHT = PAGE_W - doc.page.margins.right;
-
-    const COLORS = {
-      navy: "#0f172a",
-      gray: "#475569",
-      light: "#e2e8f0",
-      faint: "#f1f5f9",
-      accent: "#f59e0b",
-      green: "#16a34a",
-    };
-
-    const line = (y) => {
-      doc.save();
-      doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(1).strokeColor(COLORS.light).stroke();
-      doc.restore();
-    };
-
-    const pill = (x, y, text, bg, fg) => {
-      doc.save();
-      doc.roundedRect(x, y, doc.widthOfString(text) + 16, 18, 9).fill(bg);
-      doc.fillColor(fg).fontSize(9).text(text, x + 8, y + 4);
-      doc.restore();
-    };
-
-    // ========= Header =========
-    doc.save();
-    doc.rect(0, 0, PAGE_W, 90).fill(COLORS.faint);
-    doc.restore();
-
-    doc
-      .fillColor(COLORS.navy)
-      .font("Helvetica-Bold")
-      .fontSize(20)
-      .text("INVOICE", LEFT, 28);
-
-    // Company block (right)
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(12)
-      .fillColor(COLORS.navy)
-      .text("ApexBee Store", RIGHT - 220, 24, { width: 220, align: "right" });
-
-    doc
-      .font("Helvetica")
-      .fontSize(9)
-      .fillColor(COLORS.gray)
-      .text("support@apexbee.in", RIGHT - 220, 42, { width: 220, align: "right" })
-      .text("+91 12345 67890", RIGHT - 220, 56, { width: 220, align: "right" })
-      .text("GSTIN: 27ABCDE1234F1Z5", RIGHT - 220, 70, { width: 220, align: "right" });
-
-    // Invoice meta
-    const metaTop = 105;
-    doc
-      .font("Helvetica")
-      .fontSize(10)
-      .fillColor(COLORS.gray)
-      .text(`Invoice Date: ${toDate(order.createdAt)}`, LEFT, metaTop)
-      .text(`Order No: ${safe(order.orderNumber || order._id)}`, LEFT, metaTop + 16)
-      .text(`Invoice No: ${safe(order.invoiceNumber || order.orderNumber || order._id)}`, LEFT, metaTop + 32);
-
-    // Status pill
-    const payStatus = safe(order?.paymentDetails?.status || "").toLowerCase();
-    const isPaid = payStatus.includes("complete") || payStatus.includes("paid");
-    pill(
-      RIGHT - 120,
-      metaTop,
-      isPaid ? "PAID" : "PENDING",
-      isPaid ? "#dcfce7" : "#ffedd5",
-      isPaid ? COLORS.green : COLORS.accent
-    );
-
-    line(metaTop + 55);
-
-    // ========= Bill To / Ship To =========
-    const blockTop = metaTop + 70;
-
-    // Bill To
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .fillColor(COLORS.navy)
-      .text("Bill To", LEFT, blockTop);
-
-    doc
-      .font("Helvetica")
-      .fontSize(10)
-      .fillColor(COLORS.gray)
-      .text(customerName, LEFT, blockTop + 18)
-      .text(customerEmail, LEFT, blockTop + 34)
-      .text(customerPhone ? `Phone: ${customerPhone}` : "", LEFT, blockTop + 50);
-
-    // Ship To
-    const shipX = LEFT + 290;
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(11)
-      .fillColor(COLORS.navy)
-      .text("Ship To", shipX, blockTop);
-
-    if (ship) {
-      const shipLines = [
-        safe(ship.name || customerName),
-        safe(ship.address),
-        `${safe(ship.city)}, ${safe(ship.state)} - ${safe(ship.pincode)}`,
-        ship.phone ? `Phone: ${safe(ship.phone)}` : "",
-      ].filter(Boolean);
-
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor(COLORS.gray)
-        .text(shipLines.join("\n"), shipX, blockTop + 18, { width: RIGHT - shipX });
-    } else {
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor(COLORS.gray)
-        .text("—", shipX, blockTop + 18);
-    }
-
-    line(blockTop + 95);
-
-    // ========= Items Table =========
-    let y = blockTop + 110;
-
-    // Table header background
-    doc.save();
-    doc.roundedRect(LEFT, y, RIGHT - LEFT, 26, 8).fill(COLORS.faint);
-    doc.restore();
-
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(10)
-      .fillColor(COLORS.navy)
-      .text("Item", LEFT + 10, y + 7)
-      .text("Qty", LEFT + 310, y + 7, { width: 40, align: "right" })
-      .text("Price", LEFT + 360, y + 7, { width: 80, align: "right" })
-      .text("Amount", RIGHT - 10 - 90, y + 7, { width: 90, align: "right" });
-
-    y += 36;
-
-    const items = Array.isArray(order.orderItems) ? order.orderItems : [];
-
-    const ensureSpace = (need = 80) => {
-      if (y + need > doc.page.height - 90) {
-        doc.addPage();
-        y = doc.page.margins.top;
-      }
-    };
-
-    items.forEach((item) => {
-      ensureSpace(40);
-
-      const name = safe(item?.name || item?.productId?.name || "Item");
-      const sku = safe(item?.productId?.sku || item?.sku || "");
-      const qty = Number(item?.quantity || 0);
-      const price = Number(item?.price || 0);
-      const amount = price * qty;
-
-      // row
-      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(name, LEFT + 10, y, { width: 280 });
-      if (sku) {
-        doc.font("Helvetica").fontSize(8).fillColor(COLORS.gray).text(`SKU: ${sku}`, LEFT + 10, y + 14);
-      }
-
-      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(String(qty), LEFT + 310, y, { width: 40, align: "right" });
-      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(formatINR(price), LEFT + 360, y, { width: 80, align: "right" });
-      doc.font("Helvetica").fontSize(10).fillColor(COLORS.navy).text(formatINR(amount), RIGHT - 10 - 90, y, { width: 90, align: "right" });
-
-      // light divider
-      line(y + 28);
-      y += 36;
+    const barcodePng = await bwipjs.toBuffer({
+      bcid: "code128",
+      text: orderNumber,
+      scale: 2,
+      height: 12,
+      includetext: true,
+      textxalign: "center",
     });
+    const barcodeDataUri = `data:image/png;base64,${barcodePng.toString("base64")}`;
 
-    // ========= Summary =========
-    ensureSpace(160);
+    const logoDataUri = readFileAsDataUri(COMPANY.logoPath);
 
-    const summaryX = LEFT + 310;
-    const summaryW = RIGHT - summaryX;
-
+    // ✅ GST (overall) — if you want product-wise GST tell me, I’ll update.
+    const DEFAULT_GST_PERCENT = Number(order?.orderSummary?.gstPercent || 0); // if stored
     const subtotal = Number(order?.orderSummary?.subtotal || 0);
-    const shipping = Number(order?.orderSummary?.shipping || 0);
     const discount = Number(order?.orderSummary?.discount || 0);
-    const tax = Number(order?.orderSummary?.tax || 0);
-    const total = Number(order?.orderSummary?.total || order?.orderSummary?.grandTotal || 0);
+    const taxableValue = Math.max(0, subtotal - discount);
 
-    const row = (label, value, bold = false) => {
-      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(bold ? 11 : 10).fillColor(COLORS.gray).text(label, summaryX, y, { width: summaryW - 110 });
-      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(bold ? 11 : 10).fillColor(COLORS.navy).text(value, RIGHT - 10 - 100, y, { width: 100, align: "right" });
-      y += 18;
-    };
+    const taxPercent = DEFAULT_GST_PERCENT;
+    const gstAmount = (taxPercent / 100) * taxableValue;
+    const cgst = isSameState ? gstAmount / 2 : 0;
+    const sgst = isSameState ? gstAmount / 2 : 0;
+    const igst = !isSameState ? gstAmount : 0;
 
-    // box
-    doc.save();
-    doc.roundedRect(summaryX - 10, y - 10, summaryW + 10, 110, 10).strokeColor(COLORS.light).lineWidth(1).stroke();
-    doc.restore();
+    const html = buildInvoiceHTML({
+      order,
+      orderNumber,
+      invoiceNumber,
+      isSameState,
+      taxPercent,
+      cgst,
+      sgst,
+      igst,
+      qrDataUri,
+      barcodeDataUri,
+      logoDataUri,
+    });
 
-    row("Subtotal", formatINR(subtotal));
-    if (shipping > 0) row("Shipping", formatINR(shipping));
-    if (discount > 0) row("Discount", `- ${formatINR(discount)}`);
-    if (tax > 0) row("Tax", formatINR(tax));
+    // ✅ Puppeteer render
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
 
-    line(y + 2);
-    y += 10;
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0" });
 
-    doc.font("Helvetica-Bold").fontSize(12).fillColor(COLORS.navy).text("Total", summaryX, y, { width: summaryW - 110 });
-    doc.font("Helvetica-Bold").fontSize(12).fillColor(COLORS.navy).text(formatINR(total), RIGHT - 10 - 100, y, { width: 100, align: "right" });
-    y += 26;
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "14mm", bottom: "14mm", left: "12mm", right: "12mm" },
+    });
 
-    // ========= Payment Details =========
-    ensureSpace(90);
+    const filename = `invoice-${orderNumber}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
 
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(COLORS.navy).text("Payment Details", LEFT, y);
-    y += 16;
-
-    doc.font("Helvetica").fontSize(10).fillColor(COLORS.gray).text(`Method: ${safe(order?.paymentDetails?.method || "").toUpperCase()}`, LEFT, y);
-    y += 14;
-    doc.text(`Status: ${safe(order?.paymentDetails?.status || "")}`, LEFT, y);
-    y += 14;
-
-    const txn = safe(order?.paymentDetails?.transactionId || "");
-    if (txn) {
-      doc.text(`Transaction ID: ${txn}`, LEFT, y);
-      y += 14;
+    if (req.query.download === "1") {
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    } else {
+      res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     }
 
-    // ========= Footer =========
-    const footerY = doc.page.height - 60;
-    line(footerY - 10);
-
-    doc
-      .font("Helvetica")
-      .fontSize(9)
-      .fillColor(COLORS.gray)
-      .text("Thank you for your business!", LEFT, footerY, { width: RIGHT - LEFT, align: "center" });
-
-    doc
-      .font("Helvetica")
-      .fontSize(7.5)
-      .fillColor(COLORS.gray)
-      .text("Terms: Goods sold are not returnable unless damaged during shipping.", LEFT, footerY + 14, {
-        width: RIGHT - LEFT,
-        align: "center",
-      });
-
-    doc.end();
-  } catch (error) {
-    console.error("Generate invoice error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to generate invoice",
-      error: error.message,
-    });
+    return res.end(pdfBuffer);
+  } catch (err) {
+    console.error("invoice html->pdf error:", err);
+    return res.status(500).json({ success: false, message: "Failed to generate invoice", error: err.message });
+  } finally {
+    if (browser) await browser.close().catch(() => {});
   }
 });
-
 app.patch('/api/user/profile/:userId', auth, async (req, res) => {
   try {
     const allowedUpdates = ['name', 'phone', 'dateOfBirth', 'gender', 'bio', 'avatar'];
@@ -7038,9 +7137,10 @@ app.post("/api/clear/cart", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+import shiprocketRoutes from "./routes/shiprocketRoutes.js";
 
 console.log("MONGO_URI loaded:", !!process.env.MONGO_URI);
-
+app.use("/api/shiprocket", shiprocketRoutes);
 app.use("/uploads", express.static("uploads"));
 
 app.listen(5000, () => console.log("Server running on port 5000"));

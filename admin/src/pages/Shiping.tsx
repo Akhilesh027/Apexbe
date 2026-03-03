@@ -1,14 +1,10 @@
 // src/pages/admin/ShippingAdmin.tsx
 // ✅ Admin Shipping Management (NO AppLayout)
-// ✅ Tabs: To Ship / Pickup / In Transit / Delivered / Delayed / RTO / Cancelled
-// ✅ Filters + Search
-// ✅ Desktop table + Mobile cards
-// ✅ Details Dialog (responsive)
-// NOTE: Replace mockRows with API later.
+// ✅ Now: Fetch orders from API + Shiprocket shipment actions
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Search,
   Truck,
@@ -27,6 +23,7 @@ import {
   AlertTriangle,
   Store,
   ShoppingCart,
+  Loader2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -82,10 +79,9 @@ type ShipmentStatusLabel =
 type TimelineItem = { title: string; date: string; note?: string };
 
 type ShipmentRow = {
-  id: string;
-  orderId: string;
+  id: string; // row id
+  orderId: string; // orderNumber
 
-  // Admin extras
   vendorName: string;
   vendorId?: string;
 
@@ -102,6 +98,7 @@ type ShipmentRow = {
 
   partner: string;
   awb?: string;
+  shipmentId?: string;
 
   status: ShippingStatus;
   statusLabel: ShipmentStatusLabel;
@@ -122,6 +119,12 @@ type ShipmentRow = {
   timeline: TimelineItem[];
 };
 
+// --------------------
+// Config
+// --------------------
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
+const ADMIN_TOKEN_KEY = "admin_token"; // adjust if you use another key
+
 const STATUS_TABS: ShippingStatus[] = [
   "To Ship",
   "Ready for Pickup",
@@ -135,8 +138,26 @@ const STATUS_TABS: ShippingStatus[] = [
 const PARTNERS = ["All", "Delhivery", "Shiprocket", "BlueDart", "DTDC", "Ecom Express"];
 const DATE_RANGES = ["Today", "Last 7 days", "Last 30 days", "Custom"];
 
-const money = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+const money = (n: number) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
 
+function authHeaders() {
+  const token = localStorage.getItem(ADMIN_TOKEN_KEY);
+  return token
+    ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+    : { "Content-Type": "application/json" };
+}
+
+// ✅ Change this to match your backend orders route
+const ORDERS_API = (tab: ShippingStatus, dateRange: string) => {
+  const qs = new URLSearchParams();
+  qs.set("shipTab", tab);
+  qs.set("dateRange", dateRange);
+  return `${API_BASE}/api/admin/orders?${qs.toString()}`;
+};
+
+// --------------------
+// UI helpers
+// --------------------
 const statusBadge = (status: ShippingStatus) => {
   switch (status) {
     case "Delivered":
@@ -193,108 +214,116 @@ const statusBadge = (status: ShippingStatus) => {
   }
 };
 
-const mockRows: ShipmentRow[] = [
-  {
-    id: "1",
-    orderId: "APX-ORD-10231",
-    vendorName: "ApexBee Fruits",
-    customerName: "Guru Swamy",
-    phone: "9XXXXXXXXX",
-    city: "Hyderabad",
-    state: "Telangana",
-    pincode: "500081",
-    itemsCount: 2,
-    qty: 3,
-    orderValue: 1899,
-    payment: "Prepaid",
-    partner: "Delhivery",
-    awb: "DLV123456789",
-    status: "To Ship",
-    statusLabel: "Ready to Ship",
-    expectedDelivery: "Mar 03, 2026",
-    lastUpdate: "Today, 11:20 AM",
-    slaBreach: false,
-    addressLine: "Hitech City, Madhapur",
-    landmark: "Near Metro Station",
+// --------------------
+// Mapping: Order -> ShipmentRow
+// --------------------
+// ✅ Adjust this mapping to YOUR order schema
+function mapOrderToRow(o: any): ShipmentRow {
+  const orderNumber = o.orderNumber || o.orderId || String(o._id);
+
+  const addr = o.address || o.shippingAddress || {};
+  const items = Array.isArray(o.items) ? o.items : Array.isArray(o.products) ? o.products : [];
+
+  const qty = items.reduce((sum: number, it: any) => sum + Number(it.qty || it.quantity || 1), 0);
+
+  // shiprocket info stored on order?
+  const sr = o.shiprocket || o.shipping || {};
+
+  // Derive tab status from shiprocket status (best effort)
+  const rawStatus = String(sr.status || o.shippingStatus || o.status || "").toLowerCase();
+
+  const tabStatus: ShippingStatus =
+    rawStatus.includes("deliver") ? "Delivered"
+    : rawStatus.includes("transit") || rawStatus.includes("shipped") ? "In Transit"
+    : rawStatus.includes("pickup") || rawStatus.includes("ready") ? "Ready for Pickup"
+    : rawStatus.includes("delay") ? "Delayed"
+    : rawStatus.includes("rto") || rawStatus.includes("fail") ? "RTO / Failed"
+    : rawStatus.includes("cancel") ? "Cancelled"
+    : "To Ship";
+
+  const label: ShipmentStatusLabel =
+    tabStatus === "Delivered" ? "Delivered"
+    : tabStatus === "In Transit" ? "In Transit"
+    : tabStatus === "Ready for Pickup" ? "Pickup Scheduled"
+    : tabStatus === "Delayed" ? "Delayed"
+    : tabStatus === "RTO / Failed" ? "RTO Initiated"
+    : tabStatus === "Cancelled" ? "Cancelled"
+    : sr.shipment_id ? "Ready to Ship"
+    : "Pending Packaging";
+
+  const createdAt = o.createdAt ? new Date(o.createdAt) : new Date();
+  const updatedAt = o.updatedAt ? new Date(o.updatedAt) : createdAt;
+
+  const formatDate = (d: Date) =>
+    d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
+  const formatDateTime = (d: Date) =>
+    d.toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+  return {
+    id: String(o._id || orderNumber),
+    orderId: orderNumber,
+
+    vendorName: o.vendor?.name || o.vendorName || "—",
+    vendorId: o.vendor?._id || o.vendorId,
+
+    customerName: addr.name || o.customerName || o.userName || "Customer",
+    phone: String(addr.phone || o.phone || ""),
+    city: addr.city || "",
+    state: addr.state || "",
+    pincode: String(addr.pincode || ""),
+
+    itemsCount: items.length || 0,
+    qty,
+    orderValue: Number(o.totalAmount || o.total || o.grandTotal || 0),
+    payment: String(o.paymentMethod || o.payment || "").toUpperCase().includes("COD")
+      ? "COD"
+      : "Prepaid",
+
+    partner: sr.courier_name || sr.partner || (sr.shipment_id ? "Shiprocket" : "—"),
+    awb: sr.awb_code || sr.awb,
+    shipmentId: sr.shipment_id ? String(sr.shipment_id) : undefined,
+
+    status: tabStatus,
+    statusLabel: label,
+
+    expectedDelivery: sr.expected_delivery_date
+      ? String(sr.expected_delivery_date)
+      : formatDate(new Date(createdAt.getTime() + 3 * 24 * 60 * 60 * 1000)), // fallback +3d
+
+    lastUpdate: formatDateTime(updatedAt),
+    slaBreach: Boolean(o.slaBreach || sr.slaBreach),
+
+    addressLine: addr.line1 || addr.addressLine || addr.address || "",
+    landmark: addr.landmark,
+
     package: {
-      deadWeightKg: 0.8,
-      dimensionsCm: { l: 25, w: 18, h: 10 },
-      packageType: "Box",
+      deadWeightKg: Number(o.box?.weight || o.package?.weight || 0.5),
+      dimensionsCm: {
+        l: Number(o.box?.length || o.package?.length || 10),
+        w: Number(o.box?.breadth || o.package?.breadth || 10),
+        h: Number(o.box?.height || o.package?.height || 5),
+      },
+      packageType: Number(o.box?.weight || 0) > 0.7 ? "Box" : "Envelope",
     },
-    timeline: [
-      { title: "Order Confirmed", date: "Feb 27, 2026 10:10 AM" },
-      { title: "Packed", date: "Feb 27, 2026 11:20 AM" },
-    ],
-  },
-  {
-    id: "2",
-    orderId: "APX-ORD-10232",
-    vendorName: "FreshKart",
-    customerName: "Akhil Reddy",
-    phone: "8XXXXXXXXX",
-    city: "Warangal",
-    state: "Telangana",
-    pincode: "506002",
-    itemsCount: 1,
-    qty: 1,
-    orderValue: 799,
-    payment: "COD",
-    partner: "Shiprocket",
-    awb: "SR987654321",
-    status: "In Transit",
-    statusLabel: "In Transit",
-    expectedDelivery: "Mar 02, 2026",
-    lastUpdate: "Yesterday, 8:05 PM",
-    slaBreach: true,
-    addressLine: "Hanamkonda",
-    package: {
-      deadWeightKg: 0.4,
-      dimensionsCm: { l: 20, w: 15, h: 8 },
-      packageType: "Envelope",
-    },
-    timeline: [
-      { title: "Order Confirmed", date: "Feb 26, 2026 04:12 PM" },
-      { title: "Pickup Scheduled", date: "Feb 26, 2026 06:00 PM" },
-      { title: "Picked Up", date: "Feb 26, 2026 08:30 PM" },
-      { title: "In Transit", date: "Feb 27, 2026 10:15 AM" },
-    ],
-  },
-  {
-    id: "3",
-    orderId: "APX-ORD-10233",
-    vendorName: "Devotional Store",
-    customerName: "Priya",
-    phone: "7XXXXXXXXX",
-    city: "Vijayawada",
-    state: "Andhra Pradesh",
-    pincode: "520001",
-    itemsCount: 3,
-    qty: 5,
-    orderValue: 3299,
-    payment: "Prepaid",
-    partner: "BlueDart",
-    status: "Delivered",
-    statusLabel: "Delivered",
-    expectedDelivery: "Feb 27, 2026",
-    lastUpdate: "Feb 27, 2026 06:40 PM",
-    slaBreach: false,
-    addressLine: "MG Road",
-    package: {
-      deadWeightKg: 1.2,
-      dimensionsCm: { l: 30, w: 22, h: 12 },
-      packageType: "Box",
-    },
-    timeline: [
-      { title: "Order Confirmed", date: "Feb 24, 2026 02:10 PM" },
-      { title: "Pickup Scheduled", date: "Feb 24, 2026 05:00 PM" },
-      { title: "Picked Up", date: "Feb 24, 2026 07:15 PM" },
-      { title: "Out for Delivery", date: "Feb 27, 2026 10:30 AM" },
-      { title: "Delivered", date: "Feb 27, 2026 06:40 PM" },
-    ],
-  },
-];
+
+    timeline: Array.isArray(sr.timeline)
+      ? sr.timeline
+      : [
+          { title: "Order Created", date: formatDateTime(createdAt) },
+          ...(sr.shipment_id ? [{ title: "Shipment Created", date: formatDateTime(updatedAt) }] : []),
+        ],
+  };
+}
 
 function filteredRows(
+  rows: ShipmentRow[],
   tab: ShippingStatus,
   q: string,
   partner: string,
@@ -303,7 +332,7 @@ function filteredRows(
 ) {
   const query = q.trim().toLowerCase();
 
-  return mockRows
+  return rows
     .filter((r) => r.status === tab)
     .filter((r) => (partner === "All" ? true : r.partner === partner))
     .filter((r) => (paymentFilter === "All" ? true : r.payment === paymentFilter))
@@ -316,6 +345,7 @@ function filteredRows(
         r.customerName,
         r.phone,
         r.awb || "",
+        r.shipmentId || "",
         r.city,
         r.state,
         r.pincode,
@@ -336,16 +366,21 @@ export default function ShippingAdmin() {
   const [paymentFilter, setPaymentFilter] = useState<"All" | PaymentType>("All");
   const [slaOnly, setSlaOnly] = useState(false);
 
+  // data
+  const [allRows, setAllRows] = useState<ShipmentRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [err, setErr] = useState<string>("");
+
   // selection
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+
   const rows = useMemo(
-    () => filteredRows(tab, q, partner, paymentFilter, slaOnly),
-    [tab, q, partner, paymentFilter, slaOnly]
+    () => filteredRows(allRows, tab, q, partner, paymentFilter, slaOnly),
+    [allRows, tab, q, partner, paymentFilter, slaOnly]
   );
 
-  const allSelected = useMemo(() => {
-    return rows.length > 0 && rows.every((r) => selected[r.id]);
-  }, [rows, selected]);
+  const allSelected = useMemo(() => rows.length > 0 && rows.every((r) => selected[r.id]), [rows, selected]);
 
   const toggleAll = () => {
     const next: Record<string, boolean> = { ...selected };
@@ -354,7 +389,8 @@ export default function ShippingAdmin() {
     setSelected(next);
   };
 
-  const selectedCount = useMemo(() => rows.filter((r) => selected[r.id]).length, [rows, selected]);
+  const selectedRows = useMemo(() => rows.filter((r) => selected[r.id]), [rows, selected]);
+  const selectedCount = selectedRows.length;
 
   // details dialog
   const [open, setOpen] = useState(false);
@@ -365,6 +401,107 @@ export default function ShippingAdmin() {
     setOpen(true);
   };
 
+  // --------------------
+  // API calls
+  // --------------------
+  const fetchOrders = async () => {
+    try {
+      setErr("");
+      setLoading(true);
+
+      const res = await fetch(ORDERS_API(tab, dateRange), {
+        method: "GET",
+        headers: authHeaders(),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) throw new Error(json?.message || "Failed to fetch orders");
+
+      const list = Array.isArray(json?.data) ? json.data : Array.isArray(json?.orders) ? json.orders : [];
+      const mapped = list.map(mapOrderToRow);
+
+      setAllRows(mapped);
+      setSelected({}); // reset selection on refresh/tab change
+    } catch (e: any) {
+      setErr(e?.message || "Error fetching orders");
+      setAllRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, dateRange]);
+
+  // Create shipment for one order
+  const createShipment = async (orderMongoIdOrOrderId: string) => {
+    const res = await fetch(`${API_BASE}/api/shiprocket/create-shipment/${orderMongoIdOrOrderId}`, {
+      method: "POST",
+      headers: authHeaders(),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) throw new Error(json?.message || "Create shipment failed");
+    return json?.data || json;
+  };
+
+  // Bulk: create shipment for all selected that don't have shipmentId
+  const bulkCreateShipments = async () => {
+    const targets = selectedRows.filter((r) => !r.shipmentId);
+    if (targets.length === 0) return;
+
+    setActionLoading(true);
+    try {
+      for (const r of targets) {
+        // ✅ If your backend expects Mongo _id, pass r.id; if expects orderId, pass r.orderId
+        await createShipment(r.id);
+      }
+      await fetchOrders();
+    } catch (e: any) {
+      setErr(e?.message || "Bulk create failed");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const printLabels = async () => {
+    const shipmentIds = selectedRows.map((r) => r.shipmentId).filter(Boolean) as string[];
+    if (shipmentIds.length === 0) {
+      setErr("Select shipments that already have shipment_id to print labels.");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/shiprocket/label`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ shipmentIds }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) throw new Error(json?.message || "Label generation failed");
+
+      // Shiprocket typically returns a URL for label PDF
+      const url =
+        json?.data?.label_url ||
+        json?.data?.label_created?.[0] ||
+        json?.data?.label ||
+        json?.label_url;
+
+      if (url) window.open(url, "_blank");
+      else setErr("Label generated but URL not found in response.");
+    } catch (e: any) {
+      setErr(e?.message || "Print label failed");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // --------------------
+  // Render
+  // --------------------
   return (
     <main className="mx-auto w-[min(1200px,calc(100%-48px))] py-8">
       {/* Header */}
@@ -375,21 +512,28 @@ export default function ShippingAdmin() {
         </p>
       </div>
 
+      {/* Errors */}
+      {err ? (
+        <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          {err}
+        </div>
+      ) : null}
+
       {/* Top actions */}
       <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-center justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <Button className="gap-2">
-            <Plus className="h-4 w-4" />
+          <Button className="gap-2" onClick={bulkCreateShipments} disabled={actionLoading || selectedCount === 0}>
+            {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             Create Shipment
           </Button>
 
-          <Button variant="secondary" className="gap-2">
-            <Printer className="h-4 w-4" />
+          <Button variant="secondary" className="gap-2" onClick={printLabels} disabled={actionLoading || selectedCount === 0}>
+            {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
             Print Label
           </Button>
 
-          <Button variant="outline" className="gap-2">
-            <RefreshCw className="h-4 w-4" />
+          <Button variant="outline" className="gap-2" onClick={fetchOrders} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Refresh
           </Button>
 
@@ -505,7 +649,11 @@ export default function ShippingAdmin() {
                 </CardHeader>
 
                 <CardContent className="pt-0">
-                  {rows.length === 0 ? (
+                  {loading ? (
+                    <div className="py-12 text-center text-muted-foreground flex items-center justify-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading orders...
+                    </div>
+                  ) : rows.length === 0 ? (
                     <EmptyState tab={tab} />
                   ) : (
                     <>
@@ -603,7 +751,12 @@ export default function ShippingAdmin() {
 
                                 <td className="p-3 text-right">
                                   <div className="flex justify-end gap-2">
-                                    <Button size="sm" variant="outline" onClick={() => openDetails(r)} className="gap-1.5">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => openDetails(r)}
+                                      className="gap-1.5"
+                                    >
                                       <FileText className="h-4 w-4" />
                                       View
                                     </Button>
@@ -617,24 +770,51 @@ export default function ShippingAdmin() {
                                       <DropdownMenuContent align="end" className="w-56">
                                         <DropdownMenuLabel>Admin Actions</DropdownMenuLabel>
                                         <DropdownMenuSeparator />
-                                        <DropdownMenuItem>
+
+                                        <DropdownMenuItem
+                                          onClick={async () => {
+                                            setActionLoading(true);
+                                            setErr("");
+                                            try {
+                                              await createShipment(r.id);
+                                              await fetchOrders();
+                                            } catch (e: any) {
+                                              setErr(e?.message || "Generate shipment failed");
+                                            } finally {
+                                              setActionLoading(false);
+                                            }
+                                          }}
+                                        >
                                           <Plus className="mr-2 h-4 w-4" />
-                                          Generate AWB
+                                          Create/Generate Shipment
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem>
+
+                                        <DropdownMenuItem
+                                          onClick={() => {
+                                            // You can later connect pickup scheduling endpoint here
+                                            setErr("Pickup scheduling API not wired yet.");
+                                          }}
+                                        >
                                           <CalendarDays className="mr-2 h-4 w-4" />
                                           Schedule Pickup
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem>
+
+                                        <DropdownMenuItem
+                                          onClick={async () => {
+                                            if (!r.shipmentId) return setErr("Create shipment first.");
+                                            setSelected({ [r.id]: true });
+                                            await printLabels();
+                                          }}
+                                        >
                                           <Printer className="mr-2 h-4 w-4" />
                                           Print Label
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem>
-                                          <Truck className="mr-2 h-4 w-4" />
-                                          Mark as Shipped
-                                        </DropdownMenuItem>
+
                                         <DropdownMenuSeparator />
-                                        <DropdownMenuItem className="text-destructive focus:text-destructive">
+                                        <DropdownMenuItem
+                                          className="text-destructive focus:text-destructive"
+                                          onClick={() => setErr("Cancel shipment API not wired yet.")}
+                                        >
                                           <Ban className="mr-2 h-4 w-4" />
                                           Cancel Shipment
                                         </DropdownMenuItem>
@@ -691,8 +871,25 @@ export default function ShippingAdmin() {
                                 <Button size="sm" variant="outline" className="flex-1" onClick={() => openDetails(r)}>
                                   View
                                 </Button>
-                                <Button size="sm" variant="secondary" className="flex-1">
-                                  Actions
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  className="flex-1"
+                                  onClick={async () => {
+                                    setActionLoading(true);
+                                    setErr("");
+                                    try {
+                                      await createShipment(r.id);
+                                      await fetchOrders();
+                                    } catch (e: any) {
+                                      setErr(e?.message || "Create shipment failed");
+                                    } finally {
+                                      setActionLoading(false);
+                                    }
+                                  }}
+                                  disabled={actionLoading}
+                                >
+                                  {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create Shipment"}
                                 </Button>
                               </div>
                             </CardContent>
@@ -708,16 +905,16 @@ export default function ShippingAdmin() {
                             <span className="text-muted-foreground"> — bulk actions</span>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            <Button size="sm" variant="secondary" className="gap-2">
-                              <Plus className="h-4 w-4" />
-                              Generate AWB
+                            <Button size="sm" variant="secondary" className="gap-2" onClick={bulkCreateShipments} disabled={actionLoading}>
+                              {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                              Create Shipments
                             </Button>
-                            <Button size="sm" variant="secondary" className="gap-2">
+                            <Button size="sm" variant="secondary" className="gap-2" onClick={() => setErr("Pickup bulk API not wired yet.")}>
                               <CalendarDays className="h-4 w-4" />
                               Schedule Pickup
                             </Button>
-                            <Button size="sm" variant="secondary" className="gap-2">
-                              <Printer className="h-4 w-4" />
+                            <Button size="sm" variant="secondary" className="gap-2" onClick={printLabels} disabled={actionLoading}>
+                              {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
                               Print Labels
                             </Button>
                           </div>
@@ -758,6 +955,7 @@ export default function ShippingAdmin() {
                     <InfoItem label="Order ID" value={active.orderId} />
                     <InfoItem label="Vendor" value={active.vendorName} />
                     <InfoItem label="Shipping Partner" value={active.partner} />
+                    <InfoItem label="Shipment ID" value={active.shipmentId || "Not created"} />
                     <InfoItem label="Tracking (AWB)" value={active.awb || "Not generated"} />
                     <InfoItem label="Current Status" value={active.statusLabel} />
                     <InfoItem label="Expected Delivery" value={active.expectedDelivery} />
@@ -769,19 +967,50 @@ export default function ShippingAdmin() {
                   <Separator className="my-4" />
 
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" className="gap-2">
-                      <Plus className="h-4 w-4" />
-                      Generate AWB
+                    <Button
+                      variant="secondary"
+                      className="gap-2"
+                      disabled={actionLoading}
+                      onClick={async () => {
+                        setActionLoading(true);
+                        setErr("");
+                        try {
+                          await createShipment(active.id);
+                          await fetchOrders();
+                        } catch (e: any) {
+                          setErr(e?.message || "Create shipment failed");
+                        } finally {
+                          setActionLoading(false);
+                        }
+                      }}
+                    >
+                      {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                      Create Shipment
                     </Button>
-                    <Button variant="secondary" className="gap-2">
+
+                    <Button
+                      variant="secondary"
+                      className="gap-2"
+                      onClick={() => setErr("Pickup scheduling API not wired yet.")}
+                    >
                       <CalendarDays className="h-4 w-4" />
                       Schedule Pickup
                     </Button>
-                    <Button variant="secondary" className="gap-2">
+
+                    <Button
+                      variant="secondary"
+                      className="gap-2"
+                      onClick={async () => {
+                        if (!active.shipmentId) return setErr("Create shipment first.");
+                        setSelected({ [active.id]: true });
+                        await printLabels();
+                      }}
+                    >
                       <Printer className="h-4 w-4" />
                       Print Label
                     </Button>
-                    <Button variant="outline" className="gap-2">
+
+                    <Button variant="outline" className="gap-2" onClick={() => setErr("Mark shipped API not wired yet.")}>
                       <Truck className="h-4 w-4" />
                       Mark as Shipped
                     </Button>
@@ -823,9 +1052,7 @@ export default function ShippingAdmin() {
                       label="Dimensions"
                       value={`${active.package.dimensionsCm.l} × ${active.package.dimensionsCm.w} × ${active.package.dimensionsCm.h} cm`}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Volumetric weight calculation can be added later.
-                    </p>
+                    <p className="text-xs text-muted-foreground">Volumetric weight calculation can be added later.</p>
                   </CardContent>
                 </Card>
               </div>
@@ -862,7 +1089,7 @@ export default function ShippingAdmin() {
             <Button variant="outline" onClick={() => setOpen(false)}>
               Close
             </Button>
-            <Button className="gap-2">
+            <Button className="gap-2" onClick={() => setErr("Save updates API not wired yet.")}>
               <BadgeCheck className="h-4 w-4" />
               Save Updates
             </Button>

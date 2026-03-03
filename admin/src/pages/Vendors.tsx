@@ -5,13 +5,13 @@ const Vendors = () => {
   const [vendors, setVendors] = useState([]);
 
   useEffect(() => {
-    axios.get("https://api.apexbee.in/api/admin/vendors")
+    axios.get("http://localhost:5000/api/admin/vendors")
       .then(res => setVendors(res.data.vendors))
       .catch(err => console.error(err));
   }, []);
 
   const updateStatus = (vendorId, status) => {
-    axios.put(`https://api.apexbee.in/api/admin/vendor/${vendorId}/status`, { status })
+    axios.put(`http://localhost:5000/api/admin/vendor/${vendorId}/status`, { status })
       .then(res => {
         setVendors(prev => prev.map(v => v._id === vendorId ? { ...v, status } : v));
       })

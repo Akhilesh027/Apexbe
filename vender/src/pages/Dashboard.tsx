@@ -29,7 +29,7 @@ useEffect(() => {
         return;
       }
 
-      const res = await fetch(`https://api.apexbee.in/api/dashboard/${vendorId}`); // Updated endpoint with vendorId
+      const res = await fetch(`http://localhost:5000/api/dashboard/${vendorId}`); // Updated endpoint with vendorId
       const data = await res.json();
 
       if (res.ok && data.success) {

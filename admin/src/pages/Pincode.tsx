@@ -28,7 +28,7 @@ type PincodeItem = {
   createdAt?: string;
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE || "https://api.apexbee.in";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
 
 // adjust to your backend paths
 const ADMIN_PINCODES = `${API_BASE}/api/admin/pincodes`;

@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { GoogleLogin } from "@react-oauth/google";
 
-const API_BASE = "https://api.apexbee.in/api";
+const API_BASE = "http://localhost:5000/api";
 
 const Register = () => {
   const [formData, setFormData] = useState({

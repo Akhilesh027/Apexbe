@@ -39,7 +39,7 @@ interface ReferralHistory {
 
 // --- API Configuration ---
 // NOTE: Use environment variable in production (e.g., import.meta.env.VITE_API_URL)
-const API_BASE_URL = "https://api.apexbee.in"; 
+const API_BASE_URL = "http://localhost:5000"; 
 
 
 const Profile = () => {

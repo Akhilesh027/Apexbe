@@ -66,7 +66,7 @@ const ComingSoonAnimation = ({ isSubcategory }: { isSubcategory: boolean }) => (
 /** -----------------------------
  * Small helpers
  * ---------------------------- */
-const API_BASE = "https://api.apexbee.in/api";
+const API_BASE = "http://localhost:5000/api";
 
 function normalizeName(v?: string) {
   return (v || "").trim().toLowerCase();
