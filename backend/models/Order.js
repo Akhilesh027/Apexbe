@@ -169,7 +169,12 @@ const orderSchema = new mongoose.Schema({
       default: 'India'
     }
   },
-
+shiprocket: {
+  shipment_id: String,
+  awb_code: String,
+  courier_name: String,
+  status: String,
+},
   paymentDetails: {
     method: {
       type: String,
