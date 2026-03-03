@@ -21,7 +21,7 @@ import BankDetails from "./models/BankDetails.js";
 import Withdrawal from "./models/Withdrawal.js";
 import cookieParser from "cookie-parser";
 import googleAuth from "./routes/auth.js";
-import { sendOrderPlacedEmail } from "./utils/mailer.js"; // ✅ adjust path if needed
+import { sendOrderPlacedEmail,sendOrderStatusChangedEmail } from "./utils/mailer.js"; // ✅ adjust path if needed
 
 const app = express();
 
