@@ -26,7 +26,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = "https://api.apexbee.in/api";
 
 type WithdrawalStatus = "pending" | "approved" | "rejected" | "paid";
 

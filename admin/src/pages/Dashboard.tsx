@@ -20,7 +20,7 @@ const Dashboard = () => {
   // Fetch dashboard stats
   const fetchStats = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/admin/dashboard/stats");
+      const res = await axios.get("https://api.apexbee.in/api/admin/dashboard/stats");
       setStats(res.data);
     } catch (error) {
       console.error("Failed to fetch dashboard stats:", error);
@@ -30,7 +30,7 @@ const Dashboard = () => {
   // Fetch sales data for chart
   const fetchSalesData = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/admin/dashboard/sales");
+      const res = await axios.get("https://api.apexbee.in/api/admin/dashboard/sales");
       setSalesData(res.data);
     } catch (error) {
       console.error("Failed to fetch sales data:", error);
@@ -40,7 +40,7 @@ const Dashboard = () => {
   // Fetch recent activity
   const fetchRecentActivity = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/admin/dashboard/recent-activity");
+      const res = await axios.get("https://api.apexbee.in/api/admin/dashboard/recent-activity");
       setRecentActivity(res.data);
     } catch (error) {
       console.error("Failed to fetch recent activity:", error);

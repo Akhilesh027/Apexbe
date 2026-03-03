@@ -32,7 +32,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
  * POST /api/reviews                             -> { success, review }
  */
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = "https://api.apexbee.in/api";
 
 type OrderItem = {
   _id?: string;

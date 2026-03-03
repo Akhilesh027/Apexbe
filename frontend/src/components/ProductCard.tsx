@@ -34,7 +34,7 @@ const ProductCard = ({ product }: ProductCardProps) => {
 
       try {
         const res = await axios.get(
-          `http://localhost:5000/api/wishlist/status?userId=${user._id}&productId=${product._id}`
+          `https://api.apexbee.in/api/wishlist/status?userId=${user._id}&productId=${product._id}`
         );
         setIsWishlisted(res.data.isWishlisted);
       } catch (err) {
@@ -55,7 +55,7 @@ const ProductCard = ({ product }: ProductCardProps) => {
     }
 
     try {
-      const res = await axios.post("http://localhost:5000/api/wishlist/toggle", {
+      const res = await axios.post("https://api.apexbee.in/api/wishlist/toggle", {
         userId: user._id,
         productId: product._id,
       });
@@ -90,7 +90,7 @@ const ProductCard = ({ product }: ProductCardProps) => {
         vendorId: product.vendorId,
       };
 
-      const res = await axios.post("http://localhost:5000/api/cart/add", item);
+      const res = await axios.post("https://api.apexbee.in/api/cart/add", item);
 
       if (res.data.success) {
         alert("Added to cart successfully!");

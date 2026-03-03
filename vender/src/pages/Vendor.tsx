@@ -17,7 +17,7 @@ const VendorAccount = () => {
   useEffect(() => {
     const fetchVendor = async () => {
       try {
-        const res = await axios.get(`http://localhost:5000/api/vendor/${vendorId}`);
+        const res = await axios.get(`https://api.apexbee.in/api/vendor/${vendorId}`);
         setVendor(res.data.vendor);
       } catch (err) {
         console.error("Error fetching vendor:", err);

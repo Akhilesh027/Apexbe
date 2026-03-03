@@ -31,7 +31,7 @@ const OrderDetails = () => {
       if (!id || !token) return;
 
       try {
-        const res = await axios.get(`http://localhost:5000/api/orders/${id}`, {
+        const res = await axios.get(`https://api.apexbee.in/api/orders/${id}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         
@@ -67,7 +67,7 @@ const OrderDetails = () => {
     setUpdatingStatus(true);
     try {
       const res = await axios.put(
-        `http://localhost:5000/api/orders/${id}/status`,
+        `https://api.apexbee.in/api/orders/${id}/status`,
         { status: orderStatus },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -105,7 +105,7 @@ const OrderDetails = () => {
     setVerifyingPayment(true);
     try {
       const res = await axios.put(
-        `http://localhost:5000/api/orders/${id}/verify-payment`,
+        `https://api.apexbee.in/api/orders/${id}/verify-payment`,
         { 
           action,
           notes: verificationNotes 

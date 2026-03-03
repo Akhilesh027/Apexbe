@@ -18,7 +18,7 @@ const Businesses = () => {
   // Fetch businesses from backend
   const fetchBusinesses = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/admin/businesses");
+      const res = await axios.get("https://api.apexbee.in/api/admin/businesses");
       setBusinesses(res.data.businesses);
     } catch (err) {
       console.error(err);
@@ -47,7 +47,7 @@ const Businesses = () => {
   // Update business status
   const updateStatus = async (businessId, status) => {
     try {
-      await axios.put(`http://localhost:5000/api/admin/business/${businessId}/status`, { status });
+      await axios.put(`https://api.apexbee.in/api/admin/business/${businessId}/status`, { status });
 
       // Update frontend state
       setBusinesses((prev) =>

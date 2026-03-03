@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = "https://api.apexbee.in/api";
 const LOCATION_KEY = "user_location";
 
 type StoredLocation = {

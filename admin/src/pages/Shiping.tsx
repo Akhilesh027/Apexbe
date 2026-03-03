@@ -122,7 +122,7 @@ type ShipmentRow = {
 // --------------------
 // Config
 // --------------------
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://api.apexbee.in";
 const ADMIN_TOKEN_KEY = "admin_token"; // adjust if you use another key
 
 const STATUS_TABS: ShippingStatus[] = [

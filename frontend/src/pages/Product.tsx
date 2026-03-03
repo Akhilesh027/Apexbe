@@ -16,7 +16,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-const API_BASE = "http://localhost:5000/api"; // ✅ change if needed
+const API_BASE = "https://api.apexbee.in/api"; // ✅ change if needed
 
 type Category = {
   _id: string;

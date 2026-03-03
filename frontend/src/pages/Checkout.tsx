@@ -32,7 +32,7 @@ import Navbar from "@/components/Navbar";
 import { useToast } from "@/hooks/use-toast";
 import upi from "../Web images/Web images/upi.jpeg";
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = "https://api.apexbee.in/api";
 
 // ✅ Pincode validate endpoint
 const PINCODE_VALIDATE_API = `${API_BASE}/checkout/validate-pincode`;

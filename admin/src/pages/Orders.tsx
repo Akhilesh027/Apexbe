@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = "https://api.apexbee.in";
 const TOKEN_KEY = "token";
 
 const Orders = () => {
