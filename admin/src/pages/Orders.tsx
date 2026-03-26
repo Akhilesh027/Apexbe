@@ -45,7 +45,6 @@ import {
 import { toast } from "sonner";
 
 const API_BASE = "https://api.apexbee.in";
-const TOKEN_KEY = "token";
 
 const Orders = () => {
   const [orders, setOrders] = useState<any[]>([]);
@@ -59,95 +58,56 @@ const Orders = () => {
   const [shiprocketTrack, setShiprocketTrack] = useState<any>(null);
 
   // -----------------------------
-  // Helpers
-  // -----------------------------
-  const getToken = () => localStorage.getItem(TOKEN_KEY);
-
-  const authHeaders = () => {
-    const token = getToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
-
-  const fail401 = () => {
-    toast.error("Session expired. Please login again.");
-    localStorage.removeItem(TOKEN_KEY);
-    window.location.href = "/login";
-  };
-
-  const safe = (v: any, fallback = "") => (v == null ? fallback : v);
-
-  // -----------------------------
-  // Shiprocket APIs
+  // Shiprocket APIs (without auth)
   // -----------------------------
   const shiprocketCreateShipment = async (orderId: string) => {
-    const token = getToken();
-    if (!token) return fail401();
-
     const res = await fetch(`${API_BASE}/api/shiprocket/create-shipment/${orderId}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
     });
     const json = await res.json().catch(() => ({}));
-    if (res.status === 401) return fail401();
     if (!res.ok || json?.success === false) throw new Error(json?.message || "Create shipment failed");
     return json;
   };
 
   const shiprocketGenerateLabel = async (shipmentId: string) => {
-    const token = getToken();
-    if (!token) return fail401();
-
     const res = await fetch(`${API_BASE}/api/shiprocket/label`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shipmentIds: [shipmentId] }),
     });
     const json = await res.json().catch(() => ({}));
-    if (res.status === 401) return fail401();
     if (!res.ok || json?.success === false) throw new Error(json?.message || "Label generation failed");
     return json;
   };
 
   const shiprocketTrackShipment = async (shipmentId: string) => {
-    const token = getToken();
-    if (!token) return fail401();
-
     const res = await fetch(`${API_BASE}/api/shiprocket/track/${shipmentId}`, {
       method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
     });
     const json = await res.json().catch(() => ({}));
-    if (res.status === 401) return fail401();
     if (!res.ok || json?.success === false) throw new Error(json?.message || "Track failed");
     return json;
   };
 
   const shiprocketCancelShipment = async (shipmentId: string) => {
-    const token = getToken();
-    if (!token) return fail401();
-
     const res = await fetch(`${API_BASE}/api/shiprocket/cancel`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shipmentId }),
     });
     const json = await res.json().catch(() => ({}));
-    if (res.status === 401) return fail401();
     if (!res.ok || json?.success === false) throw new Error(json?.message || "Cancel shipment failed");
     return json;
   };
 
   // -----------------------------
-  // Fetch orders
+  // Fetch orders (without auth)
   // -----------------------------
   const fetchOrders = async () => {
     try {
       setLoading(true);
-      const token = getToken();
-
-      const { data } = await axios.get(`${API_BASE}/api/admin/orders`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const { data } = await axios.get(`${API_BASE}/api/admin/orders`);
 
       if (data.success) {
         setOrders(data.orders);
@@ -158,11 +118,7 @@ const Orders = () => {
       }
     } catch (error: any) {
       console.error(error);
-      if (error.response?.status === 401) {
-        fail401();
-      } else {
-        toast.error(error.response?.data?.message || "Failed to fetch orders");
-      }
+      toast.error(error.response?.data?.message || "Failed to fetch orders");
       setOrders([]);
     } finally {
       setLoading(false);
@@ -243,22 +199,19 @@ const Orders = () => {
   };
 
   // -----------------------------
-  // Update delivery status (AUTO shiprocket on shipped)
+  // Update delivery status (without auth)
   // -----------------------------
   const handleUpdateDeliveryStatus = async (orderId: string, newStatus: string) => {
     try {
       setUpdatingStatus(`delivery-${orderId}`);
-      const token = getToken();
-      if (!token) return fail401();
 
       const response = await fetch(`${API_BASE}/api/admin/orders/${orderId}/status`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
 
       const data = await response.json().catch(() => ({}));
-      if (response.status === 401) return fail401();
       if (!response.ok) throw new Error(data.message || "Failed to update status");
 
       toast.success(data.message || `Status updated to ${newStatus}`);
@@ -279,17 +232,13 @@ const Orders = () => {
         }));
       }
 
-      // 🚀 Auto create Shiprocket shipment when shipped
+      // Auto create Shiprocket shipment when shipped
       if (newStatus === "shipped") {
         try {
           setShiprocketLoading(`create-${orderId}`);
           const sr = await shiprocketCreateShipment(orderId);
-
           toast.success(sr?.message || "Shiprocket shipment created");
-
-          // refresh from backend to get shiprocket fields
-          await fetchOrders();
-
+          await fetchOrders(); // refresh to get shiprocket fields
           // keep dialog in sync
           const updated = orders.find((o) => o._id === orderId);
           if (updated) setSelectedOrder(updated);
@@ -308,22 +257,19 @@ const Orders = () => {
   };
 
   // -----------------------------
-  // Update payment status
+  // Update payment status (without auth)
   // -----------------------------
   const handleUpdatePaymentStatus = async (orderId: string, newStatus: string) => {
     try {
       setUpdatingStatus(`payment-${orderId}`);
-      const token = getToken();
-      if (!token) return fail401();
 
       const response = await fetch(`${API_BASE}/api/admin/orders/${orderId}/payment-status`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
 
       const data = await response.json().catch(() => ({}));
-      if (response.status === 401) return fail401();
       if (!response.ok) throw new Error(data.message || "Failed to update payment status");
 
       toast.success(data.message || `Payment status updated to ${newStatus}`);
@@ -348,21 +294,18 @@ const Orders = () => {
     }
   };
 
-  // Verify UPI payment (unchanged, but API_BASE)
+  // Verify UPI payment (without auth)
   const handleVerifyUPIPayment = async (orderId: string, verified: boolean, notes = "") => {
     try {
       setVerifyingPayment(true);
-      const token = getToken();
-      if (!token) return fail401();
 
       const response = await fetch(`${API_BASE}/api/orders/${orderId}/verify-payment`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ verified, notes }),
       });
 
       const data = await response.json().catch(() => ({}));
-      if (response.status === 401) return fail401();
       if (!response.ok) throw new Error(data.message || "Failed to verify payment");
 
       toast.success(data.message || `Payment ${verified ? "verified" : "rejected"} successfully`);
@@ -470,17 +413,14 @@ const Orders = () => {
     }
   };
 
-  // Download invoice (API_BASE)
+  // Safe helper for the above
+  const safe = (v: any, fallback = "") => (v == null ? fallback : v);
+
+  // Download invoice (without auth)
   const handleDownloadInvoice = async (orderId: string) => {
     try {
-      const token = getToken();
-      if (!token) return fail401();
+      const response = await fetch(`${API_BASE}/api/orders/${orderId}/invoice`);
 
-      const response = await fetch(`${API_BASE}/api/orders/${orderId}/invoice`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (response.status === 401) return fail401();
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || "Failed to download invoice");
@@ -512,9 +452,7 @@ const Orders = () => {
 
   const isLoading = (orderId: string, type: "delivery" | "payment") => updatingStatus === `${type}-${orderId}`;
 
-  // -----------------------------
-  // Columns (added shiprocket quick actions)
-  // -----------------------------
+  // Columns (unchanged except no auth)
   const columns = [
     {
       header: "Order ID",
