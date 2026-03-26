@@ -50,8 +50,10 @@ import Bussiness from "./models/Bussiness.js";
 import Form from "./models/Form.js";
 import Pincode from "./models/Pincode.js";
 import User from "./models/User.js";
+
 const normalizeId = (id) =>
   mongoose.Types.ObjectId.isValid(id) ? id : null;
+
 dotenv.config();
 cloudinary.api.ping()
   .then(() => {
@@ -4580,7 +4582,7 @@ app.put("/api/admin/business/:businessId/status", async (req, res) => {
     res.status(500).json({ error: "Server Error" });
   }
 });
-app.get('/api/user/profile/:userId', async (req, res) => {
+app.get('/api/user/profile/:userId', auth, async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).select('-password');
     if (!user) {
@@ -4591,7 +4593,7 @@ app.get('/api/user/profile/:userId', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-app.put('/api/user/profile/:userId', async (req, res) => {
+app.put('/api/user/profile/:userId', auth, async (req, res) => {
   try {
     const { name, phone, dateOfBirth, gender, bio } = req.body;
     
@@ -5885,7 +5887,7 @@ app.get("/api/orders/:orderId/invoice", async (req, res) => {
     try { if (browser) await browser.close(); } catch {}
   }
 });
-app.patch('/api/user/profile/:userId', async (req, res) => {
+app.patch('/api/user/profile/:userId', auth, async (req, res) => {
   try {
     const allowedUpdates = ['name', 'phone', 'dateOfBirth', 'gender', 'bio', 'avatar'];
     const updates = Object.keys(req.body);
@@ -5973,7 +5975,7 @@ const getCloudinaryUrl = (result) => {
 };
 
 // Upload payment proof endpoint
-app.post('/api/upload/payment-proof', upload.single('paymentProof'), async (req, res) => {
+app.post('/api/upload/payment-proof', auth, upload.single('paymentProof'), async (req, res) => {
   try {
     const { transactionId, upiId } = req.body;
     
@@ -6283,7 +6285,7 @@ app.post(
 );
 
 // Regular order creation (for wallet payments)
-app.post('/api/orders', async (req, res) => {
+app.post('/api/orders', auth, async (req, res) => {
   try {
     const orderData = req.body;
 
@@ -6337,7 +6339,7 @@ app.post('/api/orders', async (req, res) => {
 
 
 // Get order by ID
-app.get('/api/orders/:id', async (req, res) => {
+app.get('/api/orders/:id', auth, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
       .populate('userId', 'name email')
@@ -6365,7 +6367,7 @@ app.get('/api/orders/:id', async (req, res) => {
 });
 
 // Get orders by user
-app.get('/api/orders/user/:userId', async (req, res) => {
+app.get('/api/orders/user/:userId', auth, async (req, res) => {
   try {
     const orders = await Order.find({ userId: req.params.userId })
       .sort({ createdAt: -1 })
@@ -6386,7 +6388,7 @@ app.get('/api/orders/user/:userId', async (req, res) => {
 });
 
 // Verify UPI payment (admin endpoint)
-app.post('/api/orders/:id/verify-payment', async (req, res) => {
+app.post('/api/orders/:id/verify-payment', auth, async (req, res) => {
   try {
     const { verified, notes } = req.body;
     const adminId = req.user?.id; // Assuming user ID is in token
@@ -6451,7 +6453,7 @@ app.post('/api/orders/:id/verify-payment', async (req, res) => {
   }
 });
 
-app.get('/api/orders/pending-verification', async (req, res) => {
+app.get('/api/orders/pending-verification', auth, async (req, res) => {
   try {
     const orders = await Order.find({
       'paymentDetails.method': 'upi',
