@@ -24,12 +24,25 @@ import ReportsAnalytics from "./pages/Reports";
 import PromotionsAdmin from "./pages/Promotion";
 import ShippingAdmin from "./pages/Shiping";
 import SupportAdmin from "./pages/Support";
+import { useEffect, useState } from "react";
 
 const queryClient = new QueryClient();
 
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const isLoggedIn = localStorage.getItem('isAdminLoggedIn') === 'true';
-  return isLoggedIn ? <>{children}</> : <Navigate to="/login" />;
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const auth = localStorage.getItem("isAdminLoggedIn") === "true";
+    setIsLoggedIn(auth);
+  }, []);
+
+  // ⏳ Wait until localStorage is checked
+  if (isLoggedIn === null) {
+    return null; // or loader
+  }
+
+  return isLoggedIn ? <>{children}</> : <Navigate to="/login" replace />;
 };
 
 const App = () => (
@@ -43,9 +56,9 @@ const App = () => (
           <Route
             path="/*"
             element={
-              <ProtectedRoute>
+         
                 <DashboardLayout />
-              </ProtectedRoute>
+       
             }
           >
             <Route path="dashboard" element={<Dashboard />} />
