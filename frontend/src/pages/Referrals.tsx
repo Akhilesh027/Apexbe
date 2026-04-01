@@ -20,6 +20,9 @@ import {
   IndianRupee,
   FileText,
 } from "lucide-react";
+
+
+import { Eye, EyeOff } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -292,7 +295,9 @@ const Referrals = () => {
   const [withdrawAmount, setWithdrawAmount] = useState<string>("");
   const [withdrawNote, setWithdrawNote] = useState<string>("");
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
-
+// Add these state declarations at the top of your component
+const [showAccountNumber, setShowAccountNumber] = useState(false);
+const [showIfsc, setShowIfsc] = useState(false);
   const getToken = () => localStorage.getItem("token");
 
   const apiFetch = async (path: string, options: RequestInit = {}) => {
@@ -2161,23 +2166,45 @@ const Referrals = () => {
                           />
                         </div>
 
-                        <div>
-                          <label className="text-sm font-medium">Account Number</label>
-                          <Input
-                            value={bankDetails.accountNumber}
-                            onChange={(e) => setBankDetails((p) => ({ ...p, accountNumber: e.target.value }))}
-                            placeholder="XXXXXXXXXXXX"
-                          />
-                        </div>
+                        <div className="relative">
+  <label className="text-sm font-medium">Account Number</label>
+  <div className="relative">
+    <Input
+      type={showAccountNumber ? "text" : "password"}
+      value={bankDetails.accountNumber}
+      onChange={(e) => setBankDetails((p) => ({ ...p, accountNumber: e.target.value }))}
+      placeholder="XXXXXXXXXXXX"
+      className="pr-10"
+    />
+    <button
+      type="button"
+      onClick={() => setShowAccountNumber(!showAccountNumber)}
+      className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+    >
+      {showAccountNumber ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+    </button>
+  </div>
+</div>
 
-                        <div>
-                          <label className="text-sm font-medium">IFSC</label>
-                          <Input
-                            value={bankDetails.ifsc}
-                            onChange={(e) => setBankDetails((p) => ({ ...p, ifsc: e.target.value.toUpperCase() }))}
-                            placeholder="SBIN0000000"
-                          />
-                        </div>
+<div className="relative">
+  <label className="text-sm font-medium">IFSC</label>
+  <div className="relative">
+    <Input
+      type={showIfsc ? "text" : "password"}
+      value={bankDetails.ifsc}
+      onChange={(e) => setBankDetails((p) => ({ ...p, ifsc: e.target.value.toUpperCase() }))}
+      placeholder="SBIN0000000"
+      className="pr-10"
+    />
+    <button
+      type="button"
+      onClick={() => setShowIfsc(!showIfsc)}
+      className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+    >
+      {showIfsc ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+    </button>
+  </div>
+</div>
 
                         <div className="md:col-span-2">
                           <label className="text-sm font-medium">UPI ID (Optional)</label>

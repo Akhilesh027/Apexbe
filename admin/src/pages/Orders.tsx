@@ -41,6 +41,7 @@ import {
   ExternalLink,
   ShieldCheck,
   ShieldX,
+  Mail, // <-- new icon
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,6 +53,7 @@ const Orders = () => {
   const [loading, setLoading] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [verifyingPayment, setVerifyingPayment] = useState(false);
+  const [sendingInvoice, setSendingInvoice] = useState(false); // <-- new state
 
   // Shiprocket UI states
   const [shiprocketLoading, setShiprocketLoading] = useState<string | null>(null);
@@ -361,7 +363,7 @@ const Orders = () => {
     }
   };
 
-  // Payment proof viewer (unchanged)
+  // Payment proof viewer
   const handleViewPaymentProof = () => {
     if (!selectedOrder) return;
 
@@ -413,7 +415,7 @@ const Orders = () => {
     }
   };
 
-  // Safe helper for the above
+  // Safe helper
   const safe = (v: any, fallback = "") => (v == null ? fallback : v);
 
   // Download invoice (without auth)
@@ -447,6 +449,27 @@ const Orders = () => {
     } catch (error: any) {
       console.error("Download invoice error:", error);
       toast.error(error.message || "Failed to download invoice");
+    }
+  };
+
+  // -----------------------------
+  // New: Send invoice via email
+  // -----------------------------
+  const handleSendInvoiceEmail = async (orderId: string) => {
+    try {
+      setSendingInvoice(true);
+      const response = await fetch(`${API_BASE}/api/orders/${orderId}/send-invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Failed to send invoice");
+      toast.success(data.message || "Invoice sent to customer's email");
+    } catch (error: any) {
+      console.error("Send invoice email error:", error);
+      toast.error(error.message || "Failed to send invoice email");
+    } finally {
+      setSendingInvoice(false);
     }
   };
 
@@ -1261,15 +1284,32 @@ const Orders = () => {
 
           {/* Bottom action bar */}
           <div className="flex justify-between pt-4 border-t">
-            <Button
-              variant="outline"
-              onClick={() => selectedOrder && handleDownloadInvoice(selectedOrder._id)}
-              className="flex items-center gap-2"
-              disabled={!selectedOrder}
-            >
-              <Download className="h-4 w-4" />
-              Download Invoice
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => selectedOrder && handleDownloadInvoice(selectedOrder._id)}
+                className="flex items-center gap-2"
+                disabled={!selectedOrder}
+              >
+                <Download className="h-4 w-4" />
+                Download Invoice
+              </Button>
+
+              {/* New button: Send Invoice to Email */}
+              <Button
+                variant="outline"
+                onClick={() => selectedOrder && handleSendInvoiceEmail(selectedOrder._id)}
+                disabled={sendingInvoice || !selectedOrder?.userDetails?.email}
+                className="flex items-center gap-2"
+              >
+                {sendingInvoice ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Mail className="h-4 w-4" />
+                )}
+                Send Invoice to Email
+              </Button>
+            </div>
 
             <div className="flex gap-2">
               {selectedOrder && hasPaymentProof(selectedOrder) && (

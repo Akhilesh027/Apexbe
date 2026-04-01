@@ -1,4 +1,5 @@
 import axios from "axios";
+import "dotenv/config"; // ✅ FIRST LINE
 
 const BASE = process.env.SHIPROCKET_BASE || "https://apiv2.shiprocket.in/v1/external";
 
@@ -9,8 +10,8 @@ async function getToken() {
   // reuse cached token for ~8 hours (shiprocket tokens usually last a while)
   if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
 
-  const email = (process.env.SHIPROCKET_EMAIL || "").trim();
-  const password = (process.env.SHIPROCKET_PASSWORD || "").trim();
+  const email = (process.env.SHIPROCKET_EMAIL || "apexbee7@gmail.com").trim();
+  const password = (process.env.SHIPROCKET_PASSWORD || "#ohWtP^Qg%iXuos%^Prf#9@TxaV718").trim();
 
   if (!email || !password) throw new Error("Shiprocket creds missing in .env");
 

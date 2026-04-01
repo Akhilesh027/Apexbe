@@ -5887,6 +5887,170 @@ app.get("/api/orders/:orderId/invoice", async (req, res) => {
     try { if (browser) await browser.close(); } catch {}
   }
 });
+// ========== Helper: generate invoice PDF buffer ==========
+async function generateInvoicePDF(order) {
+  const ship = order.shippingAddress || {};
+  const shipState = safe(ship.state || ship.State || "");
+  const isSameState =
+    shipState && COMPANY.state
+      ? shipState.trim().toLowerCase() === COMPANY.state.trim().toLowerCase()
+      : true;
+
+  const orderNumber = safe(order.orderNumber || order._id);
+  const invoiceNumber = safe(order.invoiceNumber || orderNumber);
+
+  // QR code (URL to order page)
+  const invoiceUrl = `${COMPANY.website}/my-orders/${encodeURIComponent(orderNumber)}`;
+  const qrPng = await QRCode.toBuffer(invoiceUrl, { type: "png", margin: 1, width: 200 });
+  const qrDataUri = `data:image/png;base64,${qrPng.toString("base64")}`;
+
+  // Barcode
+  const barcodePng = await bwipjs.toBuffer({
+    bcid: "code128",
+    text: orderNumber,
+    scale: 2,
+    height: 12,
+    includetext: true,
+    textxalign: "center",
+  });
+  const barcodeDataUri = `data:image/png;base64,${barcodePng.toString("base64")}`;
+
+  const logoDataUri = readFileAsDataUri(COMPANY.logoPath); // ensure readFileAsDataUri is defined
+
+  // GST calculations (same as in your invoice endpoint)
+  const DEFAULT_GST_PERCENT = Number(order?.orderSummary?.gstPercent || 0);
+  const subtotal = Number(order?.orderSummary?.subtotal || 0);
+  const discount = Number(order?.orderSummary?.discount || 0);
+  const taxableValue = Math.max(0, subtotal - discount);
+  const taxPercent = DEFAULT_GST_PERCENT;
+  const gstAmount = (taxPercent / 100) * taxableValue;
+  const cgst = isSameState ? gstAmount / 2 : 0;
+  const sgst = isSameState ? gstAmount / 2 : 0;
+  const igst = !isSameState ? gstAmount : 0;
+
+  const html = buildInvoiceHTML({
+    order,
+    orderNumber,
+    invoiceNumber,
+    isSameState,
+    taxPercent,
+    cgst,
+    sgst,
+    igst,
+    qrDataUri,
+    barcodeDataUri,
+    logoDataUri,
+  });
+
+  // Puppeteer to PDF
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  });
+  const page = await browser.newPage();
+  await page.setContent(html, { waitUntil: "networkidle0" });
+  const pdfBuffer = await page.pdf({
+    format: "A4",
+    printBackground: true,
+    margin: { top: "14mm", bottom: "14mm", left: "12mm", right: "12mm" },
+  });
+  await browser.close();
+  return pdfBuffer;
+}
+import nodemailer from "nodemailer";
+
+app.post("/api/orders/:orderId/send-invoice", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid orderId" });
+    }
+
+    const order = await Order.findById(orderId)
+      .populate("userId", "name email phone")
+      .populate("orderItems.productId");
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    // Get customer email
+    const customerEmail = order.userDetails?.email || order.userId?.email;
+    if (!customerEmail) {
+      return res.status(400).json({ success: false, message: "Customer email not found" });
+    }
+
+    // Generate PDF
+    const pdfBuffer = await generateInvoicePDF(order);
+    const filename = `invoice-${order.orderNumber || order._id}.pdf`;
+
+    // Configure email transport (use environment variables for security)
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    // Email content
+    const mailOptions = {
+      from: `"${COMPANY.name}" <${process.env.SMTP_FROM || COMPANY.email}>`,
+      to: customerEmail,
+      subject: `Your Invoice from ${COMPANY.name} (Order #${order.orderNumber || order._id})`,
+      text: `Dear ${order.userDetails?.name || "Customer"},
+
+Thank you for shopping with ${COMPANY.name}. Please find your invoice attached.
+
+Order Details:
+Order Number: ${order.orderNumber || order._id}
+Order Date: ${new Date(order.createdAt).toLocaleDateString()}
+Total Amount: ${formatINR(order.orderSummary?.total || 0)}
+
+For any queries, please contact us at ${COMPANY.email} or ${COMPANY.phone}.
+
+Thank you for your business!
+
+Regards,
+${COMPANY.name}
+${COMPANY.website}`,
+      html: `
+        <div style="font-family: Arial, sans-serif;">
+          <p>Dear ${order.userDetails?.name || "Customer"},</p>
+          <p>Thank you for shopping with <strong>${COMPANY.name}</strong>. Please find your invoice attached.</p>
+          <p><strong>Order Details:</strong><br/>
+          Order Number: ${order.orderNumber || order._id}<br/>
+          Order Date: ${new Date(order.createdAt).toLocaleDateString()}<br/>
+          Total Amount: ${formatINR(order.orderSummary?.total || 0)}</p>
+          <p>For any queries, please contact us at <a href="mailto:${COMPANY.email}">${COMPANY.email}</a> or ${COMPANY.phone}.</p>
+          <p>Thank you for your business!</p>
+          <p>Regards,<br/>
+          ${COMPANY.name}<br/>
+          <a href="${COMPANY.website}">${COMPANY.website}</a></p>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: filename,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    };
+
+    // Send email
+    await transporter.sendMail(mailOptions);
+
+    res.json({ success: true, message: "Invoice sent to customer's email" });
+  } catch (err) {
+    console.error("send invoice email error:", err);
+    res.status(500).json({ success: false, message: "Failed to send invoice email", error: err.message });
+  }
+});
+
 app.patch('/api/user/profile/:userId', auth, async (req, res) => {
   try {
     const allowedUpdates = ['name', 'phone', 'dateOfBirth', 'gender', 'bio', 'avatar'];
