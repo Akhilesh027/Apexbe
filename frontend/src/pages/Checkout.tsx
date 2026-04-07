@@ -34,9 +34,6 @@ import upi from "../Web images/Web images/upi.jpeg";
 
 const API_BASE = "https://api.apexbee.in/api";
 
-// ✅ Pincode validate endpoint (commented out – not used)
-// const PINCODE_VALIDATE_API = `${API_BASE}/checkout/validate-pincode`;
-
 type CartItem = any;
 
 type Address = {
@@ -94,7 +91,6 @@ const readItemFlags = (item: any) => {
 
   const mode = fulfillment?.mode || "delivery_only";
 
-  // ✅ FIX: do NOT allow pickup when mode is delivery_only
   const allowPickup =
     pickupEnabled && (mode === "both" || mode === "pickup_only");
 
@@ -106,7 +102,6 @@ const readItemFlags = (item: any) => {
   const availableOn =
     preOrder?.availableFrom || item?.availableOn || item?.preOrderDate || null;
 
-  // ✅ shop pincode snapshot for match-only pickup rule
   const shopPincode =
     fulfillment?.pickupShopPincode ||
     item?.pickupShopPincode ||
@@ -123,6 +118,16 @@ const getItemPrice = (item: any) => {
   const p = item?.afterDiscount ?? item?.price ?? item?.finalPrice ?? 0;
   const n = Number(p);
   return Number.isFinite(n) ? n : 0;
+};
+
+/** ✅ Calculate total delivery fee from items */
+const calculateDeliveryFee = (items: CartItem[]) => {
+  if (!items || items.length === 0) return 0;
+  return items.reduce((sum, item) => {
+    const deliveryFee = item.deliveryFee ?? 0;
+    const quantity = Number(item.quantity || 1);
+    return sum + (deliveryFee * quantity);
+  }, 0);
 };
 
 const Checkout = () => {
@@ -175,7 +180,7 @@ const Checkout = () => {
   );
   const [isUploading, setIsUploading] = useState(false);
 
-  // ✅ Pincode validation (commented out – delivery always available with fixed charge ₹50)
+  // Pincode validation
   const [pinCheckLoading, setPinCheckLoading] = useState(false);
   const [pinValid, setPinValid] = useState<boolean | null>(null);
   const [pinError, setPinError] = useState<string>("");
@@ -183,12 +188,20 @@ const Checkout = () => {
     null
   );
 
+  // Calculate initial delivery fee
+  const initialDeliveryFee = useMemo(() => {
+    if (cartData.deliveryFee !== undefined && cartData.deliveryFee !== null) {
+      return cartData.deliveryFee;
+    }
+    return calculateDeliveryFee(initialItems);
+  }, [cartData.deliveryFee, initialItems]);
+
   // Order details
   const [orderDetails, setOrderDetails] = useState({
     items: initialItems,
     subtotal: cartData.subtotal || 0,
     discount: cartData.discount || 0,
-    shipping: cartData.shipping || 0,
+    shipping: initialDeliveryFee,
     total: cartData.total || 0,
   });
 
@@ -397,32 +410,10 @@ const Checkout = () => {
     if (!pickupPossible && fulfillmentType === "pickup") setFulfillmentType("delivery");
   }, [pickupPossible, fulfillmentType]);
 
-  // ✅ Pincode validation disabled – always return success with ₹50 charge
-  const validatePincodeAndUpdateShipping = async (pincode: string) => {
-    const pin = normPincode(pincode);
-
-    // For delivery, always set default charge ₹50
-    if (fulfillmentType === "delivery") {
-      setPinValid(true);
-      setPinError("");
-      setPinMeta({ charge: 50, etaDays: 2 }); // default ETA 2 days
-      setOrderDetails((prev) => ({ ...prev, shipping: 50 }));
-      setPinCheckLoading(false);
-      return;
-    }
-
-    // For pickup or pre-order, shipping is 0 (handled elsewhere)
-    setPinValid(true);
-    setPinError("");
-    setPinMeta({ charge: 0, etaDays: 0 });
-    setOrderDetails((prev) => ({ ...prev, shipping: 0 }));
-    setPinCheckLoading(false);
-  };
-
   /**
    * ✅ Shipping rule:
    * - pickup OR preorder => shipping = 0
-   * - delivery => fixed ₹50 (no API call)
+   * - delivery => use delivery fee from cart or calculate from items
    */
   useEffect(() => {
     if (fulfillmentType === "pickup" || preOrderInfo.hasPreOrder) {
@@ -434,11 +425,17 @@ const Checkout = () => {
     }
 
     if (fulfillmentType === "delivery") {
-      // Always set fixed delivery charge ₹50
+      // Calculate delivery fee from items if not provided
+      let deliveryFee = cartData.deliveryFee;
+      if (!deliveryFee && deliveryFee !== 0) {
+        deliveryFee = calculateDeliveryFee(orderDetails.items);
+      }
+      const finalDeliveryFee = deliveryFee || 0;
+      
       setPinValid(true);
       setPinError("");
-      setPinMeta({ charge: 50, etaDays: 2 });
-      setOrderDetails((prev) => ({ ...prev, shipping: 50 }));
+      setPinMeta({ charge: finalDeliveryFee, etaDays: 2 });
+      setOrderDetails((prev) => ({ ...prev, shipping: finalDeliveryFee }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fulfillmentType, preOrderInfo.hasPreOrder]);
@@ -572,9 +569,7 @@ const Checkout = () => {
         ...addressForm,
         phone: onlyDigits(addressForm.phone).slice(0, 10),
         pincode: normPincode(addressForm.pincode),
-        // ✅ FIX: backend expects "id" (and your Address has _id)
         id: editingAddress?._id,
-        // ❌ userId not needed; backend uses req.user._id
       };
 
       const res = await fetch(`${API_BASE}/user/address`, {
@@ -591,7 +586,6 @@ const Checkout = () => {
 
       await loadAddresses();
 
-      // if new default OR no selection, select returned
       if (!selectedAddress || addressForm.isDefault) setSelectedAddress(result.address);
 
       setShowAddressDialog(false);
@@ -718,6 +712,19 @@ const Checkout = () => {
   /** ✅ realtime totals */
   useEffect(() => {
     const calculatedSubtotal = calcItemsSubtotal(orderDetails.items);
+    
+    // Recalculate delivery fee from items if needed for delivery
+    let currentShipping = orderDetails.shipping;
+    if (fulfillmentType === "delivery" && !preOrderInfo.hasPreOrder) {
+      // If shipping is 0 but items have delivery fees, recalculate
+      if (currentShipping === 0) {
+        const calculatedDeliveryFee = calculateDeliveryFee(orderDetails.items);
+        if (calculatedDeliveryFee > 0) {
+          currentShipping = calculatedDeliveryFee;
+          setOrderDetails(prev => ({ ...prev, shipping: calculatedDeliveryFee }));
+        }
+      }
+    }
 
     let disc = 0;
     if (appliedCoupon) {
@@ -733,7 +740,7 @@ const Checkout = () => {
 
     const calculatedTotal =
       calculatedSubtotal +
-      (orderDetails.shipping || 0) -
+      (currentShipping || 0) -
       (orderDetails.discount || 0) -
       disc;
 
@@ -750,6 +757,8 @@ const Checkout = () => {
     appliedCoupon,
     selectedPayment,
     isFirstOrder,
+    fulfillmentType,
+    preOrderInfo.hasPreOrder,
   ]);
 
   /** ✅ Reset UPI dialog */
@@ -775,11 +784,6 @@ const Checkout = () => {
         variant: "destructive",
       });
       return;
-    }
-
-    // ✅ With pincode check disabled, we assume delivery always available
-    if (fulfillmentType === "delivery") {
-      // No pincode validation needed – always valid
     }
 
     // Pickup requirements
@@ -822,11 +826,19 @@ const Checkout = () => {
       }
     }
 
-    // ✅ shipping is fixed: 0 for pickup/preorder, 50 for delivery
-    const finalShipping =
-      fulfillmentType === "pickup" || preOrderInfo.hasPreOrder
-        ? 0
-        : 50; // default ₹50
+    // Calculate final shipping:
+    // - Pickup or Pre-order: ₹0
+    // - Delivery: use delivery fee from cart state or calculate from items
+    let finalShipping = 0;
+    if (fulfillmentType === "pickup" || preOrderInfo.hasPreOrder) {
+      finalShipping = 0;
+    } else {
+      finalShipping = orderDetails.shipping;
+      // If still 0, calculate from items as fallback
+      if (finalShipping === 0) {
+        finalShipping = calculateDeliveryFee(orderDetails.items);
+      }
+    }
 
     const finalTotal = Math.max(
       0,
@@ -878,6 +890,7 @@ const Checkout = () => {
           itemTotal: price * quantity,
           fulfillment: item.fulfillment || null,
           preOrder: item.preOrder || null,
+          deliveryFee: item.deliveryFee || 0,
         };
       });
 
@@ -898,7 +911,7 @@ const Checkout = () => {
       const fulfillment =
         fulfillmentType === "pickup"
           ? { type: "pickup", pickupLocationId, pickupSlot, userPincode }
-          : { type: "delivery" };
+          : { type: "delivery", deliveryFee: finalShipping };
 
       const orderData: any = {
         userId: user.id,
@@ -986,7 +999,7 @@ const Checkout = () => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || result.error || "Order failed");
 
-      // ✅ Clear cart from backend (DB)
+      // Clear cart from backend (DB)
       try {
         await fetch(`${API_BASE}/clear/cart`, {
           method: "POST",
@@ -998,10 +1011,9 @@ const Checkout = () => {
         });
       } catch (clearErr) {
         console.error("Cart clear failed:", clearErr);
-        // do NOT block order success
       }
 
-      // ✅ Clear local cart
+      // Clear local cart
       localStorage.removeItem("cart");
       localStorage.setItem("hasOrderedOnce", "true");
 
@@ -1108,12 +1120,12 @@ const Checkout = () => {
     if (!orderDetails.items?.length) return "No items";
     const flags = orderDetails.items.map((it: any) => readItemFlags(it));
 
-    if (!flags.every((f) => f.allowPickup)) return "Some items don’t support pickup";
+    if (!flags.every((f) => f.allowPickup)) return "Some items don't support pickup";
     if (!userPincode) return "Add/select address pincode to enable pickup";
     const allHaveShopPin = flags.every((f) => !f.pincodeMatchOnly || !!normPincode(f.shopPincode));
     if (!allHaveShopPin) return "Shop pincode missing in cart items (backend will validate)";
     const allMatch = flags.every((f) => !f.pincodeMatchOnly || normPincode(f.shopPincode) === userPincode);
-    if (!allMatch) return "Your pincode doesn’t match the shop pincode";
+    if (!allMatch) return "Your pincode doesn't match the shop pincode";
     return "";
   }, [orderDetails.items, userPincode]);
 
@@ -1126,7 +1138,7 @@ const Checkout = () => {
           Checkout
         </h1>
 
-        {/* ✅ Pre-order banner */}
+        {/* Pre-order banner */}
         {preOrderInfo.hasPreOrder && preOrderInfo.availableOnMax && (
           <div className="mb-4 rounded-lg border bg-amber-50 border-amber-200 p-3 text-sm">
             ⏳ Pre-order items included. Ready on / after:{" "}
@@ -1138,7 +1150,7 @@ const Checkout = () => {
         <div className="grid lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           {/* Left */}
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
-            {/* ✅ Fulfillment */}
+            {/* Fulfillment */}
             <div className="bg-white rounded-lg border p-4 sm:p-6">
               <h2 className="text-lg font-semibold mb-4">Fulfillment</h2>
 
@@ -1154,7 +1166,7 @@ const Checkout = () => {
                     {preOrderInfo.hasPreOrder ? (
                       <span className="text-xs text-green-700 font-medium">(Free for pre-order)</span>
                     ) : (
-                      <span className="text-xs text-muted-foreground">(Fixed ₹50 charge)</span>
+                      <span className="text-xs text-muted-foreground">₹{orderDetails.shipping.toFixed(2)}</span>
                     )}
                   </Label>
                 </div>
@@ -1167,18 +1179,6 @@ const Checkout = () => {
                   </Label>
                 </div>
               </RadioGroup>
-
-              {/* ✅ PINCODE status – always shows delivery available with ₹50 */}
-              {fulfillmentType === "delivery" && (
-                <div className="mt-4">
-                  <div className="rounded-lg border bg-green-50 border-green-200 p-3 text-sm">
-                    ✅ Delivery available for <strong>{userPincode || "your pincode"}</strong>
-                    <div className="text-xs text-green-800 mt-1">
-                      Charge: <strong>₹50</strong> • ETA: <strong>2-3 days</strong>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Pickup options */}
               {fulfillmentType === "pickup" && (
@@ -1470,6 +1470,13 @@ const Checkout = () => {
 
                             <p className="font-semibold text-sm">₹{itemTotal.toFixed(2)}</p>
                             <p className="text-xs text-muted-foreground">₹{price.toFixed(2)} each</p>
+                            
+                            {/* Show delivery fee per item if applicable */}
+                            {(item.deliveryFee ?? 0) > 0 && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Delivery Fee: ₹{item.deliveryFee} per item
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1507,7 +1514,7 @@ const Checkout = () => {
                     ) : preOrderInfo.hasPreOrder ? (
                       <span className="text-green-600 font-semibold">Free (Pre-order)</span>
                     ) : (
-                      `₹50`
+                      `₹${orderDetails.shipping.toFixed(2)}`
                     )}
                   </span>
                 </div>

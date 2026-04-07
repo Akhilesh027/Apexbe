@@ -36,7 +36,8 @@ app.use(cors({
     "http://localhost:8081",
     "http://localhost:5173",
     "https://admin.apexbee.in",
-    "https://vendor.apexbee.in"
+    "https://vendor.apexbee.in",
+    "https://api.apexbee.in"
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -1664,37 +1665,263 @@ app.post("/api/referrals/complete", auth, async (req, res) => {
 // base: /api/wallet
 // ===============================
 // helpers
-const round2 = (n) => {
-  const num = Number(n);
-  if (isNaN(num)) return 0;
-  return Math.round(num * 100) / 100;
+// ======================
+// HELPER FUNCTIONS
+// ======================
+const round2 = (num) => Math.round((num || 0) * 100) / 100;
+
+const getWalletBalance = (user) => {
+  if (user.walletBalance !== undefined && user.walletBalance !== null) {
+    return Number(user.walletBalance || 0);
+  }
+  if (user.purchaseCommissionTotal !== undefined && user.purchaseCommissionTotal !== null) {
+    return Number(user.purchaseCommissionTotal || 0);
+  }
+  return 0;
 };
+
+const setWalletBalance = (user, value) => {
+  const v = round2(value);
+  if (user.walletBalance !== undefined && user.walletBalance !== null) {
+    user.walletBalance = v;
+  } else if (user.purchaseCommissionTotal !== undefined && user.purchaseCommissionTotal !== null) {
+    user.purchaseCommissionTotal = v;
+  } else {
+    user.walletBalance = v;
+  }
+};
+
+// ======================
+// WITHDRAWAL ROUTES (MUST BE IN THIS ORDER)
+// ======================
+
+// 1. STATS ROUTE (MOST SPECIFIC - COMES FIRST)
+app.get("/api/admin/withdrawals/stats", async (req, res) => {
+  try {
+    const stats = await Withdrawal.aggregate([
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" }
+        }
+      }
+    ]);
+    
+    const pendingAmount = await Withdrawal.aggregate([
+      { $match: { status: "pending" } },
+      { $group: { _id: null, total: { $sum: "$amount" } } }
+    ]);
+    
+    const totalWithdrawn = await Withdrawal.aggregate([
+      { $match: { status: "paid" } },
+      { $group: { _id: null, total: { $sum: "$amount" } } }
+    ]);
+    
+    return res.json({
+      success: true,
+      stats,
+      pendingTotal: pendingAmount[0]?.total || 0,
+      paidTotal: totalWithdrawn[0]?.total || 0
+    });
+  } catch (error) {
+    console.error("Stats error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// 2. GET SINGLE WITHDRAWAL
+app.get("/api/admin/withdrawals/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid withdrawal ID format" });
+    }
+    
+    const withdrawal = await Withdrawal.findById(req.params.id)
+      .populate("userId", "name email phone walletBalance purchaseCommissionTotal")
+      .lean();
+    
+    if (!withdrawal) {
+      return res.status(404).json({ success: false, message: "Withdrawal not found" });
+    }
+    
+    return res.json({
+      success: true,
+      withdrawal: {
+        ...withdrawal,
+        userCurrentBalance: withdrawal.userId ? getWalletBalance(withdrawal.userId) : 0
+      }
+    });
+  } catch (error) {
+    console.error("Get single withdrawal error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// 3. UPDATE WITHDRAWAL STATUS (APPROVE/REJECT/PAID)
+app.patch("/api/admin/withdrawals/:id", async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  
+  try {
+    const { status, referenceId, rejectReason } = req.body;
+    const allowed = ["pending", "approved", "rejected", "paid"];
+    
+    if (!allowed.includes(status)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid status. Allowed: pending, approved, rejected, paid" 
+      });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid withdrawal ID format" 
+      });
+    }
+    
+    // Find the withdrawal
+    const withdrawal = await Withdrawal.findById(req.params.id).session(session);
+    if (!withdrawal) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ 
+        success: false, 
+        message: "Withdrawal not found" 
+      });
+    }
+    
+    const prevStatus = withdrawal.status;
+    
+    // Prevent changing status of already finalized withdrawals
+    if (prevStatus === "paid") {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ 
+        success: false, 
+        message: "Cannot change status of already paid withdrawal" 
+      });
+    }
+    
+    if (prevStatus === "rejected" && status !== "rejected") {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ 
+        success: false, 
+        message: "Cannot change status of rejected withdrawal. User needs to request again." 
+      });
+    }
+    
+    // Get user
+    const user = await User.findById(withdrawal.userId).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found" 
+      });
+    }
+    
+    const amount = round2(withdrawal.amount);
+    
+    // Handle wallet changes based on status transition
+    if (status === "rejected" && prevStatus !== "rejected") {
+      // Refund the amount back to user
+      const currentBalance = getWalletBalance(user);
+      setWalletBalance(user, currentBalance + amount);
+      await user.save({ session });
+      console.log(`✅ Refunded ₹${amount} to user ${user._id}. New balance: ${getWalletBalance(user)}`);
+    }
+    
+    // Update withdrawal record
+    withdrawal.status = status;
+    withdrawal.processedAt = new Date();
+    
+    if (referenceId && (status === "paid" || status === "approved")) {
+      withdrawal.referenceId = String(referenceId);
+    }
+    
+    if (status === "rejected") {
+      withdrawal.rejectReason = String(rejectReason || "Rejected by admin");
+    }
+    
+    await withdrawal.save({ session });
+    
+    // Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+    
+    // Fetch updated withdrawal with user data
+    const updatedWithdrawal = await Withdrawal.findById(req.params.id)
+      .populate("userId", "name email phone walletBalance purchaseCommissionTotal")
+      .lean();
+    
+    let message = "";
+    if (status === "approved") message = "Withdrawal approved successfully";
+    else if (status === "rejected") message = "Withdrawal rejected and amount refunded";
+    else if (status === "paid") message = "Withdrawal marked as paid";
+    else message = `Status updated to ${status}`;
+    
+    return res.json({
+      success: true,
+      message,
+      withdrawal: {
+        ...updatedWithdrawal,
+        userCurrentBalance: updatedWithdrawal.userId ? getWalletBalance(updatedWithdrawal.userId) : 0
+      }
+    });
+    
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("Admin withdrawal update error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || "Server error" 
+    });
+  }
+});
+
+// 4. GET ALL WITHDRAWALS (COLLECTION ROUTE - COMES LAST)
 app.get("/api/admin/withdrawals", async (req, res) => {
   try {
-    const status = (req.query.status || "").toString();
-    const filter = status ? { status } : {};
-
-    const list = await Withdrawal.find(filter)
+    const status = req.query.status;
+    const filter = status && status !== "all" ? { status } : {};
+    
+    const withdrawals = await Withdrawal.find(filter)
       .sort({ createdAt: -1 })
       .limit(500)
-      .populate("userId", "name email phone referralCode") // ✅ add this
+      .populate("userId", "name email phone referralCode walletBalance purchaseCommissionTotal")
       .lean();
-
-    return res.json({ withdrawals: list });
-  } catch {
+    
+    const withdrawalsWithBalance = withdrawals.map(w => ({
+      ...w,
+      userCurrentBalance: w.userId ? getWalletBalance(w.userId) : 0
+    }));
+    
+    return res.json({ withdrawals: withdrawalsWithBalance });
+  } catch (error) {
+    console.error("Admin GET withdrawals error:", error);
     return res.status(500).json({ message: "Server error" });
   }
 });
 
-app.get("/api/wallet/withdrawals", auth, async (req, res) => {
+// 5. USER - GET THEIR WITHDRAWALS
+app.get("/api/wallet/withdrawals", async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit || "25", 10), 100));
-
+    
     const withdrawals = await Withdrawal.find({ userId: req.user.id })
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
-
+    
     return res.json({ withdrawals });
   } catch (e) {
     console.error("GET withdrawals error:", e);
@@ -1702,39 +1929,53 @@ app.get("/api/wallet/withdrawals", auth, async (req, res) => {
   }
 });
 
-app.post("/api/wallet/withdrawals", auth, async (req, res) => {
+// 6. USER - CREATE WITHDRAWAL REQUEST
+app.post("/api/wallet/withdrawals", async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  
   try {
     const amount = round2(req.body?.amount);
     const note = (req.body?.note || "").trim();
-
+    
     if (!amount || amount <= 0) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: "Invalid amount" });
     }
-
-    // ✅ bank details required
-    const bank = await BankDetails.findOne({ userId: req.user.id }).lean();
+    
+    // Check bank details
+    const bank = await BankDetails.findOne({ userId: req.user.id }).session(session);
     if (!bank) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: "Please save your bank details first" });
     }
-
-    // ✅ user balance check
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const available = Number(user.walletBalance ?? user.purchaseCommissionTotal ?? 0);
-
-    if (amount > available) {
-      return res.status(400).json({ message: "Insufficient wallet balance" });
+    
+    // Check user balance
+    const user = await User.findById(req.user.id).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ message: "User not found" });
     }
-
-    // ✅ Deduct immediately
-    if (user.walletBalance != null) user.walletBalance = round2(available - amount);
-    else if (user.purchaseCommissionTotal != null)
-      user.purchaseCommissionTotal = round2(available - amount);
-
-    await user.save();
-
-    const withdrawal = await Withdrawal.create({
+    
+    const available = getWalletBalance(user);
+    
+    if (amount > available) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ 
+        message: `Insufficient wallet balance. Available: ₹${available}` 
+      });
+    }
+    
+    // Deduct from wallet immediately
+    setWalletBalance(user, available - amount);
+    await user.save({ session });
+    
+    // Create withdrawal record
+    const withdrawal = await Withdrawal.create([{
       userId: req.user.id,
       amount,
       note,
@@ -1746,181 +1987,24 @@ app.post("/api/wallet/withdrawals", auth, async (req, res) => {
         ifsc: bank.ifsc,
         upiId: bank.upiId || "",
       },
+    }], { session });
+    
+    await session.commitTransaction();
+    session.endSession();
+    
+    return res.status(201).json({ 
+      message: "Withdrawal request created successfully", 
+      withdrawal: withdrawal[0],
+      remainingBalance: getWalletBalance(user)
     });
-
-    return res.status(201).json({ message: "Withdrawal request created", withdrawal });
+    
   } catch (e) {
+    await session.abortTransaction();
+    session.endSession();
     console.error("POST withdrawals error:", e);
     return res.status(500).json({ message: "Server error" });
   }
 });
-const getWallet = (user) => {
-  if (user.walletBalance != null) return Number(user.walletBalance || 0);
-  if (user.purchaseCommissionTotal != null) return Number(user.purchaseCommissionTotal || 0);
-  return 0;
-};
-
-const setWallet = (user, value) => {
-  const v = round2(value);
-  if (user.walletBalance != null) user.walletBalance = v;
-  else user.purchaseCommissionTotal = v; // fallback
-};
-
-app.patch("/api/admin/withdrawals/:id", async (req, res) => {
-  const session = await mongoose.startSession();
-  try {
-    const { status, referenceId, rejectReason } = req.body;
-
-    const allowed = ["pending", "approved", "rejected", "paid"];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ message: "Invalid status" });
-    }
-
-    await session.withTransaction(async () => {
-      const w = await Withdrawal.findById(req.params.id).session(session);
-      if (!w) throw new Error("NOT_FOUND");
-
-      const prevStatus = w.status;
-
-      // 🚫 don't allow changing paid (optional but safest)
-      if (prevStatus === "paid" && status !== "paid") {
-        throw new Error("CANNOT_CHANGE_PAID");
-      }
-
-      const user = await User.findById(w.userId).session(session);
-      if (!user) throw new Error("USER_NOT_FOUND");
-
-      const amount = round2(w.amount);
-
-      // ✅ Wallet adjustment based on transition
-      // If money was reserved (deducted on POST), then:
-      // - On REJECTED => refund
-      // - On leaving REJECTED => deduct again
-      const wasRejected = prevStatus === "rejected";
-      const willBeRejected = status === "rejected";
-
-      if (!wasRejected && willBeRejected) {
-        // refund back
-        const wallet = getWallet(user);
-        setWallet(user, wallet + amount);
-        await user.save({ session });
-      }
-
-      if (wasRejected && !willBeRejected) {
-        // deduct again (because previously refunded)
-        const wallet = getWallet(user);
-        if (amount > wallet) throw new Error("INSUFFICIENT_WALLET_FOR_REDEDUCT");
-        setWallet(user, wallet - amount);
-        await user.save({ session });
-      }
-
-      // update withdrawal fields
-      w.status = status;
-      w.processedAt = new Date();
-
-      if (referenceId != null) w.referenceId = String(referenceId || "");
-      if (status === "rejected") w.rejectReason = String(rejectReason || "Rejected by admin");
-
-      await w.save({ session });
-    });
-
-    const updated = await Withdrawal.findById(req.params.id).lean();
-    return res.json({ message: "Updated", withdrawal: updated });
-  } catch (e) {
-    const msg = String(e?.message || "");
-
-    if (msg === "NOT_FOUND") return res.status(404).json({ message: "Not found" });
-    if (msg === "USER_NOT_FOUND") return res.status(404).json({ message: "User not found" });
-    if (msg === "CANNOT_CHANGE_PAID") return res.status(400).json({ message: "Paid withdrawals cannot be changed" });
-    if (msg === "INSUFFICIENT_WALLET_FOR_REDEDUCT")
-      return res.status(400).json({ message: "User wallet is not enough to re-apply this withdrawal" });
-
-    return res.status(500).json({ message: "Server error" });
-  } finally {
-    session.endSession();
-  }
-});
-
-// ✅ ADMIN (optional)
-app.get("/api/wallet/admin/withdrawals", auth, async (req, res) => {
-  try {
-    const status = (req.query.status || "").toString();
-    const filter = status ? { status } : {};
-
-    const withdrawals = await Withdrawal.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(200)
-      .lean();
-
-    return res.json({ withdrawals });
-  } catch (e) {
-    console.error("ADMIN GET withdrawals error:", e);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
-app.patch("/api/admin/withdrawals/:id", async (req, res) => {
-  try {
-    const { status, referenceId, rejectReason } = req.body;
-
-    const allowed = ["pending", "approved", "rejected", "paid"];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status" });
-    }
-
-    const w = await Withdrawal.findById(req.params.id);
-    if (!w) return res.status(404).json({ success: false, message: "Withdrawal not found" });
-
-    // ✅ prevent double-processing (important)
-    // Once rejected/paid, don’t allow status changes again (to avoid double refund or weird states)
-    if (["rejected", "paid"].includes(w.status) && w.status !== status) {
-      return res.status(400).json({
-        success: false,
-        message: `This withdrawal is already ${w.status.toUpperCase()} and cannot be changed.`,
-      });
-    }
-
-    // ✅ Option A wallet behavior:
-    // Wallet was deducted at creation, so:
-    // - approved: no wallet change
-    // - paid: no wallet change
-    // - rejected: refund wallet ONCE
-    if (status === "rejected" && w.status !== "rejected") {
-      const user = await User.findById(w.userId);
-      if (!user) return res.status(404).json({ success: false, message: "User not found" });
-
-      // refund wallet
-      const current = Number(user.walletBalance || 0);
-      user.walletBalance = round2(current + Number(w.amount || 0));
-      await user.save();
-    }
-
-    // update withdrawal fields
-    w.status = status;
-    w.processedAt = new Date();
-
-    if (referenceId !== undefined) w.referenceId = String(referenceId || "");
-    if (rejectReason !== undefined) w.rejectReason = String(rejectReason || "");
-
-    await w.save();
-
-    return res.json({
-      success: true,
-      message: "Updated",
-      withdrawal: w,
-      // ✅ helpful hint for frontend toast
-      walletDeductedAtCreate: true,
-    });
-  } catch (err) {
-    console.error("Admin withdrawal update error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-
-// ===============================
-// USER - BANK DETAILS
-// base: /api/user
-// ===============================
 
 app.get("/api/user/bank-details", auth, async (req, res) => {
   try {
@@ -2564,89 +2648,93 @@ app.post("/api/products/add-product", upload.array("images", 10), async (req, re
 });
 
 app.post("/api/products/:id/:action", async (req, res) => {
-    try {
-        const { id, action } = req.params;
-        const { commission } = req.body;
+  try {
+    const { id, action } = req.params;
+    const { commission, deliveryFee, referralCommissions } = req.body;
 
-        // Validate action
-        if (!['approve', 'reject'].includes(action)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid action specified. Must be 'approve' or 'reject'."
-            });
-        }
-
-        // Find product
-        const product = await Products.findById(id);
-
-        if (!product) {
-            return res.status(404).json({
-                success: false,
-                message: "Product not found."
-            });
-        }
-
-        let updateFields = {};
-
-        // ---------- REJECT ----------
-        if (action === "reject") {
-            updateFields.status = "Admin Rejected";
-            updateFields.commission = 0;
-            updateFields.finalAmount = product.afterDiscount;
-        }
-
-        // ---------- APPROVE ----------
-        if (action === "approve") {
-            const commissionRate = Number(commission);
-
-            if (isNaN(commissionRate) || commissionRate < 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Valid non-negative commission rate is required for approval."
-                });
-            }
-
-            // Final vendor payout calculation
-            const finalSalePrice = product.afterDiscount || 0;
-            const finalAmountAfterCommission =
-                finalSalePrice * (1 - commissionRate / 100);
-
-            updateFields.status = "Admin Approved";    // 🔥 UPDATED STATUS
-            updateFields.commission = commissionRate;
-            updateFields.finalAmount = parseFloat(finalAmountAfterCommission.toFixed(2));
-        }
-
-        // Update DB
-        const updatedProduct = await Products.findByIdAndUpdate(
-            id,
-            { $set: updateFields },
-            { new: true, runValidators: true }
-        );
-
-        return res.json({
-            success: true,
-            message: `Product ${action === "approve" ? "approved" : "rejected"} successfully.`,
-            product: updatedProduct
-        });
-
-    } catch (error) {
-        console.error(`Error processing ${req.params.action} product:`, error);
-
-        if (error.name === "CastError") {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid Product ID format."
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            message: "Server Error while updating product status.",
-            error: error.message
-        });
+    if (!["approve", "reject"].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid action. Use 'approve' or 'reject'.",
+      });
     }
-});
-// OLD ROUTE (Vendor Confirm) -> NOW UPDATED TO DIRECT APPROVAL
+
+    const product = await Products.findById(id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product not found." });
+    }
+
+    let updateFields = {};
+
+    // ----- REJECT -----
+    if (action === "reject") {
+      updateFields.status = "Admin Rejected";
+      updateFields.commission = 0;
+      updateFields.deliveryFee = 0;
+      updateFields.referralCommissions = {};
+      updateFields.referralBase = 0;
+      updateFields.totalReferralAmount = 0;
+      updateFields.finalAmount = product.afterDiscount || 0;
+    }
+
+    // ----- APPROVE -----
+    if (action === "approve") {
+      const commissionRate = Number(commission);
+      const delivery = Number(deliveryFee) || 0;
+
+      if (isNaN(commissionRate) || commissionRate < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid non-negative commission rate required.",
+        });
+      }
+
+      // Compute expected values for validation (optional)
+      const afterDiscount = product.afterDiscount || 0;
+      const vendorAmount = (afterDiscount * commissionRate) / 100;
+      const calculatedReferralBase = Math.max(0, afterDiscount - vendorAmount - delivery);
+      const calculatedTotalReferral = Object.values(referralCommissions || {}).reduce(
+        (sum, tier) => sum + (Number(tier?.amount) || 0),
+        0
+      );
+
+      // Optional: prevent over-allocation
+      if (calculatedTotalReferral > calculatedReferralBase) {
+        return res.status(400).json({
+          success: false,
+          message: `Total referral amount (${calculatedTotalReferral}) exceeds net amount after vendor & delivery (${calculatedReferralBase}).`,
+        });
+      }
+
+      updateFields.status = "Admin Approved";
+      updateFields.commission = commissionRate;
+      updateFields.deliveryFee = delivery;
+      updateFields.referralCommissions = referralCommissions || {};
+      updateFields.referralBase = calculatedReferralBase;
+      updateFields.totalReferralAmount = calculatedTotalReferral;
+      updateFields.finalAmount = Math.max(0, calculatedReferralBase - calculatedTotalReferral);
+    }
+
+    const updatedProduct = await Products.findByIdAndUpdate(
+      id,
+      { $set: updateFields },
+      { new: true, runValidators: true }
+    );
+
+    return res.json({
+      success: true,
+      message: `Product ${action === "approve" ? "approved" : "rejected"} successfully.`,
+      product: updatedProduct,
+    });
+  } catch (error) {
+    console.error("Error updating product status:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while updating product status.",
+      error: error.message,
+    });
+  }
+});// OLD ROUTE (Vendor Confirm) -> NOW UPDATED TO DIRECT APPROVAL
 app.post("/api/products/vendor/confirm/:id", async (req, res) => {
   try {
     const product = await Products.findById(req.params.id);
@@ -2771,12 +2859,13 @@ app.get('/api/product/:id', async (req, res) => {
             return res.status(404).json({ error: "Product not found." });
         }
 
-        // If your vendor data needs to be extracted nicely for the frontend:
+        // Convert to plain object and ensure deliveryFee exists
         const productData = {
             ...product.toObject(),
             vendorName: product.vendorId ? product.vendorId.name : 'Unknown Store',
-            // Remove the complex vendorId object from the root level if desired
-            vendorId: product.vendorId ? product.vendorId._id : null
+            vendorId: product.vendorId ? product.vendorId._id : null,
+            // ✅ Ensure deliveryFee is a number (default 0 if missing)
+            deliveryFee: product.deliveryFee ?? 0
         };
 
         res.json(productData);
@@ -2908,7 +2997,17 @@ app.delete("/api/products/:id", async (req, res) => {
 
 app.post("/api/cart/add", async (req, res) => {
   try {
-    const { userId, productId, name, price, image, quantity = 1, selectedColor, vendorId } = req.body;
+    const {
+      userId,
+      productId,
+      name,
+      price,
+      image,
+      quantity = 1,
+      selectedColor,
+      vendorId,
+      deliveryFee = 0, // ✅ accept delivery fee
+    } = req.body;
 
     if (!userId || !productId) {
       return res.status(400).json({ error: "User ID and Product ID are required" });
@@ -2919,11 +3018,11 @@ app.post("/api/cart/add", async (req, res) => {
 
     let cartItem;
     if (existingItem) {
-      // Increment quantity
+      // Increment quantity (delivery fee remains same per item)
       existingItem.quantity += Number(quantity);
       cartItem = await existingItem.save();
     } else {
-      // Create new cart item
+      // Create new cart item with delivery fee
       cartItem = await Cart.create({
         userId,
         productId,
@@ -2933,6 +3032,7 @@ app.post("/api/cart/add", async (req, res) => {
         quantity: Number(quantity),
         selectedColor,
         vendorId,
+        deliveryFee: Number(deliveryFee),
       });
     }
 
@@ -2956,14 +3056,13 @@ app.get("/api/cart/:userId", async (req, res) => {
 
     res.json({
       count: cartItems.length,
-      cart: cartItems
+      cart: cartItems,
     });
   } catch (error) {
     console.error("Get cart error:", error);
     res.status(500).json({ error: "Server error" });
   }
-});
-app.put("/api/cart/:userId", async (req, res) => {
+});app.put("/api/cart/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     const { productId, quantity } = req.body;

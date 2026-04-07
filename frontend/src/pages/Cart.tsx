@@ -105,19 +105,27 @@ const Cart = () => {
     }
   };
 
+  // Subtotal (product price only, without delivery fee)
   const subtotal = cartItems.reduce(
     (sum, item) => sum + (item.afterDiscount || item.price) * item.quantity,
     0
   );
+
+  // Original total before discounts
   const originalTotal = cartItems.reduce(
     (sum, item) => sum + (item.salesPrice || item.afterDiscount || item.price) * item.quantity,
     0
   );
   const discount = originalTotal - subtotal;
 
-  // ✅ default shipping for delivery, checkout will set 0 for pickup
-  const shipping = cartItems.length > 0 ? 50 : 0;
-  const total = subtotal + shipping;
+  // ✅ NEW: total delivery fee (sum of deliveryFee * quantity per item)
+  const totalDeliveryFee = cartItems.reduce(
+    (sum, item) => sum + (item.deliveryFee ?? 0) * item.quantity,
+    0
+  );
+
+  // Grand total = subtotal + delivery fees
+  const total = subtotal + totalDeliveryFee;
 
   // ✅ Pre-order: compute max availableOn
   const preOrderInfo = useMemo(() => {
@@ -134,7 +142,7 @@ const Cart = () => {
     return { hasPreOrder: true, availableOnMax: maxDate.toISOString() };
   }, [cartItems]);
 
-  // ✅ pickup possible if ANY item allows pickup (or you can require ALL items)
+  // ✅ pickup possible if ANY item allows pickup
   const pickupPossible = useMemo(() => {
     return cartItems.some((it) => readItemFlags(it).allowPickup);
   }, [cartItems]);
@@ -147,9 +155,8 @@ const Cart = () => {
         cartItems,
         subtotal,
         discount,
-        shipping,
+        deliveryFee: totalDeliveryFee, // ✅ pass delivery fee
         total,
-        // ✅ send extra info to checkout
         pickupPossible,
         preOrderInfo,
       },
@@ -163,7 +170,7 @@ const Cart = () => {
       <div className="container mx-auto px-4 py-8">
         <h1 className="text-3xl font-bold text-navy mb-8">Shopping Cart</h1>
 
-        {/* ✅ quick info banners */}
+        {/* quick info banners */}
         {cartItems.length > 0 && (
           <div className="mb-5 space-y-2">
             {pickupPossible && (
@@ -214,7 +221,7 @@ const Cart = () => {
                           {item.itemName || item.name}
                         </h3>
 
-                        {/* ✅ badges */}
+                        {/* badges */}
                         <div className="flex flex-wrap gap-2">
                           {allowPickup && (
                             <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800 border border-blue-200">
@@ -245,6 +252,13 @@ const Cart = () => {
                           </span>
                         )}
                       </div>
+
+                      {/* ✅ Show delivery fee per item */}
+                      {(item.deliveryFee ?? 0) > 0 && (
+                        <p className="text-xs text-muted-foreground mb-2">
+                          Delivery Fee: {formatCurrency(item.deliveryFee)} per item
+                        </p>
+                      )}
 
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2 border rounded">
@@ -300,9 +314,10 @@ const Cart = () => {
                 </div>
               )}
 
+              {/* ✅ Delivery Fee section */}
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Shipping</span>
-                <span className="font-semibold">{formatCurrency(shipping)}</span>
+                <span className="text-muted-foreground">Delivery Fee</span>
+                <span className="font-semibold">{formatCurrency(totalDeliveryFee)}</span>
               </div>
 
               <div className="border-t pt-3 flex justify-between text-lg font-bold">

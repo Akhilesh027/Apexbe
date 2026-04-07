@@ -29,6 +29,7 @@ const initialProduct: any = {
   vendorId: null,
   description: "Product details loading...",
   skuCode: "N/A",
+  deliveryFee: 0, // ✅ added default
 };
 
 type Review = {
@@ -190,7 +191,7 @@ const ProductDetail = () => {
     );
   };
 
-  // Add to Cart
+  // ✅ Add to Cart – now includes deliveryFee
   const handleAddToCart = async () => {
     if (!user?.id && !user?._id) return alert("Please login first.");
 
@@ -205,6 +206,7 @@ const ProductDetail = () => {
       quantity,
       selectedColor: "default",
       vendorId: product.vendorId,
+      deliveryFee: product.deliveryFee ?? 0, // ✅ send delivery fee
     };
 
     try {
@@ -221,6 +223,7 @@ const ProductDetail = () => {
     }
   };
 
+  // ✅ Buy Now – uses product's delivery fee instead of fixed ₹50
   const handleBuyNow = () => {
     if (!user) {
       alert("Please login first.");
@@ -228,16 +231,16 @@ const ProductDetail = () => {
       return;
     }
 
+    const deliveryFee = product.deliveryFee ?? 0;
     const subtotal = Number(product.afterDiscount || 0) * quantity;
-    const shipping = subtotal > 0 ? 50 : 0;
-    const total = subtotal + shipping;
+    const total = subtotal + deliveryFee; // no extra shipping, delivery fee is included
 
     navigate("/checkout", {
       state: {
-        cartItems: [{ ...product, quantity }],
+        cartItems: [{ ...product, quantity, deliveryFee }],
         subtotal,
         discount: 0,
-        shipping,
+        shipping: deliveryFee, // ✅ pass delivery fee as shipping
         total,
         fromBuyNow: true,
       },
@@ -332,6 +335,13 @@ const ProductDetail = () => {
                 </span>
               )}
             </div>
+
+            {/* ✅ Optional: Show delivery fee */}
+            {(product.deliveryFee ?? 0) > 0 && (
+              <div className="mb-4 text-sm text-muted-foreground">
+                Delivery Fee: {formatCurrency(product.deliveryFee)}
+              </div>
+            )}
 
             {/* Quantity */}
             <div className="mb-6 flex items-center gap-4">

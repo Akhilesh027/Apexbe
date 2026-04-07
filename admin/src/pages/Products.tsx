@@ -35,8 +35,8 @@ interface Product {
   images: string[];
   status: "Pending" | "Approved" | "Rejected" | string;
   createdAt: string;
+  deliveryFee?: number; // ✅ NEW: delivery fee (deducted from vendor share)
 
-  // optional (if backend returns)
   referralCommissions?: Partial<
     Record<string, { percentage?: number; amount?: number }>
   >;
@@ -81,17 +81,21 @@ const pctFromAmt = (amt: number, base: number) => (base > 0 ? (amt / base) * 100
 const amtFromPct = (pct: number, base: number) => (base * pct) / 100;
 
 /**
- * ✅ Base for referrals MUST be "Amount After Vendor"
- * base = afterDiscount
- * vendorAmount = base * vendorPercent / 100
- * afterVendor = base - vendorAmount
+ * ✅ NEW: Computes vendor amount, delivery fee deduction, and net amount for referrals.
+ * netAfterVendor = afterDiscount - vendorAmount - deliveryFee
  */
-const getBaseAfterVendor = (product: Product, vendorPercent: number | string) => {
+const getNetAfterVendor = (
+  product: Product,
+  vendorPercent: number | string,
+  deliveryFee: number | string
+) => {
   const base = Number(product.afterDiscount || 0);
   const vp = Number(vendorPercent) || 0;
   const vendorAmount = round2((base * vp) / 100);
+  const delivery = round2(Number(deliveryFee) || 0);
   const afterVendor = round2(base - vendorAmount);
-  return { base, vp, vendorAmount, afterVendor };
+  const netAfterVendor = round2(afterVendor - delivery);
+  return { base, vp, vendorAmount, afterVendor, delivery, netAfterVendor };
 };
 
 // ✅ universal extractor (supports array OR {products} OR {data})
@@ -115,7 +119,10 @@ const Products = () => {
   const [commissionPercentage, setCommissionPercentage] = useState<number | string>("");
   const [commissionAmount, setCommissionAmount] = useState<number | string>("");
 
-  /** Referral commissions (NEW) - based on Amount After Vendor */
+  /** ✅ NEW: Delivery fee */
+  const [deliveryFee, setDeliveryFee] = useState<number | string>("");
+
+  /** Referral commissions (based on net after vendor & delivery) */
   const [referral, setReferral] = useState<ReferralState>(emptyReferralState());
 
   /** ---------------------------
@@ -130,7 +137,7 @@ const Products = () => {
       } catch (error) {
         console.error("Error fetching products:", error);
         toast.error("Failed to load products");
-        setProducts([]); // ✅ always keep as array
+        setProducts([]);
       }
     };
     fetchProducts();
@@ -143,21 +150,24 @@ const Products = () => {
     if (!selectedProduct) {
       setCommissionPercentage("");
       setCommissionAmount("");
+      setDeliveryFee("");
       setReferral(emptyReferralState());
       return;
     }
 
-    // ✅ Prefill vendor commission
+    // Prefill vendor commission
     const base = selectedProduct.afterDiscount || 0;
     const comm = selectedProduct.commission || 0;
     setCommissionPercentage(comm);
     setCommissionAmount(round2(amtFromPct(comm, base)).toFixed(2));
 
-    // ✅ Prefill referral commissions (if backend provides)
-    const next = emptyReferralState();
+    // Prefill delivery fee (existing product may have it, default 0)
+    const existingDelivery = selectedProduct.deliveryFee ?? 0;
+    setDeliveryFee(existingDelivery);
 
-    // IMPORTANT: referral is based on AFTER VENDOR, so compute using current vendor comm
-    const { afterVendor } = getBaseAfterVendor(selectedProduct, comm);
+    // Prefill referral commissions (based on net after vendor & delivery)
+    const next = emptyReferralState();
+    const { netAfterVendor } = getNetAfterVendor(selectedProduct, comm, existingDelivery);
 
     const stored = selectedProduct.referralCommissions || {};
     for (const { key } of REFERRAL_TIERS) {
@@ -166,10 +176,10 @@ const Products = () => {
 
       if (typeof p === "number" && !Number.isNaN(p)) {
         next[key].percentage = round2(p);
-        next[key].amount = round2(amtFromPct(p, afterVendor));
+        next[key].amount = round2(amtFromPct(p, netAfterVendor));
       } else if (typeof a === "number" && !Number.isNaN(a)) {
         next[key].amount = round2(a);
-        next[key].percentage = round2(pctFromAmt(a, afterVendor));
+        next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
       } else {
         next[key].percentage = "";
         next[key].amount = "";
@@ -217,20 +227,17 @@ const Products = () => {
       const base = selectedProduct.afterDiscount || 0;
       setCommissionAmount(round2(amtFromPct(Number(percentage), base)).toFixed(2));
 
-      // ✅ When vendor commission changes, referral base changes => recalc referral amounts from percentages
+      // Recalc referrals when vendor % changes
       setReferral((prev) => {
-        const { afterVendor } = getBaseAfterVendor(selectedProduct, Number(percentage));
+        const { netAfterVendor } = getNetAfterVendor(selectedProduct, percentage, deliveryFee);
         const next = { ...prev } as ReferralState;
-
         for (const { key } of REFERRAL_TIERS) {
           const p = Number(next[key].percentage);
           const a = Number(next[key].amount);
-
-          // Prefer percentage as truth; if empty, keep amount and recompute % from amount
           if (next[key].percentage !== "" && Number.isFinite(p)) {
-            next[key].amount = round2(amtFromPct(p, afterVendor));
+            next[key].amount = round2(amtFromPct(p, netAfterVendor));
           } else if (next[key].amount !== "" && Number.isFinite(a)) {
-            next[key].percentage = round2(pctFromAmt(a, afterVendor));
+            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
           }
         }
         return next;
@@ -249,19 +256,16 @@ const Products = () => {
       const pct = pctFromAmt(Number(amount), base);
       setCommissionPercentage(round2(pct).toFixed(2));
 
-      // ✅ Vendor % updated => referral base updated => recalc referrals
       setReferral((prev) => {
-        const { afterVendor } = getBaseAfterVendor(selectedProduct, round2(pct));
+        const { netAfterVendor } = getNetAfterVendor(selectedProduct, round2(pct), deliveryFee);
         const next = { ...prev } as ReferralState;
-
         for (const { key } of REFERRAL_TIERS) {
           const p = Number(next[key].percentage);
           const a = Number(next[key].amount);
-
           if (next[key].percentage !== "" && Number.isFinite(p)) {
-            next[key].amount = round2(amtFromPct(p, afterVendor));
+            next[key].amount = round2(amtFromPct(p, netAfterVendor));
           } else if (next[key].amount !== "" && Number.isFinite(a)) {
-            next[key].percentage = round2(pctFromAmt(a, afterVendor));
+            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
           }
         }
         return next;
@@ -271,25 +275,60 @@ const Products = () => {
     }
   };
 
+  /** ✅ NEW: Delivery fee handler */
+  const handleDeliveryFeeChange = (value: string) => {
+    const fee = value === "" ? "" : Number(value);
+    setDeliveryFee(fee);
+
+    if (selectedProduct && fee !== "" && !isNaN(Number(fee))) {
+      setReferral((prev) => {
+        const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, fee);
+        const next = { ...prev } as ReferralState;
+        for (const { key } of REFERRAL_TIERS) {
+          const p = Number(next[key].percentage);
+          const a = Number(next[key].amount);
+          if (next[key].percentage !== "" && Number.isFinite(p)) {
+            next[key].amount = round2(amtFromPct(p, netAfterVendor));
+          } else if (next[key].amount !== "" && Number.isFinite(a)) {
+            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
+          }
+        }
+        return next;
+      });
+    } else if (value === "") {
+      // If cleared, treat as 0 for calculations
+      setReferral((prev) => {
+        const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, 0);
+        const next = { ...prev } as ReferralState;
+        for (const { key } of REFERRAL_TIERS) {
+          const p = Number(next[key].percentage);
+          const a = Number(next[key].amount);
+          if (next[key].percentage !== "" && Number.isFinite(p)) {
+            next[key].amount = round2(amtFromPct(p, netAfterVendor));
+          } else if (next[key].amount !== "" && Number.isFinite(a)) {
+            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
+          }
+        }
+        return next;
+      });
+    }
+  };
+
   /** ---------------------------
-   * Referral Handlers (base = Amount After Vendor)
+   * Referral Handlers (base = netAfterVendor)
    * -------------------------- */
   const handleReferralPercentageChange = (tier: ReferralTierKey, value: string) => {
     setReferral((prev) => {
       if (!selectedProduct) return prev;
-
-      const { afterVendor } = getBaseAfterVendor(selectedProduct, commissionPercentage);
+      const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, deliveryFee);
       const percentage = value === "" ? "" : Number(value);
-
       const next = { ...prev, [tier]: { ...prev[tier], percentage } };
-
       if (percentage === "") {
         next[tier].amount = "";
         return next;
       }
-
       if (!isNaN(Number(percentage))) {
-        next[tier].amount = round2(amtFromPct(Number(percentage), afterVendor));
+        next[tier].amount = round2(amtFromPct(Number(percentage), netAfterVendor));
       }
       return next;
     });
@@ -298,40 +337,36 @@ const Products = () => {
   const handleReferralAmountChange = (tier: ReferralTierKey, value: string) => {
     setReferral((prev) => {
       if (!selectedProduct) return prev;
-
-      const { afterVendor } = getBaseAfterVendor(selectedProduct, commissionPercentage);
+      const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, deliveryFee);
       const amount = value === "" ? "" : Number(value);
-
       const next = { ...prev, [tier]: { ...prev[tier], amount } };
-
       if (amount === "") {
         next[tier].percentage = "";
         return next;
       }
-
       if (!isNaN(Number(amount))) {
-        next[tier].percentage = round2(pctFromAmt(Number(amount), afterVendor));
+        next[tier].percentage = round2(pctFromAmt(Number(amount), netAfterVendor));
       }
       return next;
     });
   };
 
   /** ---------------------------
-   * Totals for Referral + Remaining
+   * Totals for Referral + Remaining (based on netAfterVendor)
    * -------------------------- */
   const referralTotals = useMemo(() => {
-    if (!selectedProduct) return { afterVendor: 0, totalReferral: 0, remaining: 0 };
+    if (!selectedProduct) return { netAfterVendor: 0, totalReferral: 0, remaining: 0 };
 
-    const { afterVendor } = getBaseAfterVendor(selectedProduct, commissionPercentage);
+    const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, deliveryFee);
 
     const totalReferral = round2(
       REFERRAL_TIERS.reduce((sum, t) => sum + (Number(referral[t.key].amount) || 0), 0)
     );
 
-    const remaining = round2(afterVendor - totalReferral);
+    const remaining = round2(netAfterVendor - totalReferral);
 
-    return { afterVendor, totalReferral, remaining };
-  }, [selectedProduct, commissionPercentage, referral]);
+    return { netAfterVendor, totalReferral, remaining };
+  }, [selectedProduct, commissionPercentage, deliveryFee, referral]);
 
   /** ---------------------------
    * Approve / Reject
@@ -345,49 +380,47 @@ const Products = () => {
     if (!selectedProduct || !actionDialog.action) return;
 
     const action = actionDialog.action;
-
     const vendorCommissionValue = action === "approve" ? Number(commissionPercentage) : 0;
+    const deliveryFeeValue = action === "approve" ? Number(deliveryFee) || 0 : 0;
+
     if (action === "approve" && (isNaN(vendorCommissionValue) || vendorCommissionValue < 0)) {
       toast.error("Please enter a valid non-negative vendor commission value.");
       return;
     }
 
-    // ✅ referral base is AFTER VENDOR
-    const { afterVendor } = getBaseAfterVendor(selectedProduct, vendorCommissionValue);
+    // net after vendor & delivery
+    const { netAfterVendor } = getNetAfterVendor(selectedProduct, vendorCommissionValue, deliveryFeeValue);
 
-    // ✅ build referral payload with both amount + percentage always consistent
+    // Build referral payload with both amount + percentage consistent
     const referralPayload = REFERRAL_TIERS.reduce((acc, t) => {
       const p = referral[t.key].percentage;
       const a = referral[t.key].amount;
-
       let percentage = 0;
       let amount = 0;
-
       if (p !== "" && Number.isFinite(Number(p))) {
         percentage = round2(Number(p));
-        amount = round2(amtFromPct(percentage, afterVendor));
+        amount = round2(amtFromPct(percentage, netAfterVendor));
       } else if (a !== "" && Number.isFinite(Number(a))) {
         amount = round2(Number(a));
-        percentage = round2(pctFromAmt(amount, afterVendor));
+        percentage = round2(pctFromAmt(amount, netAfterVendor));
       }
-
       acc[t.key] = { percentage, amount };
       return acc;
     }, {} as Record<ReferralTierKey, { percentage: number; amount: number }>);
 
     const totalReferral = Object.values(referralPayload).reduce((s, x) => s + (x.amount || 0), 0);
 
-    if (action === "approve" && totalReferral > afterVendor) {
-      toast.error("Referral total cannot be more than Amount After Vendor.");
+    if (action === "approve" && totalReferral > netAfterVendor) {
+      toast.error("Referral total cannot exceed Amount After Vendor & Delivery.");
       return;
     }
 
     try {
       const endpoint = `https://api.apexbee.in/api/products/${selectedProduct._id}/${action}`;
-
       await axios.post(endpoint, {
-        commission: action === "approve" ? vendorCommissionValue : 0, // ✅ vendor %
-        referralBase: action === "approve" ? afterVendor : 0,
+        commission: action === "approve" ? vendorCommissionValue : 0,
+        deliveryFee: action === "approve" ? deliveryFeeValue : 0, // ✅ send delivery fee
+        referralBase: action === "approve" ? netAfterVendor : 0,
         referralCommissions: action === "approve" ? referralPayload : {},
       });
 
@@ -401,6 +434,7 @@ const Products = () => {
                 ...p,
                 status: newStatus,
                 commission: action === "approve" ? vendorCommissionValue : 0,
+                deliveryFee: action === "approve" ? deliveryFeeValue : 0,
                 referralCommissions: action === "approve" ? referralPayload : {},
               }
             : p
@@ -409,7 +443,7 @@ const Products = () => {
 
       toast.success(
         action === "approve"
-          ? `Product approved. Vendor commission: ${vendorCommissionValue}%`
+          ? `Product approved. Vendor commission: ${vendorCommissionValue}%, Delivery fee: ${money(deliveryFeeValue)}`
           : "Product rejected."
       );
     } catch (error) {
@@ -420,6 +454,7 @@ const Products = () => {
       setSelectedProduct(null);
       setCommissionPercentage("");
       setCommissionAmount("");
+      setDeliveryFee("");
       setReferral(emptyReferralState());
     }
   };
@@ -435,7 +470,7 @@ const Products = () => {
     {
       header: "Vendor Receipt",
       accessor: (item: Product) =>
-        `₹${round2((item.afterDiscount || 0) * (1 - (item.commission || 0) / 100)).toFixed(2)}`,
+        `₹${round2((item.afterDiscount || 0) * (1 - (item.commission || 0) / 100) - (item.deliveryFee || 0)).toFixed(2)}`,
     },
     { header: "SKU Code", accessor: (item: Product) => item.skuCode },
     { header: "Vendor", accessor: (item: Product) => item.vendorId?.name || "N/A" },
@@ -450,7 +485,6 @@ const Products = () => {
 
           {item.status?.toLowerCase() === "pending" && (
             <>
-              {/* ✅ FIX: Approve icon now opens approval confirmation */}
               <Button
                 size="sm"
                 variant="outline"
@@ -491,8 +525,8 @@ const Products = () => {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-foreground">Product Submissions 📦</h1>
         <p className="text-muted-foreground">
-          Review and approve vendor products. Vendor commission is applied first, then referral commissions are calculated
-          on the Amount After Vendor.
+          Review and approve vendor products. Vendor commission and delivery fee are deducted first, then referral
+          commissions are calculated on the net amount.
         </p>
       </div>
 
@@ -614,16 +648,59 @@ const Products = () => {
                       </div>
 
                       {(() => {
-                        const { vendorAmount, afterVendor } = getBaseAfterVendor(selectedProduct, commissionPercentage);
+                        const { vendorAmount, afterVendor } = getNetAfterVendor(
+                          selectedProduct,
+                          commissionPercentage,
+                          deliveryFee
+                        );
                         return (
                           <div className="pt-3 border-t space-y-2">
                             <div className="flex justify-between text-sm">
                               <span className="text-muted-foreground">Vendor Commission Value</span>
                               <span className="font-bold text-destructive">- {money(vendorAmount)}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="font-semibold">Amount After Vendor</span>
-                              <span className="font-extrabold text-lg text-green-600">{money(afterVendor)}</span>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">Amount After Vendor</span>
+                              <span className="font-semibold">{money(afterVendor)}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* ✅ NEW: Delivery Fee Card */}
+                    <div className="p-4 border rounded-xl bg-card shadow-sm space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-extrabold text-primary">Delivery Fee</h4>
+                        <span className="text-xs text-muted-foreground">Deducted from vendor share</span>
+                      </div>
+                      <Input
+                        type="number"
+                        placeholder="Delivery fee (₹)"
+                        value={deliveryFee}
+                        onChange={(e) => handleDeliveryFeeChange(e.target.value)}
+                        min="0"
+                        step="0.01"
+                      />
+                      {(() => {
+                        const { delivery, afterVendor, netAfterVendor } = getNetAfterVendor(
+                          selectedProduct,
+                          commissionPercentage,
+                          deliveryFee
+                        );
+                        return (
+                          <div className="pt-2">
+                            <div className="flex justify-between text-sm text-muted-foreground">
+                              <span>After Vendor</span>
+                              <span>{money(afterVendor)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm text-destructive">
+                              <span>Delivery Fee</span>
+                              <span>- {money(delivery)}</span>
+                            </div>
+                            <div className="flex justify-between font-bold mt-2">
+                              <span>Net Amount (for Referrals)</span>
+                              <span className="text-green-600">{money(netAfterVendor)}</span>
                             </div>
                           </div>
                         );
@@ -634,7 +711,7 @@ const Products = () => {
                     <div className="p-4 border rounded-xl bg-card shadow-sm space-y-5">
                       <div className="flex items-center justify-between">
                         <h4 className="text-base font-extrabold text-primary">Referral Commissions</h4>
-                        <span className="text-xs text-muted-foreground">Base: Amount After Vendor</span>
+                        <span className="text-xs text-muted-foreground">Base: Net Amount (After Vendor & Delivery)</span>
                       </div>
 
                       <div className="space-y-3">
@@ -692,7 +769,7 @@ const Products = () => {
 
                         {referralTotals.remaining < 0 && (
                           <p className="text-xs text-destructive">
-                            Total referral exceeds Amount After Vendor. Reduce referral values.
+                            Total referral exceeds net amount. Reduce referral values.
                           </p>
                         )}
                       </div>
@@ -741,7 +818,11 @@ const Products = () => {
               {actionDialog.action === "approve" && selectedProduct && (
                 <div className="mt-3 space-y-2">
                   {(() => {
-                    const { vendorAmount, afterVendor } = getBaseAfterVendor(selectedProduct, commissionPercentage);
+                    const { vendorAmount, afterVendor, delivery, netAfterVendor } = getNetAfterVendor(
+                      selectedProduct,
+                      commissionPercentage,
+                      deliveryFee
+                    );
                     return (
                       <>
                         <p className="text-sm">
@@ -750,8 +831,15 @@ const Products = () => {
                             {Number(commissionPercentage) || 0}% ({money(vendorAmount)})
                           </span>
                         </p>
+                        <p className="text-sm">
+                          Delivery Fee:{" "}
+                          <span className="font-semibold text-orange-600">{money(delivery)}</span>
+                        </p>
                         <p className="text-sm text-muted-foreground">
                           Amount After Vendor: <strong>{money(afterVendor)}</strong>
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Net Amount (for Referrals): <strong>{money(netAfterVendor)}</strong>
                         </p>
                         <p className="text-sm text-muted-foreground">
                           Total Referral: <strong>{money(referralTotals.totalReferral)}</strong>

@@ -106,6 +106,7 @@ const productSchema = new mongoose.Schema(
     discountAmount: { type: Number, default: 0 }, // ₹
 
     afterDiscount: { type: Number, default: 0 }, // final price customer pays
+deliveryFee: { type: Number, default: 0 }, // deducted from vendor's share before referrals
 
     commission: { type: Number, default: 0 }, // admin set
     finalAmount: { type: Number, default: 0 }, // after commission
@@ -163,5 +164,40 @@ productSchema.pre("save", function (next) {
     next(e);
   }
 });
+productSchema.pre("save", function (next) {
+  try {
+    // Skip for order-wise pricing
+    if (this.priceType === "order-wise") return next();
 
+    const afterDiscount = Number(this.afterDiscount || 0);
+    const commissionPercent = Number(this.commission || 0);
+    const deliveryFee = Number(this.deliveryFee || 0);
+
+    // Vendor commission amount
+    const vendorAmount = (afterDiscount * commissionPercent) / 100;
+
+    // Amount after vendor commission and delivery fee (base for referrals)
+    const referralBase = Math.max(0, afterDiscount - vendorAmount - deliveryFee);
+    this.referralBase = referralBase;
+
+    // Final amount the vendor receives (after all deductions)
+    const finalAmount = Math.max(0, referralBase);
+    this.finalAmount = finalAmount;
+
+    // Sum up referral amounts from the stored referralCommissions
+    const rc = this.referralCommissions || {};
+    const totalReferralAmount =
+      (rc.stateFranchiser?.amount || 0) +
+      (rc.franchiser?.amount || 0) +
+      (rc.level1?.amount || 0) +
+      (rc.level2?.amount || 0) +
+      (rc.level3?.amount || 0);
+
+    this.totalReferralAmount = totalReferralAmount;
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 export default mongoose.model("Products", productSchema);
