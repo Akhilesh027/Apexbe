@@ -11,7 +11,6 @@ import {
   Wallet,
   Banknote,
   AlertCircle,
-  Filter,
   Search,
   User,
   Building2,
@@ -102,23 +101,15 @@ export default function AdminWithdrawals() {
 
   const [openBank, setOpenBank] = useState(false);
   const [selected, setSelected] = useState<Withdrawal | null>(null);
-  
+
   const [openConfirmDialog, setOpenConfirmDialog] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{
     id: string;
     status: WithdrawalStatus;
   } | null>(null);
 
-  const getToken = () => localStorage.getItem("token");
-
-  const authHeaders = () => {
-    const token = getToken();
-    if (!token) throw new Error("No token");
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    };
-  };
+  // Simple headers – no token required
+  const headers = { "Content-Type": "application/json" };
 
   const fetchWithdrawals = async () => {
     try {
@@ -126,7 +117,7 @@ export default function AdminWithdrawals() {
       const qs = tab === "all" ? "" : `?status=${tab}`;
 
       const res = await fetch(`${API_BASE}/admin/withdrawals${qs}`, {
-        headers: authHeaders(),
+        headers,
       });
 
       const json = await res.json().catch(() => ({}));
@@ -154,7 +145,7 @@ export default function AdminWithdrawals() {
   const fetchStats = async () => {
     try {
       const res = await fetch(`${API_BASE}/admin/withdrawals/stats`, {
-        headers: authHeaders(),
+        headers,
       });
       if (res.ok) {
         const data = await res.json();
@@ -172,11 +163,30 @@ export default function AdminWithdrawals() {
   }, [tab]);
 
   const statusBadge = (s: WithdrawalStatus) => {
-    const map: Record<WithdrawalStatus, { className: string; icon: any; label: string }> = {
-      pending: { className: "bg-yellow-100 text-yellow-800 border-yellow-200", icon: Clock, label: "Pending" },
-      approved: { className: "bg-blue-100 text-blue-800 border-blue-200", icon: BadgeCheck, label: "Approved" },
-      rejected: { className: "bg-red-100 text-red-800 border-red-200", icon: XCircle, label: "Rejected" },
-      paid: { className: "bg-green-100 text-green-800 border-green-200", icon: CheckCircle2, label: "Paid" },
+    const map: Record<
+      WithdrawalStatus,
+      { className: string; icon: any; label: string }
+    > = {
+      pending: {
+        className: "bg-yellow-100 text-yellow-800 border-yellow-200",
+        icon: Clock,
+        label: "Pending",
+      },
+      approved: {
+        className: "bg-blue-100 text-blue-800 border-blue-200",
+        icon: BadgeCheck,
+        label: "Approved",
+      },
+      rejected: {
+        className: "bg-red-100 text-red-800 border-red-200",
+        icon: XCircle,
+        label: "Rejected",
+      },
+      paid: {
+        className: "bg-green-100 text-green-800 border-green-200",
+        icon: CheckCircle2,
+        label: "Paid",
+      },
     };
     const Icon = map[s].icon;
     return (
@@ -188,7 +198,12 @@ export default function AdminWithdrawals() {
   };
 
   const formatDate = (d?: string) =>
-    d ? new Date(d).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "-";
+    d
+      ? new Date(d).toLocaleString("en-IN", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : "-";
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -215,8 +230,8 @@ export default function AdminWithdrawals() {
   const copyText = async (text: string, label?: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      toast({ 
-        title: "Copied!", 
+      toast({
+        title: "Copied!",
         description: label ? `${label} copied to clipboard` : "Copied to clipboard",
       });
     } catch {
@@ -240,9 +255,9 @@ export default function AdminWithdrawals() {
 
   const confirmUpdate = async () => {
     if (!confirmAction) return;
-    
+
     const { id, status } = confirmAction;
-    
+
     try {
       setUpdatingId(id);
 
@@ -260,12 +275,12 @@ export default function AdminWithdrawals() {
 
       const res = await fetch(`${API_BASE}/admin/withdrawals/${id}`, {
         method: "PATCH",
-        headers: authHeaders(),
+        headers,
         body: JSON.stringify(payload),
       });
 
       const json = await res.json().catch(() => ({}));
-      
+
       if (!res.ok) {
         toast({
           title: "Update failed",
@@ -275,7 +290,6 @@ export default function AdminWithdrawals() {
         return;
       }
 
-      // Success messages based on action
       if (status === "paid") {
         toast({
           title: "Withdrawal Marked as Paid ✅",
@@ -293,13 +307,11 @@ export default function AdminWithdrawals() {
         });
       }
 
-      // Clear inputs for this row
       setRefMap((p) => ({ ...p, [id]: "" }));
       setRejMap((p) => ({ ...p, [id]: "" }));
 
       await fetchWithdrawals();
       await fetchStats();
-      
     } catch (e: any) {
       toast({
         title: "Error",
@@ -315,14 +327,13 @@ export default function AdminWithdrawals() {
 
   const getTotalPendingAmount = () => {
     return items
-      .filter(w => w.status === "pending")
+      .filter((w) => w.status === "pending")
       .reduce((sum, w) => sum + (w.amount || 0), 0);
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       <div className="container mx-auto px-4 py-8 space-y-6">
-        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-navy to-blue-600 bg-clip-text text-transparent">
@@ -333,25 +344,30 @@ export default function AdminWithdrawals() {
             </p>
           </div>
 
-          <Button 
-            variant="outline" 
-            onClick={fetchWithdrawals} 
+          <Button
+            variant="outline"
+            onClick={fetchWithdrawals}
             disabled={loading}
             className="shadow-sm"
           >
-            {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
+            {loading ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCcw className="h-4 w-4 mr-2" />
+            )}
             Refresh
           </Button>
         </div>
 
-        {/* Stats Cards */}
         {stats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="hover:shadow-lg transition-shadow">
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Pending Requests</p>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Pending Requests
+                    </p>
                     <p className="text-2xl font-bold text-yellow-600">
                       {stats.stats?.find((s: any) => s._id === "pending")?.count || 0}
                     </p>
@@ -367,7 +383,9 @@ export default function AdminWithdrawals() {
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Pending Amount</p>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Pending Amount
+                    </p>
                     <p className="text-2xl font-bold text-orange-600">
                       {formatCurrency(getTotalPendingAmount())}
                     </p>
@@ -383,7 +401,9 @@ export default function AdminWithdrawals() {
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Total Paid</p>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Total Paid
+                    </p>
                     <p className="text-2xl font-bold text-green-600">
                       {formatCurrency(stats.paidTotal)}
                     </p>
@@ -399,9 +419,13 @@ export default function AdminWithdrawals() {
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Total Processed</p>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Total Processed
+                    </p>
                     <p className="text-2xl font-bold text-blue-600">
-                      {(stats.stats?.filter((s: any) => s._id !== "pending").reduce((sum: number, s: any) => sum + s.count, 0)) || 0}
+                      {(stats.stats
+                        ?.filter((s: any) => s._id !== "pending")
+                        .reduce((sum: number, s: any) => sum + s.count, 0)) || 0}
                     </p>
                   </div>
                   <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
@@ -413,7 +437,6 @@ export default function AdminWithdrawals() {
           </div>
         )}
 
-        {/* Main Card */}
         <Card className="shadow-lg">
           <CardHeader className="border-b">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -446,7 +469,7 @@ export default function AdminWithdrawals() {
           <CardContent className="p-0">
             {loading ? (
               <div className="py-20 flex items-center justify-center text-muted-foreground">
-                <Loader2 className="h-6 w-6 mr-2 animate-spin" /> 
+                <Loader2 className="h-6 w-6 mr-2 animate-spin" />
                 Loading withdrawals...
               </div>
             ) : filtered.length === 0 ? (
@@ -481,9 +504,15 @@ export default function AdminWithdrawals() {
                             <div className="flex items-start gap-2">
                               <User className="h-4 w-4 text-muted-foreground mt-0.5" />
                               <div>
-                                <div className="font-semibold text-navy">{u.name || "Unknown"}</div>
-                                <div className="text-muted-foreground text-xs">{u.email || "-"}</div>
-                                <div className="text-muted-foreground text-xs">{u.phone || "-"}</div>
+                                <div className="font-semibold text-navy">
+                                  {u.name || "Unknown"}
+                                </div>
+                                <div className="text-muted-foreground text-xs">
+                                  {u.email || "-"}
+                                </div>
+                                <div className="text-muted-foreground text-xs">
+                                  {u.phone || "-"}
+                                </div>
 
                                 {u.referralCode && (
                                   <Badge variant="outline" className="mt-1 bg-blue-50 text-xs">
@@ -493,7 +522,8 @@ export default function AdminWithdrawals() {
 
                                 <div className="mt-2 flex items-center gap-1 text-xs font-medium text-green-600">
                                   <Wallet className="h-3 w-3" />
-                                  Balance: {formatCurrency(w.userCurrentBalance || u.walletBalance)}
+                                  Balance:{" "}
+                                  {formatCurrency(w.userCurrentBalance || u.walletBalance)}
                                 </div>
 
                                 <div className="text-[10px] text-muted-foreground mt-2 font-mono">
@@ -505,7 +535,9 @@ export default function AdminWithdrawals() {
 
                           <td className="p-4">
                             <div className="space-y-1">
-                              <div className="font-medium">{b.accountHolderName || "-"}</div>
+                              <div className="font-medium">
+                                {b.accountHolderName || "-"}
+                              </div>
                               <div className="text-muted-foreground text-xs flex items-center gap-1">
                                 <Building2 className="h-3 w-3" />
                                 {b.bankName || "-"}
@@ -518,7 +550,11 @@ export default function AdminWithdrawals() {
                               </div>
 
                               <div className="mt-2 flex gap-2">
-                                <Button size="sm" variant="outline" onClick={() => openBankModal(w)}>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openBankModal(w)}
+                                >
                                   <Eye className="h-3 w-3 mr-1" />
                                   View
                                 </Button>
@@ -526,7 +562,9 @@ export default function AdminWithdrawals() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => copyText(b.accountNumber || "", "Account Number")}
+                                  onClick={() =>
+                                    copyText(b.accountNumber || "", "Account Number")
+                                  }
                                 >
                                   <Copy className="h-3 w-3 mr-1" />
                                   Copy
@@ -549,7 +587,9 @@ export default function AdminWithdrawals() {
                               {formatDate(w.createdAt)}
                             </div>
                             {w.processedAt && (
-                              <div className="mt-1 text-xs">Processed: {formatDate(w.processedAt)}</div>
+                              <div className="mt-1 text-xs">
+                                Processed: {formatDate(w.processedAt)}
+                              </div>
                             )}
                             {w.referenceId && (
                               <div className="mt-1 text-xs font-mono flex items-center gap-1">
@@ -558,9 +598,15 @@ export default function AdminWithdrawals() {
                               </div>
                             )}
                             {w.status === "rejected" && w.rejectReason && (
-                              <div className="mt-1 text-red-600 text-xs">Reason: {w.rejectReason}</div>
+                              <div className="mt-1 text-red-600 text-xs">
+                                Reason: {w.rejectReason}
+                              </div>
                             )}
-                            {w.note && <div className="mt-1 text-muted-foreground text-xs">Note: {w.note}</div>}
+                            {w.note && (
+                              <div className="mt-1 text-muted-foreground text-xs">
+                                Note: {w.note}
+                              </div>
+                            )}
                           </td>
 
                           <td className="p-4">
@@ -568,7 +614,9 @@ export default function AdminWithdrawals() {
                               {(w.status === "pending" || w.status === "approved") && (
                                 <Input
                                   value={refMap[w._id] || ""}
-                                  onChange={(e) => setRefMap((p) => ({ ...p, [w._id]: e.target.value }))}
+                                  onChange={(e) =>
+                                    setRefMap((p) => ({ ...p, [w._id]: e.target.value }))
+                                  }
                                   placeholder="Reference ID (optional)"
                                   className="text-sm"
                                 />
@@ -577,7 +625,9 @@ export default function AdminWithdrawals() {
                               {w.status === "pending" && (
                                 <Input
                                   value={rejMap[w._id] || ""}
-                                  onChange={(e) => setRejMap((p) => ({ ...p, [w._id]: e.target.value }))}
+                                  onChange={(e) =>
+                                    setRejMap((p) => ({ ...p, [w._id]: e.target.value }))
+                                  }
                                   placeholder="Reject reason (if rejecting)"
                                   className="text-sm"
                                 />
@@ -592,7 +642,11 @@ export default function AdminWithdrawals() {
                                       disabled={busy}
                                       onClick={() => handleUpdateStatus(w._id, "paid")}
                                     >
-                                      {busy ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+                                      {busy ? (
+                                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                                      )}
                                       Mark Paid
                                     </Button>
 
@@ -602,7 +656,11 @@ export default function AdminWithdrawals() {
                                       disabled={busy}
                                       onClick={() => handleUpdateStatus(w._id, "rejected")}
                                     >
-                                      {busy ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <XCircle className="h-3 w-3 mr-1" />}
+                                      {busy ? (
+                                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                      ) : (
+                                        <XCircle className="h-3 w-3 mr-1" />
+                                      )}
                                       Reject
                                     </Button>
                                   </>
@@ -615,7 +673,11 @@ export default function AdminWithdrawals() {
                                     disabled={busy}
                                     onClick={() => handleUpdateStatus(w._id, "paid")}
                                   >
-                                    {busy ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+                                    {busy ? (
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                                    )}
                                     Confirm Payment
                                   </Button>
                                 )}
@@ -627,14 +689,19 @@ export default function AdminWithdrawals() {
                                     disabled={busy}
                                     onClick={() => handleUpdateStatus(w._id, "approved")}
                                   >
-                                    {busy ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <BadgeCheck className="h-3 w-3 mr-1" />}
+                                    {busy ? (
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    ) : (
+                                      <BadgeCheck className="h-3 w-3 mr-1" />
+                                    )}
                                     Approve
                                   </Button>
                                 )}
                               </div>
 
                               <div className="text-[10px] text-muted-foreground">
-                                {w.status === "pending" && "Amount already deducted from wallet"}
+                                {w.status === "pending" &&
+                                  "Amount already deducted from wallet"}
                               </div>
                             </div>
                           </td>
@@ -669,20 +736,30 @@ export default function AdminWithdrawals() {
 
               return (
                 <div className="space-y-6">
-                  {/* User Info Card */}
                   <div className="rounded-lg border bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="font-semibold text-navy text-lg">{u.name || "Unknown User"}</div>
-                        <div className="text-sm text-muted-foreground">{u.email || "-"}</div>
-                        <div className="text-sm text-muted-foreground">{u.phone || "-"}</div>
+                        <div className="font-semibold text-navy text-lg">
+                          {u.name || "Unknown User"}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {u.email || "-"}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {u.phone || "-"}
+                        </div>
                       </div>
                       {statusBadge(w.status)}
                     </div>
 
                     <div className="mt-3 flex items-center gap-2 text-sm">
                       <Wallet className="h-4 w-4 text-muted-foreground" />
-                      <span>Current Balance: <strong>{formatCurrency(w.userCurrentBalance || u.walletBalance)}</strong></span>
+                      <span>
+                        Current Balance:{" "}
+                        <strong>
+                          {formatCurrency(w.userCurrentBalance || u.walletBalance)}
+                        </strong>
+                      </span>
                     </div>
 
                     <div className="text-xs text-muted-foreground mt-2 font-mono">
@@ -690,10 +767,11 @@ export default function AdminWithdrawals() {
                     </div>
                   </div>
 
-                  {/* Bank Details Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="rounded-lg border p-3 bg-white">
-                      <div className="text-xs text-muted-foreground mb-1">Account Holder</div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        Account Holder
+                      </div>
                       <div className="font-semibold">{b.accountHolderName || "-"}</div>
                     </div>
 
@@ -703,8 +781,12 @@ export default function AdminWithdrawals() {
                     </div>
 
                     <div className="rounded-lg border p-3 bg-white">
-                      <div className="text-xs text-muted-foreground mb-1">Account Number</div>
-                      <div className="font-mono font-semibold">{b.accountNumber || "-"}</div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        Account Number
+                      </div>
+                      <div className="font-mono font-semibold">
+                        {b.accountNumber || "-"}
+                      </div>
                     </div>
 
                     <div className="rounded-lg border p-3 bg-white">
@@ -718,12 +800,18 @@ export default function AdminWithdrawals() {
                     </div>
                   </div>
 
-                  {/* Request Details */}
                   <div className="rounded-lg border p-4 bg-gray-50">
-                    <div className="text-xs text-muted-foreground mb-2 font-semibold">Request Details</div>
+                    <div className="text-xs text-muted-foreground mb-2 font-semibold">
+                      Request Details
+                    </div>
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div>
-                        <div className="text-lg">Amount: <span className="font-bold text-navy">{formatCurrency(w.amount)}</span></div>
+                        <div className="text-lg">
+                          Amount:{" "}
+                          <span className="font-bold text-navy">
+                            {formatCurrency(w.amount)}
+                          </span>
+                        </div>
                         <div className="text-xs text-muted-foreground mt-1">
                           Created: {formatDate(w.createdAt)}
                         </div>
@@ -749,7 +837,12 @@ export default function AdminWithdrawals() {
                 Close
               </Button>
               <Button
-                onClick={() => copyText(JSON.stringify(selected?.bankSnapshot || {}, null, 2), "Bank Details")}
+                onClick={() =>
+                  copyText(
+                    JSON.stringify(selected?.bankSnapshot || {}, null, 2),
+                    "Bank Details"
+                  )
+                }
                 className="bg-navy hover:bg-navy/90"
               >
                 <Copy className="h-4 w-4 mr-2" />
@@ -765,7 +858,13 @@ export default function AdminWithdrawals() {
             <DialogHeader>
               <DialogTitle>Confirm Action</DialogTitle>
               <DialogDescription>
-                Are you sure you want to {confirmAction?.status === "paid" ? "mark as paid" : confirmAction?.status === "rejected" ? "reject" : "approve"} this withdrawal request?
+                Are you sure you want to{" "}
+                {confirmAction?.status === "paid"
+                  ? "mark as paid"
+                  : confirmAction?.status === "rejected"
+                  ? "reject"
+                  : "approve"}{" "}
+                this withdrawal request?
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -775,7 +874,7 @@ export default function AdminWithdrawals() {
               <Button
                 onClick={confirmUpdate}
                 className={
-                  confirmAction?.status === "paid" 
+                  confirmAction?.status === "paid"
                     ? "bg-green-600 hover:bg-green-700"
                     : confirmAction?.status === "rejected"
                     ? "bg-red-600 hover:bg-red-700"
