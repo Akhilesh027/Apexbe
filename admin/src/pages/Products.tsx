@@ -26,7 +26,7 @@ interface Product {
   subcategory: string;
   salesPrice: number;
   afterDiscount: number;
-  commission: number; // ✅ Vendor commission (%)
+  commission: number; // Apexbe commission (%)
   finalAmount: number;
   skuCode: string;
   priceType: string;
@@ -35,7 +35,7 @@ interface Product {
   images: string[];
   status: "Pending" | "Approved" | "Rejected" | string;
   createdAt: string;
-  deliveryFee?: number; // ✅ NEW: delivery fee (deducted from vendor share)
+  deliveryFee?: number; // Delivery fee (add-on)
 
   referralCommissions?: Partial<
     Record<string, { percentage?: number; amount?: number }>
@@ -46,19 +46,20 @@ interface Product {
 
 type ActionType = "approve" | "reject";
 
+// Updated referral tiers with District and Mondal Franchiser
 type ReferralTierKey =
   | "stateFranchiser"
+  | "districtFranchiser"
+  | "mondalFranchiser"
   | "franchiser"
-  | "level1"
-  | "level2"
-  | "level3";
+  | "wish";
 
 const REFERRAL_TIERS: { key: ReferralTierKey; label: string }[] = [
   { key: "stateFranchiser", label: "State Franchiser" },
+  { key: "districtFranchiser", label: "District Franchiser" },
+  { key: "mondalFranchiser", label: "Mondal Franchiser" },
   { key: "franchiser", label: "Franchiser" },
-  { key: "level1", label: "Level 1" },
-  { key: "level2", label: "Level 2" },
-  { key: "level3", label: "Level 3" },
+  { key: "wish", label: "Wish" },
 ];
 
 type TierValue = { percentage: number | ""; amount: number | "" };
@@ -66,10 +67,10 @@ type ReferralState = Record<ReferralTierKey, TierValue>;
 
 const emptyReferralState = (): ReferralState => ({
   stateFranchiser: { percentage: "", amount: "" },
+  districtFranchiser: { percentage: "", amount: "" },
+  mondalFranchiser: { percentage: "", amount: "" },
   franchiser: { percentage: "", amount: "" },
-  level1: { percentage: "", amount: "" },
-  level2: { percentage: "", amount: "" },
-  level3: { percentage: "", amount: "" },
+  wish: { percentage: "", amount: "" },
 });
 
 /** ---------------------------
@@ -81,24 +82,23 @@ const pctFromAmt = (amt: number, base: number) => (base > 0 ? (amt / base) * 100
 const amtFromPct = (pct: number, base: number) => (base * pct) / 100;
 
 /**
- * ✅ NEW: Computes vendor amount, delivery fee deduction, and net amount for referrals.
- * netAfterVendor = afterDiscount - vendorAmount - deliveryFee
+ * Computes Apexbe amount, delivery fee deduction, and net amount for referrals.
  */
 const getNetAfterVendor = (
   product: Product,
-  vendorPercent: number | string,
+  apexbePercent: number | string,
   deliveryFee: number | string
 ) => {
   const base = Number(product.afterDiscount || 0);
-  const vp = Number(vendorPercent) || 0;
-  const vendorAmount = round2((base * vp) / 100);
+  const vp = Number(apexbePercent) || 0;
+  const apexbeAmount = round2((base * vp) / 100);
   const delivery = round2(Number(deliveryFee) || 0);
-  const afterVendor = round2(base - vendorAmount);
-  const netAfterVendor = round2(afterVendor - delivery);
-  return { base, vp, vendorAmount, afterVendor, delivery, netAfterVendor };
+  const afterApexbe = round2(base - apexbeAmount);
+  const netAfterVendor = round2(afterApexbe - delivery);
+  return { base, vp, apexbeAmount, afterApexbe, delivery, netAfterVendor };
 };
 
-// ✅ universal extractor (supports array OR {products} OR {data})
+// universal extractor
 const extractProductsArray = (payload: any): Product[] => {
   const list = Array.isArray(payload)
     ? payload
@@ -115,18 +115,18 @@ const Products = () => {
     action: ActionType | null;
   }>({ open: false, action: null });
 
-  /** Vendor commission inputs */
+  /** Apexbe commission inputs */
   const [commissionPercentage, setCommissionPercentage] = useState<number | string>("");
   const [commissionAmount, setCommissionAmount] = useState<number | string>("");
 
-  /** ✅ NEW: Delivery fee */
+  /** Delivery fee */
   const [deliveryFee, setDeliveryFee] = useState<number | string>("");
 
-  /** Referral commissions (based on net after vendor & delivery) */
+  /** Referral commissions */
   const [referral, setReferral] = useState<ReferralState>(emptyReferralState());
 
   /** ---------------------------
-   * Fetch products (✅ SAFE)
+   * Fetch products
    * -------------------------- */
   useEffect(() => {
     const fetchProducts = async () => {
@@ -155,17 +155,14 @@ const Products = () => {
       return;
     }
 
-    // Prefill vendor commission
     const base = selectedProduct.afterDiscount || 0;
     const comm = selectedProduct.commission || 0;
     setCommissionPercentage(comm);
     setCommissionAmount(round2(amtFromPct(comm, base)).toFixed(2));
 
-    // Prefill delivery fee (existing product may have it, default 0)
     const existingDelivery = selectedProduct.deliveryFee ?? 0;
     setDeliveryFee(existingDelivery);
 
-    // Prefill referral commissions (based on net after vendor & delivery)
     const next = emptyReferralState();
     const { netAfterVendor } = getNetAfterVendor(selectedProduct, comm, existingDelivery);
 
@@ -217,7 +214,7 @@ const Products = () => {
   };
 
   /** ---------------------------
-   * Vendor Commission Handlers
+   * Apexbe Commission Handlers
    * -------------------------- */
   const handleCommissionPercentageChange = (value: string) => {
     const percentage = value === "" ? "" : Number(value);
@@ -227,7 +224,6 @@ const Products = () => {
       const base = selectedProduct.afterDiscount || 0;
       setCommissionAmount(round2(amtFromPct(Number(percentage), base)).toFixed(2));
 
-      // Recalc referrals when vendor % changes
       setReferral((prev) => {
         const { netAfterVendor } = getNetAfterVendor(selectedProduct, percentage, deliveryFee);
         const next = { ...prev } as ReferralState;
@@ -275,7 +271,7 @@ const Products = () => {
     }
   };
 
-  /** ✅ NEW: Delivery fee handler */
+  /** Delivery fee handler */
   const handleDeliveryFeeChange = (value: string) => {
     const fee = value === "" ? "" : Number(value);
     setDeliveryFee(fee);
@@ -296,7 +292,6 @@ const Products = () => {
         return next;
       });
     } else if (value === "") {
-      // If cleared, treat as 0 for calculations
       setReferral((prev) => {
         const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, 0);
         const next = { ...prev } as ReferralState;
@@ -315,7 +310,7 @@ const Products = () => {
   };
 
   /** ---------------------------
-   * Referral Handlers (base = netAfterVendor)
+   * Referral Handlers
    * -------------------------- */
   const handleReferralPercentageChange = (tier: ReferralTierKey, value: string) => {
     setReferral((prev) => {
@@ -352,7 +347,7 @@ const Products = () => {
   };
 
   /** ---------------------------
-   * Totals for Referral + Remaining (based on netAfterVendor)
+   * Totals for Referral + Remaining
    * -------------------------- */
   const referralTotals = useMemo(() => {
     if (!selectedProduct) return { netAfterVendor: 0, totalReferral: 0, remaining: 0 };
@@ -368,6 +363,34 @@ const Products = () => {
     return { netAfterVendor, totalReferral, remaining };
   }, [selectedProduct, commissionPercentage, deliveryFee, referral]);
 
+  /** Comprehensive summary for display */
+  const summary = useMemo(() => {
+    if (!selectedProduct) return null;
+    const base = selectedProduct.afterDiscount || 0;
+    const commPercent = Number(commissionPercentage) || 0;
+    const apexbeAmount = round2((base * commPercent) / 100);
+    const delivery = round2(Number(deliveryFee) || 0);
+    const afterApexbe = round2(base - apexbeAmount);
+    const netAfterVendor = round2(afterApexbe - delivery);
+
+    const totalReferral = REFERRAL_TIERS.reduce(
+      (sum, t) => sum + (Number(referral[t.key].amount) || 0),
+      0
+    );
+    const remaining = round2(netAfterVendor - totalReferral);
+
+    return {
+      base,
+      commPercent,
+      apexbeAmount,
+      delivery,
+      afterApexbe,
+      netAfterVendor,
+      totalReferral,
+      remaining,
+    };
+  }, [selectedProduct, commissionPercentage, deliveryFee, referral]);
+
   /** ---------------------------
    * Approve / Reject
    * -------------------------- */
@@ -380,18 +403,16 @@ const Products = () => {
     if (!selectedProduct || !actionDialog.action) return;
 
     const action = actionDialog.action;
-    const vendorCommissionValue = action === "approve" ? Number(commissionPercentage) : 0;
+    const apexbeCommissionValue = action === "approve" ? Number(commissionPercentage) : 0;
     const deliveryFeeValue = action === "approve" ? Number(deliveryFee) || 0 : 0;
 
-    if (action === "approve" && (isNaN(vendorCommissionValue) || vendorCommissionValue < 0)) {
-      toast.error("Please enter a valid non-negative vendor commission value.");
+    if (action === "approve" && (isNaN(apexbeCommissionValue) || apexbeCommissionValue < 0)) {
+      toast.error("Please enter a valid non-negative Apexbe commission value.");
       return;
     }
 
-    // net after vendor & delivery
-    const { netAfterVendor } = getNetAfterVendor(selectedProduct, vendorCommissionValue, deliveryFeeValue);
+    const { netAfterVendor } = getNetAfterVendor(selectedProduct, apexbeCommissionValue, deliveryFeeValue);
 
-    // Build referral payload with both amount + percentage consistent
     const referralPayload = REFERRAL_TIERS.reduce((acc, t) => {
       const p = referral[t.key].percentage;
       const a = referral[t.key].amount;
@@ -411,29 +432,28 @@ const Products = () => {
     const totalReferral = Object.values(referralPayload).reduce((s, x) => s + (x.amount || 0), 0);
 
     if (action === "approve" && totalReferral > netAfterVendor) {
-      toast.error("Referral total cannot exceed Amount After Vendor & Delivery.");
+      toast.error("Referral total cannot exceed Amount After Apexbe & Delivery.");
       return;
     }
 
     try {
       const endpoint = `https://api.apexbee.in/api/products/${selectedProduct._id}/${action}`;
       await axios.post(endpoint, {
-        commission: action === "approve" ? vendorCommissionValue : 0,
-        deliveryFee: action === "approve" ? deliveryFeeValue : 0, // ✅ send delivery fee
+        commission: action === "approve" ? apexbeCommissionValue : 0,
+        deliveryFee: action === "approve" ? deliveryFeeValue : 0,
         referralBase: action === "approve" ? netAfterVendor : 0,
         referralCommissions: action === "approve" ? referralPayload : {},
       });
 
       const newStatus = action === "approve" ? "Approved" : "Rejected";
 
-      // local update
       setProducts((prev) =>
         prev.map((p) =>
           p._id === selectedProduct._id
             ? {
                 ...p,
                 status: newStatus,
-                commission: action === "approve" ? vendorCommissionValue : 0,
+                commission: action === "approve" ? apexbeCommissionValue : 0,
                 deliveryFee: action === "approve" ? deliveryFeeValue : 0,
                 referralCommissions: action === "approve" ? referralPayload : {},
               }
@@ -443,7 +463,7 @@ const Products = () => {
 
       toast.success(
         action === "approve"
-          ? `Product approved. Vendor commission: ${vendorCommissionValue}%, Delivery fee: ${money(deliveryFeeValue)}`
+          ? `Product approved. Apexbe commission: ${apexbeCommissionValue}%, Delivery fee: ${money(deliveryFeeValue)}`
           : "Product rejected."
       );
     } catch (error) {
@@ -460,17 +480,32 @@ const Products = () => {
   };
 
   /** ---------------------------
+   * Helper to calculate total referral for a product (display in table)
+   * -------------------------- */
+  const getTotalReferral = (product: Product): number => {
+    if (!product.referralCommissions) return 0;
+    return round2(
+      Object.values(product.referralCommissions).reduce(
+        (sum, tier) => sum + (tier?.amount || 0),
+        0
+      )
+    );
+  };
+
+  /** ---------------------------
    * Columns
    * -------------------------- */
   const columns = [
     { header: "Product Name", accessor: (item: Product) => item.itemName },
     { header: "Category", accessor: (item: Product) => item.category?.name || "N/A" },
-    { header: "Final Price", accessor: (item: Product) => `₹${(item.afterDiscount || 0).toFixed(2)}` },
-    { header: "Comm. (%)", accessor: (item: Product) => `${item.commission || 0}%` },
+    { header: "Base Price", accessor: (item: Product) => `₹${(item.afterDiscount || 0).toFixed(2)}` },
+    { header: "Apexbe Comm. (%)", accessor: (item: Product) => `${item.commission || 0}%` },
     {
-      header: "Vendor Receipt",
+      header: "Total Referral",
       accessor: (item: Product) =>
-        `₹${round2((item.afterDiscount || 0) * (1 - (item.commission || 0) / 100) - (item.deliveryFee || 0)).toFixed(2)}`,
+        item.status?.toLowerCase() === "approved" && item.referralCommissions
+          ? money(getTotalReferral(item))
+          : "—",
     },
     { header: "SKU Code", accessor: (item: Product) => item.skuCode },
     { header: "Vendor", accessor: (item: Product) => item.vendorId?.name || "N/A" },
@@ -525,7 +560,7 @@ const Products = () => {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-foreground">Product Submissions 📦</h1>
         <p className="text-muted-foreground">
-          Review and approve vendor products. Vendor commission and delivery fee are deducted first, then referral
+          Review and approve vendor products. Apexbe commission and delivery fee are deducted first, then referral
           commissions are calculated on the net amount.
         </p>
       </div>
@@ -586,30 +621,55 @@ const Products = () => {
                 </div>
               </div>
 
-              {/* Right: Pricing + Commissions */}
+              {/* Right: Pricing & Commissions */}
               <div className="space-y-4">
                 <h3 className="font-semibold text-xl border-b pb-2 text-primary">Pricing & Approval</h3>
 
-                {/* Pricing Card */}
-                <div className="p-4 rounded-xl border bg-muted/40 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Base (After Discount)</span>
-                    <span className="font-semibold">{money(selectedProduct.afterDiscount || 0)}</span>
+                {/* Summary Card */}
+                {summary && (
+                  <div className="p-4 rounded-xl border bg-muted/40 space-y-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Product Base Price</span>
+                      <span className="font-bold text-lg">{money(summary.base)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Apexbe Commission</span>
+                      <span className="font-semibold">
+                        {money(summary.apexbeAmount)} ({summary.commPercent}%)
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Delivery Fee (Add‑on)</span>
+                      <span className="font-semibold">{money(summary.delivery)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Total Referrals</span>
+                      <span className="font-semibold">{money(summary.totalReferral)}</span>
+                    </div>
+                    <div className="pt-2 border-t flex justify-between font-bold">
+                      <span>Final Approval Amount</span>
+                      <span className="text-green-600 text-lg">
+                        {money(summary.remaining)}
+                      </span>
+                    </div>
+                    {summary.remaining < 0 && (
+                      <p className="text-xs text-destructive">
+                        ⚠️ Referral total exceeds net amount.
+                      </p>
+                    )}
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Customer Final Sale Price</span>
-                    <span className="font-bold text-green-600">{money(selectedProduct.finalAmount || 0)}</span>
-                  </div>
-                </div>
+                )}
 
-                {/* Only show inputs if pending */}
-                {selectedProduct.status?.toLowerCase() === "pending" && (
+                {/* Editable inputs only for pending */}
+                {selectedProduct.status?.toLowerCase() === "pending" ? (
                   <>
-                    {/* Vendor Commission Card */}
+                    {/* Apexbe Commission Card */}
                     <div className="p-4 border rounded-xl bg-card shadow-sm space-y-4">
                       <div className="flex items-center justify-between">
-                        <h4 className="font-extrabold text-primary">Vendor Commission</h4>
-                        <span className="text-xs text-muted-foreground">Applied on After Discount</span>
+                        <h4 className="font-extrabold text-primary">Apexbe Commission</h4>
+                        <span className="text-xs text-muted-foreground">
+                          Applied on Base Price
+                        </span>
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
@@ -647,32 +707,29 @@ const Products = () => {
                         </div>
                       </div>
 
-                      {(() => {
-                        const { vendorAmount, afterVendor } = getNetAfterVendor(
-                          selectedProduct,
-                          commissionPercentage,
-                          deliveryFee
-                        );
-                        return (
-                          <div className="pt-3 border-t space-y-2">
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">Vendor Commission Value</span>
-                              <span className="font-bold text-destructive">- {money(vendorAmount)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">Amount After Vendor</span>
-                              <span className="font-semibold">{money(afterVendor)}</span>
-                            </div>
+                      {summary && (
+                        <div className="pt-3 border-t space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Commission Value</span>
+                            <span className="font-bold">
+                              {money(summary.apexbeAmount)}
+                            </span>
                           </div>
-                        );
-                      })()}
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">After Commission</span>
+                            <span className="font-semibold">{money(summary.afterApexbe)}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    {/* ✅ NEW: Delivery Fee Card */}
+                    {/* Delivery Fee Card */}
                     <div className="p-4 border rounded-xl bg-card shadow-sm space-y-4">
                       <div className="flex items-center justify-between">
                         <h4 className="font-extrabold text-primary">Delivery Fee</h4>
-                        <span className="text-xs text-muted-foreground">Deducted from vendor share</span>
+                        <span className="text-xs text-muted-foreground">
+                          Deducted before referrals
+                        </span>
                       </div>
                       <Input
                         type="number"
@@ -682,36 +739,31 @@ const Products = () => {
                         min="0"
                         step="0.01"
                       />
-                      {(() => {
-                        const { delivery, afterVendor, netAfterVendor } = getNetAfterVendor(
-                          selectedProduct,
-                          commissionPercentage,
-                          deliveryFee
-                        );
-                        return (
-                          <div className="pt-2">
-                            <div className="flex justify-between text-sm text-muted-foreground">
-                              <span>After Vendor</span>
-                              <span>{money(afterVendor)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm text-destructive">
-                              <span>Delivery Fee</span>
-                              <span>- {money(delivery)}</span>
-                            </div>
-                            <div className="flex justify-between font-bold mt-2">
-                              <span>Net Amount (for Referrals)</span>
-                              <span className="text-green-600">{money(netAfterVendor)}</span>
-                            </div>
+                      {summary && (
+                        <div className="pt-2">
+                          <div className="flex justify-between text-sm text-muted-foreground">
+                            <span>After Commission</span>
+                            <span>{money(summary.afterApexbe)}</span>
                           </div>
-                        );
-                      })()}
+                          <div className="flex justify-between text-sm">
+                            <span>Delivery Fee</span>
+                            <span>{money(summary.delivery)}</span>
+                          </div>
+                          <div className="flex justify-between font-bold mt-2">
+                            <span>Net for Referrals</span>
+                            <span className="text-green-600">{money(summary.netAfterVendor)}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Referral Commissions */}
                     <div className="p-4 border rounded-xl bg-card shadow-sm space-y-5">
                       <div className="flex items-center justify-between">
                         <h4 className="text-base font-extrabold text-primary">Referral Commissions</h4>
-                        <span className="text-xs text-muted-foreground">Base: Net Amount (After Vendor & Delivery)</span>
+                        <span className="text-xs text-muted-foreground">
+                          Base: Net Amount (After Apexbe & Delivery)
+                        </span>
                       </div>
 
                       <div className="space-y-3">
@@ -759,12 +811,16 @@ const Products = () => {
                       <div className="pt-3 border-t space-y-2">
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-muted-foreground">Total Referral</span>
-                          <span className="font-bold text-destructive">- {money(referralTotals.totalReferral)}</span>
+                          <span className="font-bold">
+                            {money(referralTotals.totalReferral)}
+                          </span>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <span className="font-semibold">Remaining After Referrals</span>
-                          <span className="font-extrabold text-lg">{money(referralTotals.remaining)}</span>
+                          <span className="font-extrabold text-lg">
+                            {money(referralTotals.remaining)}
+                          </span>
                         </div>
 
                         {referralTotals.remaining < 0 && (
@@ -798,6 +854,10 @@ const Products = () => {
                       </Button>
                     </div>
                   </>
+                ) : (
+                  <div className="p-4 text-center text-muted-foreground border rounded-xl bg-muted/30">
+                    This product has been <strong>{selectedProduct.status}</strong>. Commissions are locked.
+                  </div>
                 )}
               </div>
             </div>
@@ -815,41 +875,30 @@ const Products = () => {
 
             <DialogDescription>
               Are you sure you want to <strong>{actionDialog.action}</strong> this product?
-              {actionDialog.action === "approve" && selectedProduct && (
+              {actionDialog.action === "approve" && summary && (
                 <div className="mt-3 space-y-2">
-                  {(() => {
-                    const { vendorAmount, afterVendor, delivery, netAfterVendor } = getNetAfterVendor(
-                      selectedProduct,
-                      commissionPercentage,
-                      deliveryFee
-                    );
-                    return (
-                      <>
-                        <p className="text-sm">
-                          Vendor Commission:{" "}
-                          <span className="font-semibold text-yellow-600">
-                            {Number(commissionPercentage) || 0}% ({money(vendorAmount)})
-                          </span>
-                        </p>
-                        <p className="text-sm">
-                          Delivery Fee:{" "}
-                          <span className="font-semibold text-orange-600">{money(delivery)}</span>
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Amount After Vendor: <strong>{money(afterVendor)}</strong>
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Net Amount (for Referrals): <strong>{money(netAfterVendor)}</strong>
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Total Referral: <strong>{money(referralTotals.totalReferral)}</strong>
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Remaining: <strong>{money(referralTotals.remaining)}</strong>
-                        </p>
-                      </>
-                    );
-                  })()}
+                  <p className="text-sm">
+                    Product Base Price:{" "}
+                    <span className="font-semibold">{money(summary.base)}</span>
+                  </p>
+                  <p className="text-sm">
+                    Apexbe Commission:{" "}
+                    <span className="font-semibold">
+                      {summary.commPercent}% ({money(summary.apexbeAmount)})
+                    </span>
+                  </p>
+                  <p className="text-sm">
+                    Delivery Fee (Add‑on):{" "}
+                    <span className="font-semibold">{money(summary.delivery)}</span>
+                  </p>
+                  <p className="text-sm">
+                    Total Referrals:{" "}
+                    <span className="font-semibold">{money(summary.totalReferral)}</span>
+                  </p>
+                  <p className="text-sm">
+                    Final Approval Amount:{" "}
+                    <span className="font-bold text-green-600">{money(summary.remaining)}</span>
+                  </p>
                 </div>
               )}
             </DialogDescription>
@@ -862,7 +911,7 @@ const Products = () => {
             <Button
               onClick={confirmAction}
               variant={actionDialog.action === "reject" ? "destructive" : "default"}
-              disabled={actionDialog.action === "approve" && referralTotals.remaining < 0}
+              disabled={actionDialog.action === "approve" && summary && summary.remaining < 0}
             >
               {actionDialog.action === "approve" ? "Yes, Approve" : "Yes, Reject"}
             </Button>

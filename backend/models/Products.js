@@ -115,7 +115,8 @@ deliveryFee: { type: Number, default: 0 }, // deducted from vendor's share befor
     referralBase: { type: Number, default: 0 },
     referralCommissions: { type: referralCommissionsSchema, default: () => ({}) },
     totalReferralAmount: { type: Number, default: 0 },
-
+   ratings: { type: Number, default: 0, min: 0, max: 5 },
+    numberOfRatings: { type: Number, default: 0 },
     // pickup + preorder
     fulfillment: { type: fulfillmentSchema, default: () => ({}) },
     preOrder: { type: preOrderSchema, default: () => ({}) },
@@ -200,4 +201,5 @@ productSchema.pre("save", function (next) {
     next(e);
   }
 });
+
 export default mongoose.model("Products", productSchema);

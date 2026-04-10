@@ -36,11 +36,13 @@ app.use(cors({
     "http://localhost:8081",
     "http://localhost:5173",
     "https://admin.apexbee.in",
+    "https://admin.apexbee.in/withdrow",
+    "http://localhost:8080/withdrow",
     "https://vendor.apexbee.in",
     "https://api.apexbee.in"
   ],
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS","PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
 
@@ -1696,8 +1698,45 @@ const setWalletBalance = (user, value) => {
 // ======================
 
 // 1. STATS ROUTE (MOST SPECIFIC - COMES FIRST)
+const protect = async (req, res, next) => {
+  let token;
+  if (req.headers.authorization?.startsWith("Bearer")) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+
+  if (!token) {
+    console.warn("⚠️ Auth failed: No token provided");
+    return res.status(401).json({ message: "Not authorized, no token" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = await User.findById(decoded.id).select("-password");
+    if (!req.user) {
+      console.warn(`⚠️ Auth failed: User ${decoded.id} not found`);
+      return res.status(401).json({ message: "User not found" });
+    }
+    next();
+  } catch (error) {
+    console.error("❌ JWT verification error:", error.message);
+    return res.status(401).json({ message: "Not authorized, token failed" });
+  }
+};
+
+const admin = (req, res, next) => {
+  if (req.user && req.user.role === "admin") {
+    next();
+  } else {
+    console.warn(`⚠️ Admin access denied for user ${req.user?._id}`);
+    res.status(403).json({ message: "Admin access required" });
+  }
+};
+// ==================== Admin Routes ====================
+
+// GET stats
 app.get("/api/admin/withdrawals/stats", async (req, res) => {
   try {
+    console.log("📊 Fetching withdrawal stats...");
     const stats = await Withdrawal.aggregate([
       {
         $group: {
@@ -1718,6 +1757,7 @@ app.get("/api/admin/withdrawals/stats", async (req, res) => {
       { $group: { _id: null, total: { $sum: "$amount" } } }
     ]);
     
+    console.log(`✅ Stats fetched. Pending total: ${pendingAmount[0]?.total || 0}`);
     return res.json({
       success: true,
       stats,
@@ -1725,26 +1765,58 @@ app.get("/api/admin/withdrawals/stats", async (req, res) => {
       paidTotal: totalWithdrawn[0]?.total || 0
     });
   } catch (error) {
-    console.error("Stats error:", error);
+    console.error("❌ Stats error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// 2. GET SINGLE WITHDRAWAL
+// GET all withdrawals (collection)
+app.get("/api/admin/withdrawals", async (req, res) => {
+  try {
+    const status = req.query.status;
+    const filter = status && status !== "all" ? { status } : {};
+    console.log(`📋 Fetching withdrawals with filter: ${JSON.stringify(filter)}`);
+    
+    const withdrawals = await Withdrawal.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .populate("userId", "name email phone referralCode walletBalance purchaseCommissionTotal")
+      .lean();
+    
+    const withdrawalsWithBalance = withdrawals.map(w => ({
+      ...w,
+      userCurrentBalance: w.userId ? getWalletBalance(w.userId) : 0
+    }));
+    
+    console.log(`✅ Fetched ${withdrawals.length} withdrawals (filter: ${status || "all"})`);
+    return res.json({ withdrawals: withdrawalsWithBalance });
+  } catch (error) {
+    console.error("❌ Admin GET withdrawals error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+// GET single withdrawal
 app.get("/api/admin/withdrawals/:id", async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    const id = req.params.id;
+    console.log(`🔍 Fetching single withdrawal with ID: ${id}`);
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      console.warn(`⚠️ Invalid withdrawal ID format: ${id}`);
       return res.status(400).json({ success: false, message: "Invalid withdrawal ID format" });
     }
     
-    const withdrawal = await Withdrawal.findById(req.params.id)
+    const withdrawal = await Withdrawal.findById(id)
       .populate("userId", "name email phone walletBalance purchaseCommissionTotal")
       .lean();
     
     if (!withdrawal) {
+      console.warn(`⚠️ Withdrawal not found: ${id}`);
       return res.status(404).json({ success: false, message: "Withdrawal not found" });
     }
     
+    console.log(`✅ Found withdrawal: ${withdrawal._id}, status: ${withdrawal.status}`);
     return res.json({
       success: true,
       withdrawal: {
@@ -1753,12 +1825,12 @@ app.get("/api/admin/withdrawals/:id", async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Get single withdrawal error:", error);
+    console.error("❌ Get single withdrawal error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// 3. UPDATE WITHDRAWAL STATUS (APPROVE/REJECT/PAID)
+// PATCH update withdrawal status
 app.patch("/api/admin/withdrawals/:id", async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -1768,6 +1840,7 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
     const allowed = ["pending", "approved", "rejected", "paid"];
     
     if (!allowed.includes(status)) {
+      console.warn(`⚠️ Invalid status provided: ${status}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ 
@@ -1777,6 +1850,7 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
     }
     
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      console.warn(`⚠️ Invalid withdrawal ID format: ${req.params.id}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ 
@@ -1785,9 +1859,10 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
       });
     }
     
-    // Find the withdrawal
+    // Find withdrawal
     const withdrawal = await Withdrawal.findById(req.params.id).session(session);
     if (!withdrawal) {
+      console.warn(`⚠️ Withdrawal not found for update: ${req.params.id}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(404).json({ 
@@ -1797,9 +1872,11 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
     }
     
     const prevStatus = withdrawal.status;
+    console.log(`🔄 Updating withdrawal ${req.params.id} from ${prevStatus} to ${status}`);
     
-    // Prevent changing status of already finalized withdrawals
+    // Prevent invalid transitions
     if (prevStatus === "paid") {
+      console.warn(`⚠️ Attempt to modify already paid withdrawal: ${req.params.id}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ 
@@ -1809,6 +1886,7 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
     }
     
     if (prevStatus === "rejected" && status !== "rejected") {
+      console.warn(`⚠️ Attempt to change rejected withdrawal: ${req.params.id}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ 
@@ -1820,6 +1898,7 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
     // Get user
     const user = await User.findById(withdrawal.userId).session(session);
     if (!user) {
+      console.error(`❌ User not found for withdrawal: ${withdrawal.userId}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(404).json({ 
@@ -1830,13 +1909,13 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
     
     const amount = round2(withdrawal.amount);
     
-    // Handle wallet changes based on status transition
+    // Handle wallet refund on rejection
     if (status === "rejected" && prevStatus !== "rejected") {
-      // Refund the amount back to user
       const currentBalance = getWalletBalance(user);
-      setWalletBalance(user, currentBalance + amount);
+      const newBalance = currentBalance + amount;
+      setWalletBalance(user, newBalance);
       await user.save({ session });
-      console.log(`✅ Refunded ₹${amount} to user ${user._id}. New balance: ${getWalletBalance(user)}`);
+      console.log(`💰 Refunded ₹${amount} to user ${user._id}. New balance: ₹${newBalance}`);
     }
     
     // Update withdrawal record
@@ -1853,11 +1932,12 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
     
     await withdrawal.save({ session });
     
-    // Commit the transaction
     await session.commitTransaction();
     session.endSession();
     
-    // Fetch updated withdrawal with user data
+    console.log(`✅ Withdrawal ${req.params.id} updated to ${status}`);
+    
+    // Fetch updated withdrawal
     const updatedWithdrawal = await Withdrawal.findById(req.params.id)
       .populate("userId", "name email phone walletBalance purchaseCommissionTotal")
       .lean();
@@ -1880,7 +1960,7 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
-    console.error("Admin withdrawal update error:", error);
+    console.error("❌ Admin withdrawal update error:", error);
     return res.status(500).json({ 
       success: false, 
       message: error.message || "Server error" 
@@ -1888,73 +1968,77 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
   }
 });
 
-// 4. GET ALL WITHDRAWALS (COLLECTION ROUTE - COMES LAST)
-app.get("/api/admin/withdrawals", async (req, res) => {
-  try {
-    const status = req.query.status;
-    const filter = status && status !== "all" ? { status } : {};
-    
-    const withdrawals = await Withdrawal.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(500)
-      .populate("userId", "name email phone referralCode walletBalance purchaseCommissionTotal")
-      .lean();
-    
-    const withdrawalsWithBalance = withdrawals.map(w => ({
-      ...w,
-      userCurrentBalance: w.userId ? getWalletBalance(w.userId) : 0
-    }));
-    
-    return res.json({ withdrawals: withdrawalsWithBalance });
-  } catch (error) {
-    console.error("Admin GET withdrawals error:", error);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
+// ==================== User Routes ====================
 
-// 5. USER - GET THEIR WITHDRAWALS
+// GET user's own withdrawals (by userId query param)
 app.get("/api/wallet/withdrawals", async (req, res) => {
   try {
+    const userId = req.query.userId;
+    if (!userId) {
+      return res.status(400).json({ message: "userId query parameter required" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: "Invalid userId format" });
+    }
+    
     const limit = Math.max(1, Math.min(parseInt(req.query.limit || "25", 10), 100));
     
-    const withdrawals = await Withdrawal.find({ userId: req.user.id })
+    const withdrawals = await Withdrawal.find({ userId })
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
     
+    console.log(`👤 User ${userId} fetched ${withdrawals.length} withdrawals`);
+    
     return res.json({ withdrawals });
   } catch (e) {
-    console.error("GET withdrawals error:", e);
+    console.error("❌ User GET withdrawals error:", e);
     return res.status(500).json({ message: "Server error" });
   }
 });
 
-// 6. USER - CREATE WITHDRAWAL REQUEST
+// POST create withdrawal request (userId in body)
 app.post("/api/wallet/withdrawals", async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   
   try {
-    const amount = round2(req.body?.amount);
-    const note = (req.body?.note || "").trim();
+    const { userId, amount: rawAmount, note: rawNote } = req.body;
+    
+    if (!userId) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "userId is required" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid userId format" });
+    }
+    
+    const amount = round2(rawAmount);
+    const note = (rawNote || "").trim();
     
     if (!amount || amount <= 0) {
+      console.warn(`⚠️ Invalid withdrawal amount: ${rawAmount} from user ${userId}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid amount" });
     }
     
-    // Check bank details
-    const bank = await BankDetails.findOne({ userId: req.user.id }).session(session);
+    // Check bank details exist
+    const bank = await BankDetails.findOne({ userId }).session(session);
     if (!bank) {
+      console.warn(`⚠️ No bank details for user ${userId}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Please save your bank details first" });
     }
     
     // Check user balance
-    const user = await User.findById(req.user.id).session(session);
+    const user = await User.findById(userId).session(session);
     if (!user) {
+      console.error(`❌ User ${userId} not found during withdrawal creation`);
       await session.abortTransaction();
       session.endSession();
       return res.status(404).json({ message: "User not found" });
@@ -1963,6 +2047,7 @@ app.post("/api/wallet/withdrawals", async (req, res) => {
     const available = getWalletBalance(user);
     
     if (amount > available) {
+      console.warn(`⚠️ Insufficient balance: requested ₹${amount}, available ₹${available} for user ${userId}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ 
@@ -1970,13 +2055,15 @@ app.post("/api/wallet/withdrawals", async (req, res) => {
       });
     }
     
-    // Deduct from wallet immediately
+    // Deduct from wallet
     setWalletBalance(user, available - amount);
     await user.save({ session });
     
+    console.log(`💰 Deducted ₹${amount} from user ${userId}, new balance: ₹${user.walletBalance}`);
+    
     // Create withdrawal record
-    const withdrawal = await Withdrawal.create([{
-      userId: req.user.id,
+    const [withdrawal] = await Withdrawal.create([{
+      userId,
       amount,
       note,
       status: "pending",
@@ -1992,16 +2079,18 @@ app.post("/api/wallet/withdrawals", async (req, res) => {
     await session.commitTransaction();
     session.endSession();
     
+    console.log(`📝 Withdrawal request created: ${withdrawal._id} for ₹${amount} by user ${userId}`);
+    
     return res.status(201).json({ 
       message: "Withdrawal request created successfully", 
-      withdrawal: withdrawal[0],
+      withdrawal,
       remainingBalance: getWalletBalance(user)
     });
     
   } catch (e) {
     await session.abortTransaction();
     session.endSession();
-    console.error("POST withdrawals error:", e);
+    console.error("❌ POST withdrawals error:", e);
     return res.status(500).json({ message: "Server error" });
   }
 });
@@ -6984,6 +7073,9 @@ const Review = mongoose.model("Review", reviewSchema);
 
 // ✅ Create review (delivered only)
 app.post("/api/product/reviews", async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { orderId, productId, userId, rating, title, comment } = req.body;
 
@@ -6994,7 +7086,8 @@ app.post("/api/product/reviews", async (req, res) => {
       });
     }
 
-    if (!rating || Number(rating) < 1 || Number(rating) > 5) {
+    const ratingValue = Number(rating);
+    if (!ratingValue || ratingValue < 1 || ratingValue > 5) {
       return res.status(400).json({
         success: false,
         message: "rating must be between 1-5",
@@ -7002,31 +7095,28 @@ app.post("/api/product/reviews", async (req, res) => {
     }
 
     // 1️⃣ Check order exists
-    const order = await Order.findById(orderId).lean();
+    const order = await Order.findById(orderId).session(session).lean();
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     // 2️⃣ Check ownership
     if (String(order.userId) !== String(userId)) {
-      return res.status(403).json({
-        success: false,
-        message: "Not allowed",
-      });
+      await session.abortTransaction();
+      return res.status(403).json({ success: false, message: "Not allowed" });
     }
 
     // 3️⃣ Check delivered
     if (order?.orderStatus?.currentStatus !== "delivered") {
+      await session.abortTransaction();
       return res.status(400).json({
         success: false,
         message: "Review allowed only after delivery",
       });
     }
 
-    // 🔥 FIX FOR POPULATED productId
+    // 4️⃣ Verify product is in order
     const normalizeId = (v) => {
       if (!v) return null;
       if (typeof v === "string") return v;
@@ -7034,33 +7124,54 @@ app.post("/api/product/reviews", async (req, res) => {
     };
 
     const productIdStr = normalizeId(productId);
-
     const hasProduct = Array.isArray(order.orderItems)
-      ? order.orderItems.some(
-          (it) => normalizeId(it.productId) === productIdStr
-        )
+      ? order.orderItems.some((it) => normalizeId(it.productId) === productIdStr)
       : false;
 
     if (!hasProduct) {
+      await session.abortTransaction();
       return res.status(400).json({
         success: false,
         message: "This product is not part of the order",
       });
     }
 
-    // 4️⃣ Create review
-    const review = await Review.create({
-      orderId,
-      productId,
-      userId,
-      rating: Number(rating),
-      title: title || "",
-      comment: comment || "",
-      isVerifiedPurchase: true,
-    });
+    // 5️⃣ Create review
+    const review = await Review.create(
+      [
+        {
+          orderId,
+          productId,
+          userId,
+          rating: ratingValue,
+          title: title || "",
+          comment: comment || "",
+          isVerifiedPurchase: true,
+        },
+      ],
+      { session }
+    );
 
-    res.json({ success: true, review });
+    // 6️⃣ Update product ratings
+    const product = await Products.findById(productId).session(session);
+    if (product) {
+      const oldTotal = (product.ratings || 0) * (product.numberOfRatings || 0);
+      const newCount = (product.numberOfRatings || 0) + 1;
+      const newRating = (oldTotal + ratingValue) / newCount;
+
+      product.ratings = Math.round(newRating * 10) / 10; // keep 1 decimal
+      product.numberOfRatings = newCount;
+      await product.save({ session });
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({ success: true, review: review[0] });
   } catch (e) {
+    await session.abortTransaction();
+    session.endSession();
+
     if (e.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -7069,10 +7180,7 @@ app.post("/api/product/reviews", async (req, res) => {
     }
 
     console.error("Review create error:", e);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -7414,6 +7522,8 @@ app.post("/api/clear/cart", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+
 import shiprocketRoutes from "./routes/shiprocketRoutes.js";
 
 console.log("MONGO_URI loaded:", !!process.env.MONGO_URI);

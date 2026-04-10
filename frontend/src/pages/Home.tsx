@@ -281,59 +281,65 @@ const Home = () => {
     return "Location set";
   }, [userLocation]);
 
-  const renderProductCard = (p: Product) => {
-    const title = p.itemName || p.name || "Product";
-    const img = p.images?.[0] || "/placeholder-product.png";
-    const { price, mrp, percentOff } = getDisplayPrices(p);
+const renderProductCard = (p: Product) => {
+  const title = p.itemName || p.name || "Product";
+  const img = p.images?.[0] || "/placeholder-product.png";
+  const { price, mrp, percentOff } = getDisplayPrices(p);
 
-    return (
-      <button
-        key={p._id}
-        onClick={() => navigate(`/product/${p._id}`)}
-        className="text-left bg-white border rounded-2xl overflow-hidden hover:shadow-lg transition-shadow group w-full"
-      >
-        <div className="h-44 bg-muted overflow-hidden">
-          <img
-            src={img}
-            alt={title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            loading="lazy"
-          />
-        </div>
+  // Use new rating fields: ratings (average) and numberOfRatings (count)
+  const avgRating = typeof p.ratings === "number" ? p.ratings : 0;
+  const ratingCount = typeof p.numberOfRatings === "number" ? p.numberOfRatings : 0;
 
-        <div className="p-4">
-          <p className="font-semibold text-navy line-clamp-2">{title}</p>
+  return (
+    <button
+      key={p._id}
+      onClick={() => navigate(`/product/${p._id}`)}
+      className="text-left bg-white border rounded-2xl overflow-hidden hover:shadow-lg transition-shadow group w-full"
+    >
+      <div className="h-44 bg-muted overflow-hidden">
+        <img
+          src={img}
+          alt={title}
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          loading="lazy"
+        />
+      </div>
 
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-lg font-bold text-navy">{price > 0 ? formatINR(price) : "₹—"}</span>
+      <div className="p-4">
+        <p className="font-semibold text-navy line-clamp-2">{title}</p>
 
-            {mrp > 0 && (
-              <span className="text-sm text-muted-foreground line-through">{formatINR(mrp)}</span>
-            )}
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-lg font-bold text-navy">{price > 0 ? formatINR(price) : "₹—"}</span>
 
-            {percentOff > 0 && (
-              <span className="ml-auto text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-bold">
-                {percentOff}% OFF
-              </span>
-            )}
-          </div>
+          {mrp > 0 && (
+            <span className="text-sm text-muted-foreground line-through">{formatINR(mrp)}</span>
+          )}
 
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-xs px-2 py-1 rounded-full bg-blue-light text-navy font-semibold">
-              ⭐ {p.rating || 4.0}
+          {percentOff > 0 && (
+            <span className="ml-auto text-xs px-2 py-1 rounded-full bg-green-100 text-green-700 font-bold">
+              {percentOff}% OFF
             </span>
-            <span className="text-xs text-muted-foreground">({p.reviews || 0})</span>
-
-            {p.tag && (
-              <span className="ml-auto text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-800 font-semibold">
-                {p.tag}
-              </span>
-            )}
-          </div>
+          )}
         </div>
-      </button>
-    );
-  };
+
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs px-2 py-1 rounded-full bg-blue-light text-navy font-semibold">
+            ⭐ {avgRating > 0 ? avgRating.toFixed(1) : "—"}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {ratingCount > 0 ? `(${ratingCount})` : "(0)"}
+          </span>
+
+          {p.tag && (
+            <span className="ml-auto text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-800 font-semibold">
+              {p.tag}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+};
 
   return (
     <div className="min-h-screen bg-background">
