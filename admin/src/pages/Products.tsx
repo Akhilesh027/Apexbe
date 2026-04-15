@@ -26,8 +26,8 @@ interface Product {
   subcategory: string;
   salesPrice: number;
   afterDiscount: number;
-  commission: number; // Apexbe commission (%)
-  finalAmount: number;
+  commission: number; // Apex Bee Fee (%)
+  finalAmount: number; // Vendor gets this (afterDiscount - fee)
   skuCode: string;
   priceType: string;
   openStock: number;
@@ -35,31 +35,37 @@ interface Product {
   images: string[];
   status: "Pending" | "Approved" | "Rejected" | string;
   createdAt: string;
-  deliveryFee?: number; // Delivery fee (add-on)
-
+  deliveryFee?: number; // legacy, now replaced by shipping+packing
+  shippingCharges?: number;
+  packingCharges?: number;
   referralCommissions?: Partial<
     Record<string, { percentage?: number; amount?: number }>
   >;
-
   [key: string]: any;
 }
 
 type ActionType = "approve" | "reject";
 
-// Updated referral tiers with District and Mondal Franchiser
+// 8 referral tiers exactly as per the image
 type ReferralTierKey =
   | "stateFranchiser"
   | "districtFranchiser"
   | "mondalFranchiser"
-  | "franchiser"
-  | "wish";
+  | "wishLink"
+  | "firstPurchase"
+  | "level1"
+  | "level2"
+  | "level3";
 
-const REFERRAL_TIERS: { key: ReferralTierKey; label: string }[] = [
-  { key: "stateFranchiser", label: "State Franchiser" },
-  { key: "districtFranchiser", label: "District Franchiser" },
-  { key: "mondalFranchiser", label: "Mondal Franchiser" },
-  { key: "franchiser", label: "Franchiser" },
-  { key: "wish", label: "Wish" },
+const REFERRAL_TIERS: { key: ReferralTierKey; label: string; defaultPercent?: number }[] = [
+  { key: "stateFranchiser", label: "State Franchiser", defaultPercent: 2.5 },
+  { key: "districtFranchiser", label: "District Franchiser", defaultPercent: 5 },
+  { key: "mondalFranchiser", label: "Mondal Franchiser", defaultPercent: 5 },
+  { key: "wishLink", label: "Wish Link Incentive", defaultPercent: 5 },
+  { key: "firstPurchase", label: "1st Purchase Incentive", defaultPercent: 25 },
+  { key: "level1", label: "Level 1", defaultPercent: 10 },
+  { key: "level2", label: "Level 2", defaultPercent: 5 },
+  { key: "level3", label: "Level 3", defaultPercent: 2.5 },
 ];
 
 type TierValue = { percentage: number | ""; amount: number | "" };
@@ -69,8 +75,11 @@ const emptyReferralState = (): ReferralState => ({
   stateFranchiser: { percentage: "", amount: "" },
   districtFranchiser: { percentage: "", amount: "" },
   mondalFranchiser: { percentage: "", amount: "" },
-  franchiser: { percentage: "", amount: "" },
-  wish: { percentage: "", amount: "" },
+  wishLink: { percentage: "", amount: "" },
+  firstPurchase: { percentage: "", amount: "" },
+  level1: { percentage: "", amount: "" },
+  level2: { percentage: "", amount: "" },
+  level3: { percentage: "", amount: "" },
 });
 
 /** ---------------------------
@@ -82,23 +91,26 @@ const pctFromAmt = (amt: number, base: number) => (base > 0 ? (amt / base) * 100
 const amtFromPct = (pct: number, base: number) => (base * pct) / 100;
 
 /**
- * Computes Apexbe amount, delivery fee deduction, and net amount for referrals.
+ * Correct financial model:
+ * - Vendor gets: afterDiscount - Apex Bee Fee
+ * - Apex Bee Fee pool is used to pay all referral commissions
+ * - Shipping & Packing charges are add-ons for the customer, NOT deducted from vendor
  */
-const getNetAfterVendor = (
+const getFinancials = (
   product: Product,
-  apexbePercent: number | string,
-  deliveryFee: number | string
+  apexBeePercent: number | string,
+  shipping: number | string,
+  packing: number | string
 ) => {
   const base = Number(product.afterDiscount || 0);
-  const vp = Number(apexbePercent) || 0;
-  const apexbeAmount = round2((base * vp) / 100);
-  const delivery = round2(Number(deliveryFee) || 0);
-  const afterApexbe = round2(base - apexbeAmount);
-  const netAfterVendor = round2(afterApexbe - delivery);
-  return { base, vp, apexbeAmount, afterApexbe, delivery, netAfterVendor };
+  const feePercent = Number(apexBeePercent) || 0;
+  const apexBeeFee = round2((base * feePercent) / 100);
+  const vendorAmount = round2(base - apexBeeFee);
+  const shippingCost = round2(Number(shipping) || 0);
+  const packingCost = round2(Number(packing) || 0);
+  return { base, feePercent, apexBeeFee, vendorAmount, shippingCost, packingCost };
 };
 
-// universal extractor
 const extractProductsArray = (payload: any): Product[] => {
   const list = Array.isArray(payload)
     ? payload
@@ -109,20 +121,20 @@ const extractProductsArray = (payload: any): Product[] => {
 const Products = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-
   const [actionDialog, setActionDialog] = useState<{
     open: boolean;
     action: ActionType | null;
   }>({ open: false, action: null });
 
-  /** Apexbe commission inputs */
-  const [commissionPercentage, setCommissionPercentage] = useState<number | string>("");
-  const [commissionAmount, setCommissionAmount] = useState<number | string>("");
+  // Apex Bee Fee (%)
+  const [apexBeePercent, setApexBeePercent] = useState<number | string>("");
+  const [apexBeeAmount, setApexBeeAmount] = useState<number | string>("");
 
-  /** Delivery fee */
-  const [deliveryFee, setDeliveryFee] = useState<number | string>("");
+  // Add-ons (for customer, not deducted from vendor)
+  const [shippingCharges, setShippingCharges] = useState<number | string>("");
+  const [packingCharges, setPackingCharges] = useState<number | string>("");
 
-  /** Referral commissions */
+  // Referral commissions
   const [referral, setReferral] = useState<ReferralState>(emptyReferralState());
 
   /** ---------------------------
@@ -148,41 +160,50 @@ const Products = () => {
    * -------------------------- */
   useEffect(() => {
     if (!selectedProduct) {
-      setCommissionPercentage("");
-      setCommissionAmount("");
-      setDeliveryFee("");
+      setApexBeePercent("");
+      setApexBeeAmount("");
+      setShippingCharges("");
+      setPackingCharges("");
       setReferral(emptyReferralState());
       return;
     }
 
     const base = selectedProduct.afterDiscount || 0;
     const comm = selectedProduct.commission || 0;
-    setCommissionPercentage(comm);
-    setCommissionAmount(round2(amtFromPct(comm, base)).toFixed(2));
+    setApexBeePercent(comm);
+    setApexBeeAmount(round2(amtFromPct(comm, base)).toFixed(2));
 
-    const existingDelivery = selectedProduct.deliveryFee ?? 0;
-    setDeliveryFee(existingDelivery);
+    // Load existing add-ons
+    setShippingCharges(selectedProduct.shippingCharges ?? 0);
+    setPackingCharges(selectedProduct.packingCharges ?? 0);
 
+    // Load existing referral commissions
     const next = emptyReferralState();
-    const { netAfterVendor } = getNetAfterVendor(selectedProduct, comm, existingDelivery);
-
+    const { apexBeeFee } = getFinancials(selectedProduct, comm, selectedProduct.shippingCharges ?? 0, selectedProduct.packingCharges ?? 0);
     const stored = selectedProduct.referralCommissions || {};
+
     for (const { key } of REFERRAL_TIERS) {
       const p = stored?.[key]?.percentage;
       const a = stored?.[key]?.amount;
 
       if (typeof p === "number" && !Number.isNaN(p)) {
         next[key].percentage = round2(p);
-        next[key].amount = round2(amtFromPct(p, netAfterVendor));
+        next[key].amount = round2(amtFromPct(p, apexBeeFee));
       } else if (typeof a === "number" && !Number.isNaN(a)) {
         next[key].amount = round2(a);
-        next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
+        next[key].percentage = round2(pctFromAmt(a, apexBeeFee));
       } else {
-        next[key].percentage = "";
-        next[key].amount = "";
+        // Optionally pre-fill with default percentages from the image
+        const defaultPct = REFERRAL_TIERS.find(t => t.key === key)?.defaultPercent;
+        if (defaultPct) {
+          next[key].percentage = defaultPct;
+          next[key].amount = round2(amtFromPct(defaultPct, apexBeeFee));
+        } else {
+          next[key].percentage = "";
+          next[key].amount = "";
+        }
       }
     }
-
     setReferral(next);
   }, [selectedProduct]);
 
@@ -214,108 +235,88 @@ const Products = () => {
   };
 
   /** ---------------------------
-   * Apexbe Commission Handlers
+   * Apex Bee Fee Handlers (mutually exclusive % ↔ amount)
    * -------------------------- */
-  const handleCommissionPercentageChange = (value: string) => {
-    const percentage = value === "" ? "" : Number(value);
-    setCommissionPercentage(percentage);
+  const handleApexBeePercentChange = (value: string) => {
+    const percent = value === "" ? "" : Number(value);
+    setApexBeePercent(percent);
 
-    if (selectedProduct && percentage !== "" && !isNaN(Number(percentage))) {
+    if (selectedProduct && percent !== "" && !isNaN(Number(percent))) {
       const base = selectedProduct.afterDiscount || 0;
-      setCommissionAmount(round2(amtFromPct(Number(percentage), base)).toFixed(2));
+      const newAmount = round2(amtFromPct(Number(percent), base));
+      setApexBeeAmount(newAmount.toFixed(2));
 
-      setReferral((prev) => {
-        const { netAfterVendor } = getNetAfterVendor(selectedProduct, percentage, deliveryFee);
+      // Recalculate all referral amounts based on new apexBeeFee
+      const { apexBeeFee } = getFinancials(selectedProduct, percent, shippingCharges, packingCharges);
+      setReferral(prev => {
         const next = { ...prev } as ReferralState;
         for (const { key } of REFERRAL_TIERS) {
           const p = Number(next[key].percentage);
           const a = Number(next[key].amount);
           if (next[key].percentage !== "" && Number.isFinite(p)) {
-            next[key].amount = round2(amtFromPct(p, netAfterVendor));
+            next[key].amount = round2(amtFromPct(p, apexBeeFee));
           } else if (next[key].amount !== "" && Number.isFinite(a)) {
-            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
+            next[key].percentage = round2(pctFromAmt(a, apexBeeFee));
           }
         }
         return next;
       });
     } else if (value === "") {
-      setCommissionAmount("");
+      setApexBeeAmount("");
     }
   };
 
-  const handleCommissionAmountChange = (value: string) => {
+  const handleApexBeeAmountChange = (value: string) => {
     const amount = value === "" ? "" : Number(value);
-    setCommissionAmount(amount);
+    setApexBeeAmount(amount);
 
     if (selectedProduct && amount !== "" && !isNaN(Number(amount))) {
       const base = selectedProduct.afterDiscount || 0;
-      const pct = pctFromAmt(Number(amount), base);
-      setCommissionPercentage(round2(pct).toFixed(2));
+      const newPercent = pctFromAmt(Number(amount), base);
+      setApexBeePercent(round2(newPercent).toFixed(2));
 
-      setReferral((prev) => {
-        const { netAfterVendor } = getNetAfterVendor(selectedProduct, round2(pct), deliveryFee);
+      const { apexBeeFee } = getFinancials(selectedProduct, round2(newPercent), shippingCharges, packingCharges);
+      setReferral(prev => {
         const next = { ...prev } as ReferralState;
         for (const { key } of REFERRAL_TIERS) {
           const p = Number(next[key].percentage);
           const a = Number(next[key].amount);
           if (next[key].percentage !== "" && Number.isFinite(p)) {
-            next[key].amount = round2(amtFromPct(p, netAfterVendor));
+            next[key].amount = round2(amtFromPct(p, apexBeeFee));
           } else if (next[key].amount !== "" && Number.isFinite(a)) {
-            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
+            next[key].percentage = round2(pctFromAmt(a, apexBeeFee));
           }
         }
         return next;
       });
     } else if (value === "") {
-      setCommissionPercentage("");
+      setApexBeePercent("");
     }
   };
 
-  /** Delivery fee handler */
-  const handleDeliveryFeeChange = (value: string) => {
-    const fee = value === "" ? "" : Number(value);
-    setDeliveryFee(fee);
+  /** Add‑on handlers (shipping & packing) – they only affect referral pool if needed,
+   * but per image they are just add-ons, not deducted from vendor.
+   * We still need to recalc referral amounts because referral pool is apexBeeFee only,
+   * which is independent of shipping/packing. So no change needed – but we keep them for completeness. */
+  const handleShippingChange = (value: string) => {
+    const val = value === "" ? "" : Number(value);
+    setShippingCharges(val);
+    // Shipping/packing do NOT affect apexBeeFee, so no referral recalculation needed.
+    // But if you want to store them, that's it.
+  };
 
-    if (selectedProduct && fee !== "" && !isNaN(Number(fee))) {
-      setReferral((prev) => {
-        const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, fee);
-        const next = { ...prev } as ReferralState;
-        for (const { key } of REFERRAL_TIERS) {
-          const p = Number(next[key].percentage);
-          const a = Number(next[key].amount);
-          if (next[key].percentage !== "" && Number.isFinite(p)) {
-            next[key].amount = round2(amtFromPct(p, netAfterVendor));
-          } else if (next[key].amount !== "" && Number.isFinite(a)) {
-            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
-          }
-        }
-        return next;
-      });
-    } else if (value === "") {
-      setReferral((prev) => {
-        const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, 0);
-        const next = { ...prev } as ReferralState;
-        for (const { key } of REFERRAL_TIERS) {
-          const p = Number(next[key].percentage);
-          const a = Number(next[key].amount);
-          if (next[key].percentage !== "" && Number.isFinite(p)) {
-            next[key].amount = round2(amtFromPct(p, netAfterVendor));
-          } else if (next[key].amount !== "" && Number.isFinite(a)) {
-            next[key].percentage = round2(pctFromAmt(a, netAfterVendor));
-          }
-        }
-        return next;
-      });
-    }
+  const handlePackingChange = (value: string) => {
+    const val = value === "" ? "" : Number(value);
+    setPackingCharges(val);
   };
 
   /** ---------------------------
-   * Referral Handlers
+   * Referral Handlers (based on apexBeeFee)
    * -------------------------- */
   const handleReferralPercentageChange = (tier: ReferralTierKey, value: string) => {
     setReferral((prev) => {
       if (!selectedProduct) return prev;
-      const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, deliveryFee);
+      const { apexBeeFee } = getFinancials(selectedProduct, apexBeePercent, shippingCharges, packingCharges);
       const percentage = value === "" ? "" : Number(value);
       const next = { ...prev, [tier]: { ...prev[tier], percentage } };
       if (percentage === "") {
@@ -323,7 +324,7 @@ const Products = () => {
         return next;
       }
       if (!isNaN(Number(percentage))) {
-        next[tier].amount = round2(amtFromPct(Number(percentage), netAfterVendor));
+        next[tier].amount = round2(amtFromPct(Number(percentage), apexBeeFee));
       }
       return next;
     });
@@ -332,7 +333,7 @@ const Products = () => {
   const handleReferralAmountChange = (tier: ReferralTierKey, value: string) => {
     setReferral((prev) => {
       if (!selectedProduct) return prev;
-      const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, deliveryFee);
+      const { apexBeeFee } = getFinancials(selectedProduct, apexBeePercent, shippingCharges, packingCharges);
       const amount = value === "" ? "" : Number(value);
       const next = { ...prev, [tier]: { ...prev[tier], amount } };
       if (amount === "") {
@@ -340,56 +341,43 @@ const Products = () => {
         return next;
       }
       if (!isNaN(Number(amount))) {
-        next[tier].percentage = round2(pctFromAmt(Number(amount), netAfterVendor));
+        next[tier].percentage = round2(pctFromAmt(Number(amount), apexBeeFee));
       }
       return next;
     });
   };
 
   /** ---------------------------
-   * Totals for Referral + Remaining
+   * Totals: total referral sum and net Apex Bee Commission
    * -------------------------- */
-  const referralTotals = useMemo(() => {
-    if (!selectedProduct) return { netAfterVendor: 0, totalReferral: 0, remaining: 0 };
-
-    const { netAfterVendor } = getNetAfterVendor(selectedProduct, commissionPercentage, deliveryFee);
-
+  const totals = useMemo(() => {
+    if (!selectedProduct) return { apexBeeFee: 0, totalReferral: 0, netApexBeeCommission: 0 };
+    const { apexBeeFee } = getFinancials(selectedProduct, apexBeePercent, shippingCharges, packingCharges);
     const totalReferral = round2(
       REFERRAL_TIERS.reduce((sum, t) => sum + (Number(referral[t.key].amount) || 0), 0)
     );
-
-    const remaining = round2(netAfterVendor - totalReferral);
-
-    return { netAfterVendor, totalReferral, remaining };
-  }, [selectedProduct, commissionPercentage, deliveryFee, referral]);
+    const netApexBeeCommission = round2(apexBeeFee - totalReferral);
+    return { apexBeeFee, totalReferral, netApexBeeCommission };
+  }, [selectedProduct, apexBeePercent, shippingCharges, packingCharges, referral]);
 
   /** Comprehensive summary for display */
   const summary = useMemo(() => {
     if (!selectedProduct) return null;
-    const base = selectedProduct.afterDiscount || 0;
-    const commPercent = Number(commissionPercentage) || 0;
-    const apexbeAmount = round2((base * commPercent) / 100);
-    const delivery = round2(Number(deliveryFee) || 0);
-    const afterApexbe = round2(base - apexbeAmount);
-    const netAfterVendor = round2(afterApexbe - delivery);
-
-    const totalReferral = REFERRAL_TIERS.reduce(
-      (sum, t) => sum + (Number(referral[t.key].amount) || 0),
-      0
-    );
-    const remaining = round2(netAfterVendor - totalReferral);
-
+    const { base, feePercent, apexBeeFee, vendorAmount, shippingCost, packingCost } =
+      getFinancials(selectedProduct, apexBeePercent, shippingCharges, packingCharges);
+    const totalReferral = totals.totalReferral;
+    const netApexBeeCommission = totals.netApexBeeCommission;
     return {
       base,
-      commPercent,
-      apexbeAmount,
-      delivery,
-      afterApexbe,
-      netAfterVendor,
+      feePercent,
+      apexBeeFee,
+      vendorAmount,
+      shippingCost,
+      packingCost,
       totalReferral,
-      remaining,
+      netApexBeeCommission,
     };
-  }, [selectedProduct, commissionPercentage, deliveryFee, referral]);
+  }, [selectedProduct, apexBeePercent, shippingCharges, packingCharges, totals]);
 
   /** ---------------------------
    * Approve / Reject
@@ -403,16 +391,18 @@ const Products = () => {
     if (!selectedProduct || !actionDialog.action) return;
 
     const action = actionDialog.action;
-    const apexbeCommissionValue = action === "approve" ? Number(commissionPercentage) : 0;
-    const deliveryFeeValue = action === "approve" ? Number(deliveryFee) || 0 : 0;
+    const apexBeePercentValue = action === "approve" ? Number(apexBeePercent) : 0;
+    const shippingValue = action === "approve" ? Number(shippingCharges) || 0 : 0;
+    const packingValue = action === "approve" ? Number(packingCharges) || 0 : 0;
 
-    if (action === "approve" && (isNaN(apexbeCommissionValue) || apexbeCommissionValue < 0)) {
-      toast.error("Please enter a valid non-negative Apexbe commission value.");
+    if (action === "approve" && (isNaN(apexBeePercentValue) || apexBeePercentValue < 0)) {
+      toast.error("Please enter a valid non‑negative Apex Bee Fee percentage.");
       return;
     }
 
-    const { netAfterVendor } = getNetAfterVendor(selectedProduct, apexbeCommissionValue, deliveryFeeValue);
+    const { apexBeeFee } = getFinancials(selectedProduct, apexBeePercentValue, shippingValue, packingValue);
 
+    // Build referral payload (always percentages and amounts)
     const referralPayload = REFERRAL_TIERS.reduce((acc, t) => {
       const p = referral[t.key].percentage;
       const a = referral[t.key].amount;
@@ -420,10 +410,10 @@ const Products = () => {
       let amount = 0;
       if (p !== "" && Number.isFinite(Number(p))) {
         percentage = round2(Number(p));
-        amount = round2(amtFromPct(percentage, netAfterVendor));
+        amount = round2(amtFromPct(percentage, apexBeeFee));
       } else if (a !== "" && Number.isFinite(Number(a))) {
         amount = round2(Number(a));
-        percentage = round2(pctFromAmt(amount, netAfterVendor));
+        percentage = round2(pctFromAmt(amount, apexBeeFee));
       }
       acc[t.key] = { percentage, amount };
       return acc;
@@ -431,17 +421,18 @@ const Products = () => {
 
     const totalReferral = Object.values(referralPayload).reduce((s, x) => s + (x.amount || 0), 0);
 
-    if (action === "approve" && totalReferral > netAfterVendor) {
-      toast.error("Referral total cannot exceed Amount After Apexbe & Delivery.");
+    if (action === "approve" && totalReferral > apexBeeFee) {
+      toast.error("Total referrals cannot exceed the Apex Bee Fee pool.");
       return;
     }
 
     try {
       const endpoint = `https://api.apexbee.in/api/products/${selectedProduct._id}/${action}`;
       await axios.post(endpoint, {
-        commission: action === "approve" ? apexbeCommissionValue : 0,
-        deliveryFee: action === "approve" ? deliveryFeeValue : 0,
-        referralBase: action === "approve" ? netAfterVendor : 0,
+        commission: action === "approve" ? apexBeePercentValue : 0,
+        shippingCharges: action === "approve" ? shippingValue : 0,
+        packingCharges: action === "approve" ? packingValue : 0,
+        referralBase: action === "approve" ? apexBeeFee : 0,
         referralCommissions: action === "approve" ? referralPayload : {},
       });
 
@@ -453,8 +444,9 @@ const Products = () => {
             ? {
                 ...p,
                 status: newStatus,
-                commission: action === "approve" ? apexbeCommissionValue : 0,
-                deliveryFee: action === "approve" ? deliveryFeeValue : 0,
+                commission: action === "approve" ? apexBeePercentValue : 0,
+                shippingCharges: action === "approve" ? shippingValue : 0,
+                packingCharges: action === "approve" ? packingValue : 0,
                 referralCommissions: action === "approve" ? referralPayload : {},
               }
             : p
@@ -463,7 +455,7 @@ const Products = () => {
 
       toast.success(
         action === "approve"
-          ? `Product approved. Apexbe commission: ${apexbeCommissionValue}%, Delivery fee: ${money(deliveryFeeValue)}`
+          ? `Product approved. Apex Bee Fee: ${apexBeePercentValue}% (${money(apexBeeFee)}), Net Apex Bee Commission: ${money(totals.netApexBeeCommission)}`
           : "Product rejected."
       );
     } catch (error) {
@@ -472,16 +464,15 @@ const Products = () => {
     } finally {
       setActionDialog({ open: false, action: null });
       setSelectedProduct(null);
-      setCommissionPercentage("");
-      setCommissionAmount("");
-      setDeliveryFee("");
+      setApexBeePercent("");
+      setApexBeeAmount("");
+      setShippingCharges("");
+      setPackingCharges("");
       setReferral(emptyReferralState());
     }
   };
 
-  /** ---------------------------
-   * Helper to calculate total referral for a product (display in table)
-   * -------------------------- */
+  /** Helper to calculate total referral for a product (display in table) */
   const getTotalReferral = (product: Product): number => {
     if (!product.referralCommissions) return 0;
     return round2(
@@ -499,7 +490,7 @@ const Products = () => {
     { header: "Product Name", accessor: (item: Product) => item.itemName },
     { header: "Category", accessor: (item: Product) => item.category?.name || "N/A" },
     { header: "Base Price", accessor: (item: Product) => `₹${(item.afterDiscount || 0).toFixed(2)}` },
-    { header: "Apexbe Comm. (%)", accessor: (item: Product) => `${item.commission || 0}%` },
+    { header: "Apex Bee Fee (%)", accessor: (item: Product) => `${item.commission || 0}%` },
     {
       header: "Total Referral",
       accessor: (item: Product) =>
@@ -560,8 +551,9 @@ const Products = () => {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-foreground">Product Submissions 📦</h1>
         <p className="text-muted-foreground">
-          Review and approve vendor products. Apexbe commission and delivery fee are deducted first, then referral
-          commissions are calculated on the net amount.
+          Review and approve vendor products. <strong>Apex Bee Fee</strong> is deducted from the vendor's base price.
+          All referral commissions are paid from this fee. The remaining amount is <strong>Net Apex Bee Commission</strong>.
+          Shipping & packing charges are customer add‑ons and do not affect vendor payout.
         </p>
       </div>
 
@@ -572,7 +564,7 @@ const Products = () => {
         <DialogContent className="max-w-5xl w-[95vw] sm:w-full">
           <DialogHeader>
             <DialogTitle>{selectedProduct?.itemName} Details</DialogTitle>
-            <DialogDescription>Review product information and set commissions.</DialogDescription>
+            <DialogDescription>Review product information and set Apex Bee Fee & referral commissions.</DialogDescription>
           </DialogHeader>
 
           {selectedProduct && (
@@ -629,32 +621,36 @@ const Products = () => {
                 {summary && (
                   <div className="p-4 rounded-xl border bg-muted/40 space-y-3">
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Product Base Price</span>
+                      <span className="text-muted-foreground">Product Base Price (After Disc.)</span>
                       <span className="font-bold text-lg">{money(summary.base)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Apexbe Commission</span>
-                      <span className="font-semibold">
-                        {money(summary.apexbeAmount)} ({summary.commPercent}%)
-                      </span>
+                      <span className="text-muted-foreground">Apex Bee Fee ({summary.feePercent}%)</span>
+                      <span className="font-semibold text-red-600">{money(summary.apexBeeFee)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Delivery Fee (Add‑on)</span>
-                      <span className="font-semibold">{money(summary.delivery)}</span>
+                      <span className="text-muted-foreground">Vendor Final Amount</span>
+                      <span className="font-semibold text-green-600">{money(summary.vendorAmount)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Total Referrals</span>
+                      <span className="text-muted-foreground">Shipping Charges (Add‑on)</span>
+                      <span className="font-semibold">{money(summary.shippingCost)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Packing Charges (Add‑on)</span>
+                      <span className="font-semibold">{money(summary.packingCost)}</span>
+                    </div>
+                    <div className="pt-2 border-t flex justify-between text-sm">
+                      <span className="text-muted-foreground">Total Referrals (from Apex Bee Fee)</span>
                       <span className="font-semibold">{money(summary.totalReferral)}</span>
                     </div>
-                    <div className="pt-2 border-t flex justify-between font-bold">
-                      <span>Final Approval Amount</span>
-                      <span className="text-green-600 text-lg">
-                        {money(summary.remaining)}
-                      </span>
+                    <div className="flex justify-between font-bold">
+                      <span>Net Apex Bee Commission</span>
+                      <span className="text-blue-600 text-lg">{money(summary.netApexBeeCommission)}</span>
                     </div>
-                    {summary.remaining < 0 && (
+                    {summary.totalReferral > summary.apexBeeFee && (
                       <p className="text-xs text-destructive">
-                        ⚠️ Referral total exceeds net amount.
+                        ⚠️ Referral total exceeds Apex Bee Fee pool. Reduce referrals.
                       </p>
                     )}
                   </div>
@@ -663,26 +659,26 @@ const Products = () => {
                 {/* Editable inputs only for pending */}
                 {selectedProduct.status?.toLowerCase() === "pending" ? (
                   <>
-                    {/* Apexbe Commission Card */}
+                    {/* Apex Bee Fee Card */}
                     <div className="p-4 border rounded-xl bg-card shadow-sm space-y-4">
                       <div className="flex items-center justify-between">
-                        <h4 className="font-extrabold text-primary">Apexbe Commission</h4>
+                        <h4 className="font-extrabold text-primary">Apex Bee Fee</h4>
                         <span className="text-xs text-muted-foreground">
-                          Applied on Base Price
+                          % of Base Price (deducted from vendor)
                         </span>
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-2">
-                          <Label htmlFor="commission-amount" className="font-medium text-sm">
+                          <Label htmlFor="apex-amount" className="font-medium text-sm">
                             Amount (₹)
                           </Label>
                           <Input
-                            id="commission-amount"
+                            id="apex-amount"
                             type="number"
                             placeholder="0.00"
-                            value={commissionAmount}
-                            onChange={(e) => handleCommissionAmountChange(e.target.value)}
+                            value={apexBeeAmount}
+                            onChange={(e) => handleApexBeeAmountChange(e.target.value)}
                             className="h-9 text-sm"
                             min="0"
                             step="0.01"
@@ -690,15 +686,15 @@ const Products = () => {
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="commission-percentage" className="font-medium text-sm">
+                          <Label htmlFor="apex-percent" className="font-medium text-sm">
                             Percentage (%)
                           </Label>
                           <Input
-                            id="commission-percentage"
+                            id="apex-percent"
                             type="number"
                             placeholder="0.00"
-                            value={commissionPercentage}
-                            onChange={(e) => handleCommissionPercentageChange(e.target.value)}
+                            value={apexBeePercent}
+                            onChange={(e) => handleApexBeePercentChange(e.target.value)}
                             className="h-9 text-sm"
                             min="0"
                             max="100"
@@ -706,63 +702,48 @@ const Products = () => {
                           />
                         </div>
                       </div>
-
-                      {summary && (
-                        <div className="pt-3 border-t space-y-2">
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Commission Value</span>
-                            <span className="font-bold">
-                              {money(summary.apexbeAmount)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">After Commission</span>
-                            <span className="font-semibold">{money(summary.afterApexbe)}</span>
-                          </div>
-                        </div>
-                      )}
                     </div>
 
-                    {/* Delivery Fee Card */}
+                    {/* Add‑ons Card */}
                     <div className="p-4 border rounded-xl bg-card shadow-sm space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-extrabold text-primary">Delivery Fee</h4>
-                        <span className="text-xs text-muted-foreground">
-                          Deducted before referrals
-                        </span>
-                      </div>
-                      <Input
-                        type="number"
-                        placeholder="Delivery fee (₹)"
-                        value={deliveryFee}
-                        onChange={(e) => handleDeliveryFeeChange(e.target.value)}
-                        min="0"
-                        step="0.01"
-                      />
-                      {summary && (
-                        <div className="pt-2">
-                          <div className="flex justify-between text-sm text-muted-foreground">
-                            <span>After Commission</span>
-                            <span>{money(summary.afterApexbe)}</span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span>Delivery Fee</span>
-                            <span>{money(summary.delivery)}</span>
-                          </div>
-                          <div className="flex justify-between font-bold mt-2">
-                            <span>Net for Referrals</span>
-                            <span className="text-green-600">{money(summary.netAfterVendor)}</span>
-                          </div>
+                      <h4 className="font-extrabold text-primary">Checkout Add‑ons (Customer)</h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="shipping" className="text-sm">Shipping Charges (₹)</Label>
+                          <Input
+                            id="shipping"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={shippingCharges}
+                            onChange={(e) => handleShippingChange(e.target.value)}
+                            placeholder="0.00"
+                          />
                         </div>
-                      )}
+                        <div className="space-y-2">
+                          <Label htmlFor="packing" className="text-sm">Packing Charges (₹)</Label>
+                          <Input
+                            id="packing"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={packingCharges}
+                            onChange={(e) => handlePackingChange(e.target.value)}
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        These are added to the customer's final bill and do not affect vendor payout.
+                      </p>
                     </div>
 
-                    {/* Referral Commissions */}
+                    {/* Referral Commissions Card */}
                     <div className="p-4 border rounded-xl bg-card shadow-sm space-y-5">
                       <div className="flex items-center justify-between">
                         <h4 className="text-base font-extrabold text-primary">Referral Commissions</h4>
                         <span className="text-xs text-muted-foreground">
-                          Base: Net Amount (After Apexbe & Delivery)
+                          Paid from Apex Bee Fee pool
                         </span>
                       </div>
 
@@ -791,7 +772,7 @@ const Products = () => {
                               </div>
 
                               <div className="space-y-1.5">
-                                <Label className="text-xs">Percentage (%)</Label>
+                                <Label className="text-xs">Percentage (%) of Apex Bee Fee</Label>
                                 <Input
                                   type="number"
                                   min="0"
@@ -810,22 +791,18 @@ const Products = () => {
 
                       <div className="pt-3 border-t space-y-2">
                         <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Total Referral</span>
-                          <span className="font-bold">
-                            {money(referralTotals.totalReferral)}
-                          </span>
+                          <span className="text-muted-foreground">Total Referrals</span>
+                          <span className="font-bold">{money(totals.totalReferral)}</span>
                         </div>
-
                         <div className="flex items-center justify-between">
-                          <span className="font-semibold">Remaining After Referrals</span>
-                          <span className="font-extrabold text-lg">
-                            {money(referralTotals.remaining)}
+                          <span className="font-semibold">Net Apex Bee Commission</span>
+                          <span className="font-extrabold text-lg text-blue-600">
+                            {money(totals.netApexBeeCommission)}
                           </span>
                         </div>
-
-                        {referralTotals.remaining < 0 && (
+                        {totals.totalReferral > totals.apexBeeFee && (
                           <p className="text-xs text-destructive">
-                            Total referral exceeds net amount. Reduce referral values.
+                            Total referrals exceed the Apex Bee Fee pool. Reduce some referral values.
                           </p>
                         )}
                       </div>
@@ -845,9 +822,9 @@ const Products = () => {
                         className="bg-green-600 hover:bg-green-700 flex-1"
                         onClick={() => setActionDialog({ open: true, action: "approve" })}
                         disabled={
-                          isNaN(Number(commissionPercentage)) ||
-                          Number(commissionPercentage) < 0 ||
-                          referralTotals.remaining < 0
+                          isNaN(Number(apexBeePercent)) ||
+                          Number(apexBeePercent) < 0 ||
+                          totals.totalReferral > totals.apexBeeFee
                         }
                       >
                         <CheckCircle className="h-4 w-4 mr-1" /> Approve
@@ -878,26 +855,19 @@ const Products = () => {
               {actionDialog.action === "approve" && summary && (
                 <div className="mt-3 space-y-2">
                   <p className="text-sm">
-                    Product Base Price:{" "}
-                    <span className="font-semibold">{money(summary.base)}</span>
+                    Base Price (After Disc.): <span className="font-semibold">{money(summary.base)}</span>
                   </p>
                   <p className="text-sm">
-                    Apexbe Commission:{" "}
-                    <span className="font-semibold">
-                      {summary.commPercent}% ({money(summary.apexbeAmount)})
-                    </span>
+                    Apex Bee Fee ({summary.feePercent}%): <span className="font-semibold">{money(summary.apexBeeFee)}</span>
                   </p>
                   <p className="text-sm">
-                    Delivery Fee (Add‑on):{" "}
-                    <span className="font-semibold">{money(summary.delivery)}</span>
+                    Vendor Gets: <span className="font-semibold text-green-600">{money(summary.vendorAmount)}</span>
                   </p>
                   <p className="text-sm">
-                    Total Referrals:{" "}
-                    <span className="font-semibold">{money(summary.totalReferral)}</span>
+                    Total Referrals: <span className="font-semibold">{money(summary.totalReferral)}</span>
                   </p>
                   <p className="text-sm">
-                    Final Approval Amount:{" "}
-                    <span className="font-bold text-green-600">{money(summary.remaining)}</span>
+                    Net Apex Bee Commission: <span className="font-bold text-blue-600">{money(summary.netApexBeeCommission)}</span>
                   </p>
                 </div>
               )}
@@ -911,7 +881,7 @@ const Products = () => {
             <Button
               onClick={confirmAction}
               variant={actionDialog.action === "reject" ? "destructive" : "default"}
-              disabled={actionDialog.action === "approve" && summary && summary.remaining < 0}
+              disabled={actionDialog.action === "approve" && totals.totalReferral > totals.apexBeeFee}
             >
               {actionDialog.action === "approve" ? "Yes, Approve" : "Yes, Reject"}
             </Button>
