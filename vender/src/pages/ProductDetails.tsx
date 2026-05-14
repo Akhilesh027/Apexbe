@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Edit } from "lucide-react";
 import { toast } from "sonner";
 
+// Extended product interface (backward compatible)
 interface Product {
   _id: string;
   vendorName: string;
@@ -27,9 +28,23 @@ interface Product {
   userPrice: number;
   discount: number;
   afterDiscount: number;
-  commission: number;
-  finalAmount: number;
+  commission: number;          // Apex Bee Fee (%)
+  finalAmount: number;         // Vendor gets this
   priceType: string;
+
+  // Optional new fields (may be missing from old API)
+  shippingCharges?: number;
+  packingCharges?: number;
+  referralCommissions?: {
+    stateFranchiser?: { percentage: number; amount: number };
+    districtFranchiser?: { percentage: number; amount: number };
+    mondalFranchiser?: { percentage: number; amount: number };
+    wishLink?: { percentage: number; amount: number };
+    firstPurchase?: { percentage: number; amount: number };
+    level1?: { percentage: number; amount: number };
+    level2?: { percentage: number; amount: number };
+    level3?: { percentage: number; amount: number };
+  };
 }
 
 const ProductDetails = () => {
@@ -44,9 +59,19 @@ const ProductDetails = () => {
         const res = await fetch(`https://api.apexbee.in/api/product/${id}`);
         const data = await res.json();
 
+        // Debug: log what we got from backend (remove in production)
+        console.log("🔍 Product API response:", data);
+
         if (res.ok) {
-          setProduct(data);
-          setSelectedImage(data.images?.[0] || "");
+          // Ensure we have default values for optional fields
+          const enrichedProduct = {
+            ...data,
+            shippingCharges: data.shippingCharges ?? 0,
+            packingCharges: data.packingCharges ?? 0,
+            referralCommissions: data.referralCommissions || {},
+          };
+          setProduct(enrichedProduct);
+          setSelectedImage(enrichedProduct.images?.[0] || "");
         } else {
           toast.error(data.message || "Failed to fetch product details");
         }
@@ -59,26 +84,6 @@ const ProductDetails = () => {
     if (id) fetchProduct();
   }, [id]);
 
-  // Calculate commission amount based on percentage
-  const calculateCommissionAmount = (product: Product) => {
-    // If commission is already in amount format, return it
-    // Otherwise calculate commission amount from sales price
-    if (product.commission <= 100) { // Assuming percentage is between 0-100
-      return (product.salesPrice * product.commission) / 100;
-    }
-    return product.commission;
-  };
-
-  // Get commission percentage
-  const getCommissionPercentage = (product: Product) => {
-    // If commission is already a percentage, return it
-    // Otherwise calculate percentage from amount
-    if (product.commission <= 100) {
-      return product.commission;
-    }
-    return (product.commission / product.salesPrice) * 100;
-  };
-
   if (!product) {
     return (
       <AppLayout>
@@ -89,8 +94,23 @@ const ProductDetails = () => {
     );
   }
 
-  const commissionPercentage = getCommissionPercentage(product);
-  const commissionAmount = product.afterDiscount - product.finalAmount ;
+  // Apex Bee Fee calculations
+  const apexBeeFeeAmount = product.afterDiscount - product.finalAmount;
+  const apexBeeFeePercent = product.commission;
+
+  // Total referrals (safe)
+  const totalReferrals = product.referralCommissions
+    ? Object.values(product.referralCommissions).reduce(
+        (sum, tier) => sum + (tier?.amount || 0),
+        0
+      )
+    : 0;
+
+  const netApexBeeCommission = apexBeeFeeAmount - totalReferrals;
+
+  // Helper to check if any referral exists
+  const hasReferrals = product.referralCommissions &&
+    Object.values(product.referralCommissions).some(tier => tier && tier.amount > 0);
 
   return (
     <AppLayout>
@@ -155,7 +175,7 @@ const ProductDetails = () => {
                 )}
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Sales Price:</span>
-                  <span className="font-medium">₹{product.salesPrice}</span>
+                  <span className="font-medium">₹{product.salesPrice.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">GST Rate:</span>
@@ -189,29 +209,88 @@ const ProductDetails = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">MRP:</span>
-                  <span className="font-medium">₹{product.userPrice}</span>
+                  <span className="font-medium">₹{product.userPrice.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Discount:</span>
                   <span className="font-medium">{product.discount}%</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">After Discount:</span>
-                  <span className="font-medium">₹{product.afterDiscount}</span>
+                  <span className="text-muted-foreground">After Discount (Base Price):</span>
+                  <span className="font-medium">₹{product.afterDiscount.toFixed(2)}</span>
                 </div>
-                {/* Updated Commission Section */}
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Commission:</span>
-                  <span className="font-medium">{commissionPercentage}%</span>
+
+                {/* Apex Bee Fee Section */}
+                <div className="border-t pt-2 mt-2">
+                  <div className="flex justify-between font-semibold">
+                    <span className="text-muted-foreground">Apex Bee Fee:</span>
+                    <span className="text-red-600">{apexBeeFeePercent}% (₹{apexBeeFeeAmount.toFixed(2)})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Vendor Final Amount:</span>
+                    <span className="font-bold text-green-600">₹{product.finalAmount.toFixed(2)}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Commission Amount:</span>
-                  <span className="font-medium">₹{commissionAmount.toFixed(2)}</span>
+
+                {/* Add‑ons Section - Always visible */}
+                <div className="border-t pt-2 mt-2">
+                  <div className="font-semibold mb-1">Checkout Add‑ons (Customer)</div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Shipping Charges:</span>
+                    <span className="font-medium">₹{(product.shippingCharges ?? 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Packing Charges:</span>
+                    <span className="font-medium">₹{(product.packingCharges ?? 0).toFixed(2)}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    These are added to customer's bill and do not affect vendor payout.
+                  </p>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Final Amount:</span>
-                  <span className="font-medium">₹{product.finalAmount}</span>
+
+                {/* Referral Commissions Section - Always visible, shows message if empty */}
+                <div className="border-t pt-2 mt-2">
+                  <div className="font-semibold mb-2">Referral Commissions (paid from Apex Bee Fee)</div>
+                  {hasReferrals ? (
+                    <>
+                      {Object.entries(product.referralCommissions!).map(([key, value]) => {
+                        if (!value || value.amount === 0) return null;
+                        const labelMap: Record<string, string> = {
+                          stateFranchiser: "State Franchiser",
+                          districtFranchiser: "District Franchiser",
+                          mondalFranchiser: "Mondal Franchiser",
+                          wishLink: "Wish Link Incentive",
+                          firstPurchase: "1st Purchase Incentive",
+                          level1: "Level 1",
+                          level2: "Level 2",
+                          level3: "Level 3",
+                        };
+                        const label = labelMap[key] || key;
+                        return (
+                          <div key={key} className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">{label}:</span>
+                            <span>
+                              {value.percentage}% (₹{value.amount.toFixed(2)})
+                            </span>
+                          </div>
+                        );
+                      })}
+                      <div className="flex justify-between font-semibold mt-2">
+                        <span className="text-muted-foreground">Total Referrals:</span>
+                        <span>₹{totalReferrals.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between font-bold">
+                        <span className="text-muted-foreground">Net Apex Bee Commission:</span>
+                        <span className="text-blue-600">₹{netApexBeeCommission.toFixed(2)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground italic">
+                      No referral commissions set for this product.
+                    </p>
+                  )}
                 </div>
+
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Price Type:</span>
                   <span className="font-medium">{product.priceType}</span>
