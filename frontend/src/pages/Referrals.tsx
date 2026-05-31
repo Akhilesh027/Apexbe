@@ -30,7 +30,6 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { jwtDecode } from "jwt-decode";
 
 interface ReferralStats {
   totalReferrals: number;
@@ -606,11 +605,8 @@ const [showIfsc, setShowIfsc] = useState(false);
       }
 
       // withdrawals history
-  const userId = getUserIdFromToken();
-const url = userId ? `/wallet/withdrawals?userId=${userId}` : "/wallet/withdrawals";
-const wRes = await fetch(`${API_BASE}${url}`, {
-  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-});
+      // ✅ Do not pass userId from frontend. Backend should identify user from JWT middleware.
+      const wRes = await apiFetch("/wallet/withdrawals");
       if (wRes.ok) {
         const w = await wRes.json();
         setWithdrawals(w?.withdrawals || []);
@@ -876,89 +872,91 @@ const wRes = await fetch(`${API_BASE}${url}`, {
       setLoadingSections((p) => ({ ...p, withdraw: false }));
     }
   };
-const getUserIdFromToken = () => {
-  const token = localStorage.getItem("token");
-  if (!token) return null;
-  try {
-    const decoded = jwtDecode(token);
-    // Adjust the property name based on your JWT payload structure
-    return decoded.userId || decoded.id || decoded._id || decoded.sub || null;
-  } catch (error) {
-    console.error("Failed to decode token:", error);
-    return null;
-  }
-};
-
   /** ✅ UPDATED: withdraw uses AVAILABLE + instant reduce (move to hold) + 15% fee */
   const requestWithdraw = async () => {
-  const amt = Number(withdrawAmount);
+    const amt = Number(withdrawAmount);
 
-  if (!amt || amt <= 0) {
-    toast({ title: "Invalid amount", description: "Enter a valid withdraw amount", variant: "destructive" });
-    return;
-  }
+    if (!amt || amt <= 0) {
+      toast({ title: "Invalid amount", description: "Enter a valid withdraw amount", variant: "destructive" });
+      return;
+    }
 
-  const msg = validateBank(bankDetails);
-  if (!bankSaved || msg) {
-    toast({
-      title: "Bank details required",
-      description: "Please save your bank details before requesting withdrawal.",
-      variant: "destructive",
-    });
-    return;
-  }
-
-  if (amt > walletAvailable) {
-    toast({
-      title: "Not enough available balance",
-      description: `You can withdraw up to Rs. ${Math.round(walletAvailable)}`,
-      variant: "destructive",
-    });
-    return;
-  }
-
-  // ✅ Get user ID from token
-  const userId = getUserIdFromToken();
-  if (!userId) {
-    toast({
-      title: "Authentication error",
-      description: "User ID not found. Please log in again.",
-      variant: "destructive",
-    });
-    return;
-  }
-
-  const { fee, net } = calcWithdrawFee(amt);
-
-  try {
-    setLoadingSections((p) => ({ ...p, withdraw: true }));
-    const res = await apiFetch("/wallet/withdrawals", {
-      method: "POST",
-      body: JSON.stringify({
-        userId: userId,        // ✅ Send the user ID
-        amount: amt,
-        note: withdrawNote,
-        feePercent: WITHDRAW_FEE_PERCENT,
-      }),
-    });
-
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
+    const msg = validateBank(bankDetails);
+    if (!bankSaved || msg) {
       toast({
-        title: "Withdraw request failed",
-        description: json?.message || "Unable to create withdraw request",
+        title: "Bank details required",
+        description: "Please save your bank details before requesting withdrawal.",
         variant: "destructive",
       });
       return;
     }
 
-    // ... rest of the success handling (UI updates, etc.)
-  } catch (e) {
-    toast({ title: "Error", description: "Unable to create withdraw request", variant: "destructive" });
-  } finally {
-    setLoadingSections((p) => ({ ...p, withdraw: false }));
-  }
-};
+    if (amt > walletAvailable) {
+      toast({
+        title: "Not enough available balance",
+        description: `You can withdraw up to Rs. ${Math.round(walletAvailable)}`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const { fee, net } = calcWithdrawFee(amt);
+
+    try {
+      setLoadingSections((p) => ({ ...p, withdraw: true }));
+
+      // ✅ Do not send userId from frontend. Backend should take userId from req.user after JWT auth.
+      const res = await apiFetch("/wallet/withdrawals", {
+        method: "POST",
+        body: JSON.stringify({
+          amount: amt,
+          note: withdrawNote,
+          feePercent: WITHDRAW_FEE_PERCENT,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          title: "Withdraw request failed",
+          description: json?.message || "Unable to create withdraw request",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      toast({
+        title: "Withdrawal requested",
+        description: `Request submitted successfully. Fee: Rs. ${Math.round(fee)} • Net amount: Rs. ${Math.round(net)}`,
+      });
+
+      setWithdrawAmount("");
+      setWithdrawNote("");
+
+      // ✅ Instant UI update: requested amount moves from available to hold
+      setStats((prev) => {
+        const currentTotal = Number(prev.walletTotal ?? prev.walletBalance ?? walletTotal) || 0;
+        const currentHold = Number(prev.walletHold ?? walletHold) || 0;
+        const updatedHold = currentHold + amt;
+        const updatedAvailable = Math.max(0, currentTotal - updatedHold);
+
+        return {
+          ...prev,
+          walletTotal: currentTotal,
+          walletBalance: currentTotal,
+          walletHold: updatedHold,
+          walletAvailable: updatedAvailable,
+        };
+      });
+
+      await fetchWithdrawData();
+      await fetchReferralData();
+    } catch (e) {
+      toast({ title: "Error", description: "Unable to create withdraw request", variant: "destructive" });
+    } finally {
+      setLoadingSections((p) => ({ ...p, withdraw: false }));
+    }
+  };
 
   if (loading) {
     return (

@@ -1968,28 +1968,17 @@ app.patch("/api/admin/withdrawals/:id", async (req, res) => {
   }
 });
 
-// ==================== User Routes ====================
-
-// GET user's own withdrawals (by userId query param)
-app.get("/api/wallet/withdrawals", async (req, res) => {
+app.get("/api/wallet/withdrawals", auth, async (req, res) => {
   try {
-    const userId = req.query.userId;
-    if (!userId) {
-      return res.status(400).json({ message: "userId query parameter required" });
-    }
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({ message: "Invalid userId format" });
-    }
-    
+    const userId = req.user.id || req.user._id;
+
     const limit = Math.max(1, Math.min(parseInt(req.query.limit || "25", 10), 100));
-    
+
     const withdrawals = await Withdrawal.find({ userId })
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
-    
-    console.log(`👤 User ${userId} fetched ${withdrawals.length} withdrawals`);
-    
+
     return res.json({ withdrawals });
   } catch (e) {
     console.error("❌ User GET withdrawals error:", e);
@@ -1997,96 +1986,80 @@ app.get("/api/wallet/withdrawals", async (req, res) => {
   }
 });
 
-// POST create withdrawal request (userId in body)
-app.post("/api/wallet/withdrawals", async (req, res) => {
+// POST create withdrawal request
+app.post("/api/wallet/withdrawals", auth, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
-  
+
   try {
-    const { userId, amount: rawAmount, note: rawNote } = req.body;
-    
-    if (!userId) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: "userId is required" });
-    }
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: "Invalid userId format" });
-    }
-    
-    const amount = round2(rawAmount);
+    const userId = req.user.id || req.user._id;
+    const { amount: rawAmount, note: rawNote } = req.body;
+
+    const amount = round2(Number(rawAmount));
     const note = (rawNote || "").trim();
-    
+
     if (!amount || amount <= 0) {
-      console.warn(`⚠️ Invalid withdrawal amount: ${rawAmount} from user ${userId}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid amount" });
     }
-    
-    // Check bank details exist
+
     const bank = await BankDetails.findOne({ userId }).session(session);
+
     if (!bank) {
-      console.warn(`⚠️ No bank details for user ${userId}`);
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Please save your bank details first" });
     }
-    
-    // Check user balance
+
     const user = await User.findById(userId).session(session);
+
     if (!user) {
-      console.error(`❌ User ${userId} not found during withdrawal creation`);
       await session.abortTransaction();
       session.endSession();
       return res.status(404).json({ message: "User not found" });
     }
-    
+
     const available = getWalletBalance(user);
-    
+
     if (amount > available) {
-      console.warn(`⚠️ Insufficient balance: requested ₹${amount}, available ₹${available} for user ${userId}`);
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ 
-        message: `Insufficient wallet balance. Available: ₹${available}` 
+      return res.status(400).json({
+        message: `Insufficient wallet balance. Available: ₹${available}`,
       });
     }
-    
-    // Deduct from wallet
+
     setWalletBalance(user, available - amount);
     await user.save({ session });
-    
-    console.log(`💰 Deducted ₹${amount} from user ${userId}, new balance: ₹${user.walletBalance}`);
-    
-    // Create withdrawal record
-    const [withdrawal] = await Withdrawal.create([{
-      userId,
-      amount,
-      note,
-      status: "pending",
-      bankSnapshot: {
-        accountHolderName: bank.accountHolderName,
-        bankName: bank.bankName,
-        accountNumber: bank.accountNumber,
-        ifsc: bank.ifsc,
-        upiId: bank.upiId || "",
-      },
-    }], { session });
-    
+
+    const [withdrawal] = await Withdrawal.create(
+      [
+        {
+          userId,
+          amount,
+          note,
+          status: "pending",
+          bankSnapshot: {
+            accountHolderName: bank.accountHolderName,
+            bankName: bank.bankName,
+            accountNumber: bank.accountNumber,
+            ifsc: bank.ifsc,
+            upiId: bank.upiId || "",
+          },
+        },
+      ],
+      { session }
+    );
+
     await session.commitTransaction();
     session.endSession();
-    
-    console.log(`📝 Withdrawal request created: ${withdrawal._id} for ₹${amount} by user ${userId}`);
-    
-    return res.status(201).json({ 
-      message: "Withdrawal request created successfully", 
+
+    return res.status(201).json({
+      message: "Withdrawal request created successfully",
       withdrawal,
-      remainingBalance: getWalletBalance(user)
+      remainingBalance: getWalletBalance(user),
     });
-    
   } catch (e) {
     await session.abortTransaction();
     session.endSession();
