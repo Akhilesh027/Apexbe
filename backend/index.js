@@ -1829,145 +1829,112 @@ app.get("/api/admin/withdrawals/:id", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 // PATCH update withdrawal status
 app.patch("/api/admin/withdrawals/:id", async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  
   try {
     const { status, referenceId, rejectReason } = req.body;
     const allowed = ["pending", "approved", "rejected", "paid"];
-    
+
     if (!allowed.includes(status)) {
-      console.warn(`⚠️ Invalid status provided: ${status}`);
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid status. Allowed: pending, approved, rejected, paid" 
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status. Allowed: pending, approved, rejected, paid",
       });
     }
-    
+
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      console.warn(`⚠️ Invalid withdrawal ID format: ${req.params.id}`);
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid withdrawal ID format" 
+      return res.status(400).json({
+        success: false,
+        message: "Invalid withdrawal ID format",
       });
     }
-    
-    // Find withdrawal
-    const withdrawal = await Withdrawal.findById(req.params.id).session(session);
+
+    const withdrawal = await Withdrawal.findById(req.params.id);
+
     if (!withdrawal) {
-      console.warn(`⚠️ Withdrawal not found for update: ${req.params.id}`);
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ 
-        success: false, 
-        message: "Withdrawal not found" 
+      return res.status(404).json({
+        success: false,
+        message: "Withdrawal not found",
       });
     }
-    
+
     const prevStatus = withdrawal.status;
-    console.log(`🔄 Updating withdrawal ${req.params.id} from ${prevStatus} to ${status}`);
-    
-    // Prevent invalid transitions
+
     if (prevStatus === "paid") {
-      console.warn(`⚠️ Attempt to modify already paid withdrawal: ${req.params.id}`);
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        message: "Cannot change status of already paid withdrawal" 
+      return res.status(400).json({
+        success: false,
+        message: "Cannot change status of already paid withdrawal",
       });
     }
-    
+
     if (prevStatus === "rejected" && status !== "rejected") {
-      console.warn(`⚠️ Attempt to change rejected withdrawal: ${req.params.id}`);
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        message: "Cannot change status of rejected withdrawal. User needs to request again." 
+      return res.status(400).json({
+        success: false,
+        message: "Cannot change status of rejected withdrawal. User needs to request again.",
       });
     }
-    
-    // Get user
-    const user = await User.findById(withdrawal.userId).session(session);
+
+    const user = await User.findById(withdrawal.userId);
+
     if (!user) {
-      console.error(`❌ User not found for withdrawal: ${withdrawal.userId}`);
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ 
-        success: false, 
-        message: "User not found" 
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
       });
     }
-    
+
     const amount = round2(withdrawal.amount);
-    
-    // Handle wallet refund on rejection
+
+    // refund only when moving to rejected
     if (status === "rejected" && prevStatus !== "rejected") {
       const currentBalance = getWalletBalance(user);
       const newBalance = currentBalance + amount;
+
       setWalletBalance(user, newBalance);
-      await user.save({ session });
-      console.log(`💰 Refunded ₹${amount} to user ${user._id}. New balance: ₹${newBalance}`);
+      await user.save();
     }
-    
-    // Update withdrawal record
+
     withdrawal.status = status;
     withdrawal.processedAt = new Date();
-    
+
     if (referenceId && (status === "paid" || status === "approved")) {
       withdrawal.referenceId = String(referenceId);
     }
-    
+
     if (status === "rejected") {
       withdrawal.rejectReason = String(rejectReason || "Rejected by admin");
     }
-    
-    await withdrawal.save({ session });
-    
-    await session.commitTransaction();
-    session.endSession();
-    
-    console.log(`✅ Withdrawal ${req.params.id} updated to ${status}`);
-    
-    // Fetch updated withdrawal
+
+    await withdrawal.save();
+
     const updatedWithdrawal = await Withdrawal.findById(req.params.id)
       .populate("userId", "name email phone walletBalance purchaseCommissionTotal")
       .lean();
-    
+
     let message = "";
     if (status === "approved") message = "Withdrawal approved successfully";
     else if (status === "rejected") message = "Withdrawal rejected and amount refunded";
     else if (status === "paid") message = "Withdrawal marked as paid";
     else message = `Status updated to ${status}`;
-    
+
     return res.json({
       success: true,
       message,
       withdrawal: {
         ...updatedWithdrawal,
-        userCurrentBalance: updatedWithdrawal.userId ? getWalletBalance(updatedWithdrawal.userId) : 0
-      }
+        userCurrentBalance: updatedWithdrawal?.userId
+          ? getWalletBalance(updatedWithdrawal.userId)
+          : 0,
+      },
     });
-    
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
     console.error("❌ Admin withdrawal update error:", error);
-    return res.status(500).json({ 
-      success: false, 
-      message: error.message || "Server error" 
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Server error",
     });
   }
 });
-
 app.get("/api/wallet/withdrawals", auth, async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
