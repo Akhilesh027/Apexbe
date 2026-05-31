@@ -1986,11 +1986,7 @@ app.get("/api/wallet/withdrawals", auth, async (req, res) => {
   }
 });
 
-// POST create withdrawal request
 app.post("/api/wallet/withdrawals", auth, async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const userId = req.user.id || req.user._id;
     const { amount: rawAmount, note: rawNote } = req.body;
@@ -1999,61 +1995,45 @@ app.post("/api/wallet/withdrawals", auth, async (req, res) => {
     const note = (rawNote || "").trim();
 
     if (!amount || amount <= 0) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({ message: "Invalid amount" });
     }
 
-    const bank = await BankDetails.findOne({ userId }).session(session);
+    const bank = await BankDetails.findOne({ userId });
 
     if (!bank) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({ message: "Please save your bank details first" });
     }
 
-    const user = await User.findById(userId).session(session);
+    const user = await User.findById(userId);
 
     if (!user) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(404).json({ message: "User not found" });
     }
 
     const available = getWalletBalance(user);
 
     if (amount > available) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(400).json({
         message: `Insufficient wallet balance. Available: ₹${available}`,
       });
     }
 
     setWalletBalance(user, available - amount);
-    await user.save({ session });
+    await user.save();
 
-    const [withdrawal] = await Withdrawal.create(
-      [
-        {
-          userId,
-          amount,
-          note,
-          status: "pending",
-          bankSnapshot: {
-            accountHolderName: bank.accountHolderName,
-            bankName: bank.bankName,
-            accountNumber: bank.accountNumber,
-            ifsc: bank.ifsc,
-            upiId: bank.upiId || "",
-          },
-        },
-      ],
-      { session }
-    );
-
-    await session.commitTransaction();
-    session.endSession();
+    const withdrawal = await Withdrawal.create({
+      userId,
+      amount,
+      note,
+      status: "pending",
+      bankSnapshot: {
+        accountHolderName: bank.accountHolderName,
+        bankName: bank.bankName,
+        accountNumber: bank.accountNumber,
+        ifsc: bank.ifsc,
+        upiId: bank.upiId || "",
+      },
+    });
 
     return res.status(201).json({
       message: "Withdrawal request created successfully",
@@ -2061,8 +2041,6 @@ app.post("/api/wallet/withdrawals", auth, async (req, res) => {
       remainingBalance: getWalletBalance(user),
     });
   } catch (e) {
-    await session.abortTransaction();
-    session.endSession();
     console.error("❌ POST withdrawals error:", e);
     return res.status(500).json({ message: "Server error" });
   }
