@@ -261,32 +261,8 @@ const Checkout = () => {
   const [couponInput, setCouponInput] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<CouponRule | null>(null);
   const [couponDiscount, setCouponDiscount] = useState<number>(0);
-
-  const COUPONS: CouponRule[] = useMemo(
-    () => [
-      {
-        code: "FIRST100",
-        title: "₹100 off on First Order",
-        description: "Valid only for first order. Min order ₹499.",
-        type: "flat",
-        value: 100,
-        minOrder: 499,
-        firstOrderOnly: true,
-        allowedPayments: ["upi", "wallet"],
-      },
-      {
-        code: "SAVE10",
-        title: "10% off (up to ₹250)",
-        description: "Min order ₹999. Max discount ₹250.",
-        type: "percent",
-        value: 10,
-        maxDiscount: 250,
-        minOrder: 999,
-        allowedPayments: ["upi", "wallet"],
-      },
-    ],
-    []
-  );
+  const [availableCoupons, setAvailableCoupons] = useState<CouponRule[]>([]);
+  const [couponLoading, setCouponLoading] = useState(false);
 
   const upiConfig = useMemo(
     () => ({
@@ -335,34 +311,88 @@ const Checkout = () => {
     return clamp(limited, 0, baseAmount);
   };
 
-  const applyCoupon = (codeRaw?: string) => {
+  const loadAvailableCoupons = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      const res = await fetch(`${API_BASE}/coupons`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) {
+        console.error("Load coupons failed:", res.status);
+        return;
+      }
+
+      const data = await res.json();
+      const list = data.coupons || data.data || [];
+      setAvailableCoupons(Array.isArray(list) ? list : []);
+    } catch (error) {
+      console.error("Load coupons error:", error);
+    }
+  };
+
+  const applyCoupon = async (codeRaw?: string) => {
     const code = (codeRaw ?? couponInput).trim().toUpperCase();
     if (!code) return toast({ title: "Enter coupon code", variant: "destructive" });
 
-    const coupon = COUPONS.find((c) => c.code === code);
-    if (!coupon)
-      return toast({
-        title: "Invalid coupon",
-        description: "Coupon not found",
-        variant: "destructive",
+    try {
+      setCouponLoading(true);
+      const token = localStorage.getItem("token");
+
+      const res = await fetch(`${API_BASE}/coupons/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          code,
+          subtotal: orderDetails.subtotal,
+          paymentMethod: selectedPayment,
+          isFirstOrder,
+        }),
       });
 
-    const baseAmount = orderDetails.subtotal;
-    const validity = checkCouponValidity(coupon, baseAmount, selectedPayment);
-    if (!validity.ok)
-      return toast({
-        title: "Cannot apply coupon",
-        description: validity.msg,
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        return toast({
+          title: "Cannot apply coupon",
+          description: data.message || data.error || "Invalid coupon",
+          variant: "destructive",
+        });
+      }
+
+      const coupon = data.coupon || data.data || availableCoupons.find((c) => c.code === code);
+      if (!coupon) {
+        return toast({
+          title: "Invalid coupon",
+          description: "Coupon details not found from backend",
+          variant: "destructive",
+        });
+      }
+
+      const discount = Number(data.discount ?? data.discountAmount ?? computeCouponDiscount(coupon, orderDetails.subtotal)) || 0;
+
+      setAppliedCoupon(coupon);
+      setCouponDiscount(discount);
+      setCouponInput(code);
+
+      toast({
+        title: "Coupon applied",
+        description: `${coupon.code} applied. You saved ₹${discount.toFixed(2)}`,
+      });
+    } catch (error) {
+      console.error("Apply coupon error:", error);
+      toast({
+        title: "Coupon error",
+        description: "Unable to apply coupon. Please try again.",
         variant: "destructive",
       });
-
-    const disc = computeCouponDiscount(coupon, baseAmount);
-    setAppliedCoupon(coupon);
-    setCouponDiscount(disc);
-    toast({
-      title: "Coupon applied",
-      description: `${coupon.code} applied. You saved ₹${disc.toFixed(2)}`,
-    });
+    } finally {
+      setCouponLoading(false);
+    }
   };
 
   const removeCoupon = () => {
@@ -394,6 +424,7 @@ const Checkout = () => {
     loadAddresses();
     loadWalletBalance();
     checkFirstOrder();
+    loadAvailableCoupons();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1368,8 +1399,20 @@ const Checkout = () => {
                   disabled={!!appliedCoupon}
                 />
                 {!appliedCoupon ? (
-                  <Button type="button" onClick={() => applyCoupon()} className="sm:w-36">
-                    Apply
+                  <Button
+                    type="button"
+                    onClick={() => applyCoupon()}
+                    className="sm:w-36"
+                    disabled={couponLoading}
+                  >
+                    {couponLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Applying
+                      </>
+                    ) : (
+                      "Apply"
+                    )}
                   </Button>
                 ) : (
                   <Button type="button" variant="outline" onClick={removeCoupon} className="sm:w-36">
@@ -1396,30 +1439,36 @@ const Checkout = () => {
               )}
 
               <div className="mt-4 grid gap-2">
-                {COUPONS.map((c) => {
-                  const ok = checkCouponValidity(c, orderDetails.subtotal, selectedPayment).ok;
-                  return (
-                    <button
-                      key={c.code}
-                      type="button"
-                      onClick={() => !appliedCoupon && applyCoupon(c.code)}
-                      className={`text-left rounded-lg border p-3 transition ${
-                        ok ? "hover:border-primary" : "opacity-60 cursor-not-allowed"
-                      }`}
-                      disabled={!ok || !!appliedCoupon}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-semibold">{c.code}</p>
-                          <p className="text-xs text-muted-foreground">{c.description}</p>
+                {availableCoupons.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                    No active coupons available right now. You can still enter a valid coupon code above.
+                  </div>
+                ) : (
+                  availableCoupons.map((c) => {
+                    const ok = checkCouponValidity(c, orderDetails.subtotal, selectedPayment).ok;
+                    return (
+                      <button
+                        key={c.code}
+                        type="button"
+                        onClick={() => !appliedCoupon && applyCoupon(c.code)}
+                        className={`text-left rounded-lg border p-3 transition ${
+                          ok ? "hover:border-primary" : "opacity-60 cursor-not-allowed"
+                        }`}
+                        disabled={!ok || !!appliedCoupon || couponLoading}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-semibold">{c.code}</p>
+                            <p className="text-xs text-muted-foreground">{c.description}</p>
+                          </div>
+                          <span className="text-xs font-semibold px-2 py-1 rounded bg-muted">
+                            {c.type === "flat" ? `₹${c.value} OFF` : `${c.value}% OFF`}
+                          </span>
                         </div>
-                        <span className="text-xs font-semibold px-2 py-1 rounded bg-muted">
-                          {c.type === "flat" ? `₹${c.value} OFF` : `${c.value}% OFF`}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
+                      </button>
+                    );
+                  })
+                )}
               </div>
 
               <p className="text-xs text-muted-foreground mt-3">

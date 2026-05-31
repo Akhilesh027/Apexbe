@@ -40,33 +40,20 @@ const menuItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
 
   { title: "Vendors", url: "/vendors", icon: Store },
-  { title: "Business", url: "/business", icon: Building2 },
   { title: "Users", url: "/users", icon: Users },
 
   { title: "Products", url: "/products", icon: Package },
   { title: "Categories", url: "/categories", icon: Grid3x3 },
-  { title: "Inventory", url: "/inventory", icon: Boxes },
 
   { title: "Orders", url: "/orders", icon: ShoppingCart },
-  { title: "Returns & Refunds", url: "/returns", icon: RotateCcw },
-  { title: "Shipping", url: "/shipping", icon: Truck},
 
-  { title: "Payouts", url: "/payouts", icon: DollarSign },
   { title: "Referral Amount", url: "/withdrow", icon: IndianRupee },
 
-  { title: "Reports / Analytics", url: "/reports", icon: BarChart3 },
-  { title: "Promotions", url: "/promotions", icon: TicketPercent },
-
   { title: "Forms", url: "/forms", icon: FileText },
-  { title: "Support", url: "/support", icon: MessageCircle },
-  { title: "Notifications", url: "/notifications", icon: Bell },
+  { title: "coupons", url: "/coupons", icon: FileText },
 
-  { title: "CMS", url: "/cms", icon: LayoutTemplate },
-  { title: "Audit Logs", url: "/audit-logs", icon: ClipboardList },
-  { title: "Roles & Permissions", url: "/roles", icon: ShieldCheck },
 
   { title: "Pincode", url: "/pincode", icon: MapPin },
-  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 export function AppSidebar() {

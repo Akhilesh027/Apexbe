@@ -7093,7 +7093,427 @@ app.post("/api/clear/cart", async (req, res) => {
   }
 });
 
+// ===============================
+// COUPON MANAGEMENT BACKEND
+// base: /api
+// ===============================
 
+const couponSchema = new mongoose.Schema(
+  {
+    code: {
+      type: String,
+      required: true,
+      unique: true,
+      uppercase: true,
+      trim: true,
+    },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    description: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    type: {
+      type: String,
+      enum: ["flat", "percent"],
+      required: true,
+    },
+    value: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    maxDiscount: {
+      type: Number,
+      default: 0,
+    },
+    minOrder: {
+      type: Number,
+      default: 0,
+    },
+    firstOrderOnly: {
+      type: Boolean,
+      default: false,
+    },
+    allowedPayments: {
+      type: [String],
+      enum: ["upi", "wallet"],
+      default: ["upi", "wallet"],
+    },
+    expiresAt: {
+      type: Date,
+      default: null,
+    },
+    usageLimit: {
+      type: Number,
+      default: 0,
+    },
+    usedCount: {
+      type: Number,
+      default: 0,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+  },
+  { timestamps: true }
+);
+
+const Coupon = mongoose.models.Coupon || mongoose.model("Coupon", couponSchema);
+
+const normalizeCouponCode = (code) => String(code || "").trim().toUpperCase();
+
+const calculateCouponDiscount = (coupon, subtotal) => {
+  const amount = Number(subtotal || 0);
+
+  if (amount <= 0) return 0;
+
+  if (coupon.type === "flat") {
+    return Math.min(Number(coupon.value || 0), amount);
+  }
+
+  const discount = (amount * Number(coupon.value || 0)) / 100;
+  const maxDiscount = Number(coupon.maxDiscount || 0);
+
+  if (maxDiscount > 0) {
+    return Math.min(discount, maxDiscount, amount);
+  }
+
+  return Math.min(discount, amount);
+};
+
+const validateCouponPayload = (body) => {
+  const code = normalizeCouponCode(body.code);
+  const title = String(body.title || "").trim();
+  const description = String(body.description || "").trim();
+  const type = body.type;
+  const value = Number(body.value || 0);
+  const maxDiscount = Number(body.maxDiscount || 0);
+  const minOrder = Number(body.minOrder || 0);
+  const allowedPayments = Array.isArray(body.allowedPayments)
+    ? body.allowedPayments
+    : ["upi", "wallet"];
+
+  if (!code) return { error: "Coupon code is required" };
+  if (code.length < 3) return { error: "Coupon code must be at least 3 characters" };
+  if (!title) return { error: "Coupon title is required" };
+  if (!["flat", "percent"].includes(type)) return { error: "Coupon type must be flat or percent" };
+  if (!value || value <= 0) return { error: "Coupon value must be greater than 0" };
+  if (type === "percent" && value > 100) return { error: "Percentage value cannot be more than 100" };
+  if (maxDiscount < 0) return { error: "Max discount cannot be negative" };
+  if (minOrder < 0) return { error: "Minimum order cannot be negative" };
+
+  const validPayments = ["upi", "wallet"];
+  const invalidPayment = allowedPayments.find((p) => !validPayments.includes(p));
+
+  if (invalidPayment) {
+    return { error: "Allowed payments can only be upi or wallet" };
+  }
+
+  if (!allowedPayments.length) {
+    return { error: "Select at least one payment method" };
+  }
+
+  return {
+    data: {
+      code,
+      title,
+      description,
+      type,
+      value,
+      maxDiscount,
+      minOrder,
+      firstOrderOnly: Boolean(body.firstOrderOnly),
+      allowedPayments,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      usageLimit: Number(body.usageLimit || 0),
+      isActive: body.isActive !== undefined ? Boolean(body.isActive) : true,
+    },
+  };
+};
+
+// ===============================
+// PUBLIC: GET active coupons
+// ===============================
+app.get("/api/coupons", async (req, res) => {
+  try {
+    const coupons = await Coupon.find({ isActive: true })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({
+      success: true,
+      coupons,
+    });
+  } catch (error) {
+    console.error("GET coupons error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+// ===============================
+// PUBLIC: Validate coupon
+// ===============================
+app.post("/api/coupons/validate", async (req, res) => {
+  try {
+    const {
+      code,
+      subtotal,
+      paymentMethod,
+      isFirstOrder,
+    } = req.body;
+
+    const couponCode = normalizeCouponCode(code);
+    const orderSubtotal = Number(subtotal || 0);
+
+    if (!couponCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Coupon code is required",
+      });
+    }
+
+    if (!orderSubtotal || orderSubtotal <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order subtotal",
+      });
+    }
+
+    const coupon = await Coupon.findOne({ code: couponCode }).lean();
+
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: "Coupon not found",
+      });
+    }
+
+    if (!coupon.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: "Coupon is inactive",
+      });
+    }
+
+    if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Coupon expired",
+      });
+    }
+
+    if (coupon.minOrder && orderSubtotal < coupon.minOrder) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum order ₹${coupon.minOrder} required`,
+      });
+    }
+
+    if (coupon.firstOrderOnly && !isFirstOrder) {
+      return res.status(400).json({
+        success: false,
+        message: "This coupon is only valid for first order",
+      });
+    }
+
+    if (
+      coupon.allowedPayments?.length &&
+      paymentMethod &&
+      !coupon.allowedPayments.includes(paymentMethod)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Coupon not valid for ${String(paymentMethod).toUpperCase()} payment`,
+      });
+    }
+
+    if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
+      return res.status(400).json({
+        success: false,
+        message: "Coupon usage limit reached",
+      });
+    }
+
+    const discount = calculateCouponDiscount(coupon, orderSubtotal);
+
+    return res.json({
+      success: true,
+      message: "Coupon applied successfully",
+      coupon,
+      discount,
+    });
+  } catch (error) {
+    console.error("Validate coupon error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+// ===============================
+// ADMIN: GET all coupons
+// ===============================
+app.get("/api/admin/coupons", async (req, res) => {
+  try {
+    const coupons = await Coupon.find()
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({
+      success: true,
+      coupons,
+    });
+  } catch (error) {
+    console.error("Admin GET coupons error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+// ===============================
+// ADMIN: CREATE coupon
+// ===============================
+app.post("/api/admin/coupons", async (req, res) => {
+  try {
+    const checked = validateCouponPayload(req.body);
+
+    if (checked.error) {
+      return res.status(400).json({
+        success: false,
+        message: checked.error,
+      });
+    }
+
+    const exists = await Coupon.findOne({ code: checked.data.code });
+
+    if (exists) {
+      return res.status(400).json({
+        success: false,
+        message: "Coupon code already exists",
+      });
+    }
+
+    const coupon = await Coupon.create(checked.data);
+
+    return res.status(201).json({
+      success: true,
+      message: "Coupon created successfully",
+      coupon,
+    });
+  } catch (error) {
+    console.error("Create coupon error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Server error",
+    });
+  }
+});
+
+// ===============================
+// ADMIN: UPDATE coupon
+// ===============================
+app.put("/api/admin/coupons/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid coupon ID",
+      });
+    }
+
+    const checked = validateCouponPayload(req.body);
+
+    if (checked.error) {
+      return res.status(400).json({
+        success: false,
+        message: checked.error,
+      });
+    }
+
+    const exists = await Coupon.findOne({
+      code: checked.data.code,
+      _id: { $ne: req.params.id },
+    });
+
+    if (exists) {
+      return res.status(400).json({
+        success: false,
+        message: "Another coupon with this code already exists",
+      });
+    }
+
+    const coupon = await Coupon.findByIdAndUpdate(
+      req.params.id,
+      checked.data,
+      { new: true, runValidators: true }
+    );
+
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: "Coupon not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Coupon updated successfully",
+      coupon,
+    });
+  } catch (error) {
+    console.error("Update coupon error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Server error",
+    });
+  }
+});
+
+// ===============================
+// ADMIN: DELETE coupon
+// ===============================
+app.delete("/api/admin/coupons/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid coupon ID",
+      });
+    }
+
+    const coupon = await Coupon.findByIdAndDelete(req.params.id);
+
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: "Coupon not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Coupon deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete coupon error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
 import shiprocketRoutes from "./routes/shiprocketRoutes.js";
 
 console.log("MONGO_URI loaded:", !!process.env.MONGO_URI);

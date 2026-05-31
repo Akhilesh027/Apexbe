@@ -23,8 +23,9 @@ import ReturnsRefunds from "./pages/Return";
 import ReportsAnalytics from "./pages/Reports";
 import PromotionsAdmin from "./pages/Promotion";
 import ShippingAdmin from "./pages/Shiping";
-import SupportAdmin from "./pages/Support";
+import SupportAdmin from "./pages/AdminCoupons";
 import { useEffect, useState } from "react";
+import AdminCoupons from "./pages/AdminCoupons";
 
 const queryClient = new QueryClient();
 
@@ -66,6 +67,7 @@ const App = () => (
             <Route path="bussiness" element={<Businesses />} />
             <Route path="products" element={<Products />} />
             <Route path="categories" element={<Categories />} />
+            <Route path="coupons" element={<AdminCoupons />} />
             <Route path="categories/add" element={<AddCategory />} />
             <Route path="subcategories" element={<AddSubcategory />} />
             <Route path="withdrow" element={<Withdrow />} />
