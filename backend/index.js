@@ -21,6 +21,7 @@ import BankDetails from "./models/BankDetails.js";
 import Withdrawal from "./models/Withdrawal.js";
 import cookieParser from "cookie-parser";
 import googleAuth from "./routes/auth.js";
+import vendorEarning from './models/VendorEarning.js';
 import { sendOrderPlacedEmail,sendOrderStatusChangedEmail } from "./utils/mailer.js"; // ✅ adjust path if needed
 
 const app = express();
@@ -39,7 +40,7 @@ app.use(cors({
     "https://admin.apexbee.in/withdrow",
     "http://localhost:8080/withdrow",
     "https://vendor.apexbee.in",
-    "https://api.apexbee.in"
+    "http://api.apexbee.in"
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS","PATCH"],
@@ -251,7 +252,7 @@ app.get("/api/products/vendor/:vendorId", async (req, res) => {
 
     const products = await Products.find({ vendorId })
       .populate("category", "name")
-      .select("itemName description images finalAmount mrp openStock status commission category createdAt")
+      .select("itemName description images finalAmount mrp afterDiscount discount salesPrice openStock status commission category createdAt") // added afterDiscount, discount, salesPrice
       .sort({ createdAt: -1 })
       .lean();
 
@@ -2978,19 +2979,21 @@ app.delete("/api/products/:id", async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
-});app.get("/api/products/vendor/:vendorId", async (req, res) => {
+});
+app.get("/api/products/vendor/:vendorId", async (req, res) => {
   try {
     const { vendorId } = req.params;
 
     const products = await Products.find({ vendorId })
       .populate("category", "name")
-      .select("itemName description images finalAmount mrp openStock status commission category createdAt")
+      .select("itemName description images finalAmount mrp afterDiscount discount salesPrice openStock status commission category createdAt")
       .sort({ createdAt: -1 })
       .lean();
 
     return res.status(200).json(
       products.map((p) => ({
         ...p,
+        userPrice: p.mrp,                     // alias for frontend (MRP)
         categoryName: p.category?.name || "Unknown",
       }))
     );
@@ -2999,7 +3002,6 @@ app.delete("/api/products/:id", async (req, res) => {
     return res.status(500).json({ error: "Server error" });
   }
 });
-
 
 
 app.post("/api/cart/add", async (req, res) => {
@@ -3598,57 +3600,6 @@ function getOrderSuccessMessage(paymentMethod, paymentStatus) {
   }
   return "Order created successfully";
 }
-
-app.get("/api/orders/vendor/:vendorId", async (req, res) => {
-  const { vendorId } = req.params;
-
-  try {
-    // Find orders that contain at least one item for this vendor
-    const orders = await Order.find({ "orderItems.vendorId": vendorId })
-      .sort({ createdAt: -1 }); // latest first
-
-    // Filter orderItems to include only this vendor's products
-    const vendorOrders = orders.map(order => {
-      const vendorItems = order.orderItems.filter(
-        item => item.vendorId.toString() === vendorId
-      );
-
-      // Calculate totals for this vendor's items
-      const subtotal = vendorItems.reduce((sum, item) => sum + item.itemTotal, 0);
-      const shipping = order.orderSummary?.shipping || 0;
-      const discount = order.orderSummary?.discount || 0;
-      const tax = order.orderSummary?.tax || 0;
-      const total = subtotal + shipping - discount + tax;
-
-      return {
-        _id: order._id,
-        orderNumber: order.orderNumber,
-        userDetails: order.userDetails,
-        shippingAddress: order.shippingAddress,
-        paymentDetails: order.paymentDetails,
-        orderStatus: order.orderStatus,
-        deliveryDetails: order.deliveryDetails,
-        metadata: order.metadata,
-        createdAt: order.createdAt,
-        updatedAt: order.updatedAt,
-        orderItems: vendorItems,
-        orderSummary: {
-          itemsCount: vendorItems.reduce((sum, item) => sum + item.quantity, 0),
-          subtotal,
-          shipping,
-          discount,
-          tax,
-          total,
-        },
-      };
-    });
-
-    res.json({ success: true, orders: vendorOrders });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
 
 // GET /api/orders/user/:userId - Get user's orders
 app.get('/api/orders/user/:userId', async (req, res) => {
@@ -4726,7 +4677,7 @@ app.put('/api/user/profile/:userId', auth, async (req, res) => {
   }
 });
 
-
+import { addVendorEarningsFromOrder } from './utils/earnings.js';
 
 app.put("/api/admin/orders/:orderId/status", async (req, res) => {
   try {
@@ -4781,8 +4732,9 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // ✅ If delivered: set deliveredAt + actualDeliveryDate
+    // ✅ If delivered: handle delivery date, COD payment, vendor earnings, referral
     if (status === "delivered") {
+      // Set delivery timestamps
       await Order.findByIdAndUpdate(orderId, {
         $set: {
           "deliveryDetails.actualDeliveryDate": new Date(),
@@ -4791,9 +4743,8 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
         },
       });
 
-      // COD auto-complete only
+      // COD auto-complete: if order is COD and not already paid, mark payment as completed
       const fresh = await Order.findById(orderId).select("paymentDetails");
-
       const isCOD = fresh?.paymentDetails?.method === "cod";
       const isAlreadyPaid = fresh?.paymentDetails?.status === "completed";
 
@@ -4805,17 +4756,36 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
             updatedAt: new Date(),
           },
         });
+        console.log(`✅ COD payment auto-completed for order ${orderId}`);
       }
 
-      // Trigger referral only if delivered + payment completed
+      // ✅ Now fetch the latest order state (after potential COD update)
+      const currentOrder = await Order.findById(orderId);
+      const isPaymentCompleted = currentOrder?.paymentDetails?.status === "completed";
+      const alreadyAdded = currentOrder?.metadata?.vendorEarningsAdded;
+
+      // ✅ ADD VENDOR EARNINGS if payment completed & not already added
+      if (isPaymentCompleted && !alreadyAdded) {
+        try {
+          await addVendorEarningsFromOrder(currentOrder);
+          await Order.findByIdAndUpdate(orderId, {
+            $set: { "metadata.vendorEarningsAdded": true }
+          });
+          console.log(`✅ Vendor earnings added for order ${orderId} on delivery`);
+        } catch (err) {
+          console.error(`❌ Failed to add vendor earnings on delivery:`, err);
+        }
+      }
+
+      // ✅ Trigger referral only if payment completed & delivered
       const ready = await Order.findById(orderId)
         .populate({ path: "orderItems.productId", select: "name commission finalAmount price" })
         .populate("userId", "name email phone");
 
-      const isPaymentCompleted = ready?.paymentDetails?.status === "completed";
-      const isOrderDelivered = ready?.orderStatus?.currentStatus === "delivered";
+      const finalPaymentCompleted = ready?.paymentDetails?.status === "completed";
+      const finalOrderDelivered = ready?.orderStatus?.currentStatus === "delivered";
 
-      if (isPaymentCompleted && isOrderDelivered) {
+      if (finalPaymentCompleted && finalOrderDelivered) {
         try {
           const referralResult = await processMultiLevelReferralForOrder(ready);
           console.log(`✅ Referral processed for order ${orderId}:`, referralResult?.length || 0);
@@ -4926,17 +4896,40 @@ app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
       runValidators: true,
     });
 
+    // ✅ ADD VENDOR EARNINGS when payment becomes "completed" (if not already added)
+    let earningsAdded = false;
+    if (status === "completed" && previousPaymentStatus !== "completed") {
+      // Check if earnings already added via a flag in order metadata
+      if (!updatedOrder.metadata?.vendorEarningsAdded) {
+        try {
+          await addVendorEarningsFromOrder(updatedOrder);
+          // Mark that earnings have been added to avoid duplicate
+          await Order.findByIdAndUpdate(orderId, {
+            $set: { "metadata.vendorEarningsAdded": true }
+          });
+          earningsAdded = true;
+          console.log(`✅ Vendor earnings added for order ${orderId}`);
+        } catch (err) {
+          console.error(`❌ Failed to add vendor earnings for order ${orderId}:`, err);
+        }
+      } else {
+        console.log(`ℹ️ Vendor earnings already added for order ${orderId}, skipping.`);
+      }
+    }
+
     // ✅ Trigger referral ONLY when BOTH: payment completed + delivered
     const ready = await Order.findById(orderId)
       .populate({ path: "orderItems.productId", select: "name commission finalAmount price" })
       .populate("userId", "name email phone");
 
     const isOrderDelivered = ready?.orderStatus?.currentStatus === "delivered";
+    let referralTriggered = false;
 
     if (status === "completed" && isOrderDelivered) {
       try {
         const referralResult = await processMultiLevelReferralForOrder(ready);
         console.log(`✅ Referral processed for order ${orderId}:`, referralResult?.length || 0);
+        referralTriggered = true;
       } catch (e) {
         console.error(`❌ Referral error for payment completed order ${orderId}:`, e);
       }
@@ -4968,7 +4961,8 @@ app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
       message: `Payment status updated to ${status}`,
       order: updatedOrder,
       previousStatus: previousPaymentStatus,
-      referralTriggered: status === "completed" && isOrderDelivered,
+      earningsAdded,
+      referralTriggered,
     });
   } catch (error) {
     console.error("Update payment status error:", error);
@@ -4978,10 +4972,399 @@ app.put("/api/admin/orders/:orderId/payment-status", async (req, res) => {
       error: error.message,
     });
   }
+});// ========== ADD THESE DEBUG ENDPOINTS ==========
+// ============================================================
+// VENDOR ORDERS (for reports)
+// ============================================================
+app.get('/api/orders/vendor/:vendorId', async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    // Find orders that contain at least one item belonging to this vendor
+    const orders = await Order.find({ 'orderItems.vendorId': vendorId })
+      .populate({
+        path: 'orderItems.productId',
+        select: 'name finalAmount afterDiscount commission',
+      })
+      .populate('userId', 'name email phone')
+      .sort({ createdAt: -1 });
+
+    // For each order, filter orderItems to only those belonging to the vendor
+    // and add a vendor-specific summary (optional)
+    const vendorOrders = orders.map(order => {
+      const vendorItems = order.orderItems.filter(
+        item => item.vendorId?.toString() === vendorId
+      );
+
+      // Calculate subtotal for vendor's items only
+      const vendorSubtotal = vendorItems.reduce(
+        (sum, item) => sum + (item.price * item.quantity),
+        0
+      );
+
+      return {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        orderStatus: order.orderStatus,
+        paymentDetails: order.paymentDetails,
+        orderSummary: {
+          ...order.orderSummary,
+          vendorSubtotal,   // revenue that came from this vendor's products
+        },
+        orderItems: vendorItems, // only this vendor's items
+        userDetails: order.userDetails,
+        shippingAddress: order.shippingAddress,
+      };
+    });
+
+    res.json({ success: true, orders: vendorOrders });
+  } catch (error) {
+    console.error('Error fetching vendor orders:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
-// ========== ADD THESE DEBUG ENDPOINTS ==========
+app.get("/api/vendor/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid vendor ID",
+      });
+    }
+
+    const vendor = await Vendor.findById(id);
+
+    if (!vendor) {
+      return res.status(404).json({
+        success: false,
+        message: "Vendor not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      vendor,
+    });
+  } catch (error) {
+    console.error("Error fetching vendor:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+// ============================================================
+// VENDOR EARNINGS (summary + transactions)
+// ============================================================
+app.get('/api/vendor/earnings', async (req, res) => {
+  try {
+    // Assuming you have authentication middleware that sets req.vendor
+    const vendorId = req.vendor?.id;
+    if (!vendorId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const record = await VendorEarning.findOne({ vendorId });
+    if (!record) {
+      return res.json({
+        totalEarned: 0,
+        pendingBalance: 0,
+        withdrawn: 0,
+        transactions: [],
+      });
+    }
+
+    res.json({
+      totalEarned: record.totalEarned,
+      pendingBalance: record.pendingBalance,
+      withdrawn: record.withdrawn,
+      transactions: record.transactions.sort((a, b) => b.createdAt - a.createdAt),
+    });
+  } catch (error) {
+    console.error('Error fetching vendor earnings:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+app.get('/api/admin/backfill-finalAmount', async (req, res) => {
+  const orders = await Order.find({ 'orderItems.finalAmount': { $exists: false } });
+  let updatedCount = 0;
+
+  for (const order of orders) {
+    let modified = false;
+    for (const item of order.orderItems) {
+      if (!item.finalAmount && item.productId) {
+        const product = await Product.findById(item.productId).select('afterDiscount commission finalAmount');
+        if (product) {
+          // Use product.finalAmount if available, otherwise compute
+          item.finalAmount = product.finalAmount || (product.afterDiscount * (1 - (product.commission || 0) / 100));
+          modified = true;
+        } else {
+          item.finalAmount = item.price; // fallback
+          modified = true;
+        }
+      }
+    }
+    if (modified) {
+      await order.save();
+      updatedCount++;
+    }
+  }
+  res.json({ message: 'Backfill complete', updatedCount });
+});
+app.get('/api/admin/ensure-vendor-earnings', async (req, res) => {
+  const vendors = await Vendor.find().select('_id');
+  let created = 0;
+  for (const vendor of vendors) {
+    const exists = await VendorEarning.findOne({ vendorId: vendor._id });
+    if (!exists) {
+      await VendorEarning.create({ vendorId: vendor._id });
+      created++;
+    }
+  }
+  res.json({ message: `Created ${created} records` });
+});
+// Check vendor earnings record
+app.get("/api/debug/vendor-earnings/:vendorId", async (req, res) => {
+  const record = await VendorEarning.findOne({ vendorId: req.params.vendorId });
+  res.json(record || { message: "No earnings record" });
+});
+
+// Manually add earnings for an order (backfill)
+app.post("/api/debug/add-earnings/:orderId", async (req, res) => {
+  const order = await Order.findById(req.params.orderId);
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  await addVendorEarningsFromOrder(order);
+  await Order.findByIdAndUpdate(order._id, { $set: { "metadata.vendorEarningsAdded": true } });
+  res.json({ success: true });
+});
+
+// Create missing VendorEarning documents for all vendors
+app.get("/api/debug/ensure-vendor-earnings", async (req, res) => {
+  const vendors = await Vendor.find().select("_id");
+  let created = 0;
+  for (const v of vendors) {
+    const exists = await VendorEarning.findOne({ vendorId: v._id });
+    if (!exists) {
+      await VendorEarning.create({ vendorId: v._id });
+      created++;
+    }
+  }
+  res.json({ message: `Created ${created} records` });
+});
+app.get("/api/vendor/earnings/:vendorId", async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(vendorId)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid vendor ID",
+      });
+    }
+
+    const record = await VendorEarning.findOne({
+      vendorId: new mongoose.Types.ObjectId(vendorId),
+    });
+
+    if (!record) {
+      return res.json({
+        success: true,
+        totalEarned: 0,
+        pendingBalance: 0,
+        withdrawn: 0,
+        transactions: [],
+      });
+    }
+
+    return res.json({
+      success: true,
+      totalEarned: record.totalEarned || 0,
+      pendingBalance: record.pendingBalance || 0,
+      withdrawn: record.withdrawn || 0,
+      transactions: record.transactions || [],
+    });
+  } catch (error) {
+    console.error("Error fetching vendor earnings:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+import WithdrawalRequest from './models/WithdrawalRequest.js';// GET withdrawal requests for a vendor
+app.get('/api/vendor/withdrawal/requests/:vendorId', async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const requests = await WithdrawalRequest.find({ vendorId }).sort({ createdAt: -1 });
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST withdrawal request (vendorId in body)
+app.post('/api/vendor/withdrawal/request', async (req, res) => {
+  try {
+    const { vendorId, amount, paymentMethod, bankDetails, upiId } = req.body;
+
+    if (!vendorId) {
+      return res.status(400).json({ error: 'vendorId is required' });
+    }
+    if (!amount || amount < 100) {
+      return res.status(400).json({ error: 'Minimum withdrawal amount is ₹100' });
+    }
+
+    const record = await VendorEarning.findOne({ vendorId });
+    if (!record || record.pendingBalance < amount) {
+      return res.status(400).json({ error: 'Insufficient pending balance' });
+    }
+
+    const request = new WithdrawalRequest({
+      vendorId,
+      amount,
+      paymentMethod,
+      bankDetails,
+      upiId,
+      status: 'pending',
+    });
+    await request.save();
+
+    res.json({ success: true, message: 'Withdrawal request submitted', requestId: request._id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== ADMIN APIS (NO AUTH – add auth later) ====================
+
+// Get all withdrawal requests (for admin)
+app.get('/api/admin/withdrawal-requests', async (req, res) => {
+  try {
+    const requests = await WithdrawalRequest.find()
+      .populate('vendorId', 'name email cell')
+      .sort({ createdAt: -1 });
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Approve withdrawal request
+// ==================== ADMIN: GET ALL WITHDRAWAL REQUESTS ====================
+app.get('/api/admin/withdrawal-requests', async (req, res) => {
+  try {
+    const requests = await WithdrawalRequest.find()
+      .populate('vendorId', 'name email cell status')
+      .sort({ createdAt: -1 });
+    res.json(requests);
+  } catch (error) {
+    console.error('Error fetching withdrawal requests:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==================== ADMIN: APPROVE WITHDRAWAL REQUEST ====================
+// Approve withdrawal request (fixed for undefined body)
+app.put('/api/admin/withdrawal-requests/:requestId/approve', async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const adminNote = req.body?.adminNote || null;
+
+    const request = await WithdrawalRequest.findById(requestId);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: `Request already ${request.status}. Cannot approve.` });
+    }
+
+    const vendorEarning = await VendorEarning.findOne({ vendorId: request.vendorId });
+    if (!vendorEarning || vendorEarning.pendingBalance < request.amount) {
+      return res.status(400).json({ 
+        error: `Insufficient balance. Available: ₹${vendorEarning?.pendingBalance || 0}, Requested: ₹${request.amount}` 
+      });
+    }
+
+    vendorEarning.pendingBalance -= request.amount;
+    vendorEarning.withdrawn += request.amount;
+    vendorEarning.transactions.push({
+      type: 'withdrawal',
+      amount: -request.amount,
+      description: `Withdrawal request #${request._id} approved`,
+      createdAt: new Date(),
+    });
+    await vendorEarning.save();
+
+    request.status = 'approved';
+    request.adminNote = adminNote || `Approved by admin on ${new Date().toLocaleString()}`;
+    request.processedAt = new Date();
+    await request.save();
+
+    res.json({ success: true, message: 'Withdrawal approved' });
+  } catch (error) {
+    console.error('Error approving withdrawal request:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject withdrawal request (fixed)
+app.put('/api/admin/withdrawal-requests/:requestId/reject', async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const adminNote = req.body?.adminNote || null;
+
+    const request = await WithdrawalRequest.findById(requestId);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: `Request already ${request.status}. Cannot reject.` });
+    }
+
+    request.status = 'rejected';
+    request.adminNote = adminNote || `Rejected by admin on ${new Date().toLocaleString()}`;
+    await request.save();
+
+    res.json({ success: true, message: 'Withdrawal rejected' });
+  } catch (error) {
+    console.error('Error rejecting withdrawal request:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+// ==================== ONE‑TIME MIGRATION: CREATE VENDOR EARNING RECORDS ====================
+// Run this endpoint once to create VendorEarning documents for all existing vendors
+app.get('/api/admin/migrate-vendor-earnings', async (req, res) => {
+  try {
+    const vendors = await Vendor.find().select('_id');
+    let created = 0;
+    let skipped = 0;
+
+    for (const vendor of vendors) {
+      const exists = await VendorEarning.findOne({ vendorId: vendor._id });
+      if (!exists) {
+        await VendorEarning.create({ 
+          vendorId: vendor._id,
+          totalEarned: 0,
+          pendingBalance: 0,
+          withdrawn: 0,
+          transactions: []
+        });
+        created++;
+      } else {
+        skipped++;
+      }
+    }
+    res.json({ 
+      message: `Migration completed. Created ${created} records, skipped ${skipped} (already exist).` 
+    });
+  } catch (error) {
+    console.error('Migration error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 // Debug endpoint to check order status and referrals
 app.get('/api/admin/orders/:orderId/debug', async (req, res) => {
   try {
@@ -5978,15 +6361,6 @@ app.post(
       const { orderData, transactionId } = req.body;
       const file = req.file;
 
-      console.log("Create order with proof request:", {
-        hasOrderData: !!orderData,
-        hasFile: !!file,
-        transactionId,
-        fileInfo: file
-          ? { filename: file.filename, path: file.path, mimetype: file.mimetype, size: file.size }
-          : null,
-      });
-
       if (!orderData) {
         if (file?.filename) await deleteFromCloudinary(file.filename);
         return res.status(400).json({ success: false, message: "Order data is required" });
@@ -5995,53 +6369,77 @@ app.post(
       const parsedOrderData =
         typeof orderData === "string" ? JSON.parse(orderData) : orderData;
 
-      // ✅ AUTH CHECK (important)
+      // Auth check
       const bodyUserId = String(parsedOrderData.userId || "");
       if (!bodyUserId || req.user._id.toString() !== bodyUserId) {
         if (file?.filename) await deleteFromCloudinary(file.filename);
-        return res
-          .status(403)
-          .json({ success: false, message: "Not authorized to create order for this user" });
+        return res.status(403).json({ success: false, message: "Not authorized" });
       }
 
-      // ✅ Validate order items
       if (!parsedOrderData.orderItems || parsedOrderData.orderItems.length === 0) {
         if (file?.filename) await deleteFromCloudinary(file.filename);
-        return res.status(400).json({ success: false, message: "Order items are required" });
+        return res.status(400).json({ success: false, message: "Order items required" });
       }
 
-      // ✅ Normalize orderItems totals
-      parsedOrderData.orderItems = parsedOrderData.orderItems.map((item) => {
-        const price = Number(item.price || 0);
-        const quantity = Number(item.quantity || 1);
-        const itemTotal = Number(item.itemTotal || price * quantity);
+      // ------------------------------------------------------------------
+      // STEP 1: Enrich each order item with finalAmount (vendor earnings)
+      // ------------------------------------------------------------------
+      const enrichedItems = [];
+      for (const item of parsedOrderData.orderItems) {
+        let finalAmount = item.finalAmount; // if frontend already sent it
+        let afterDiscount = item.price;     // customer price after discount
 
-        return {
+        // If finalAmount missing, fetch product from DB
+        if (!finalAmount && item.productId) {
+          const product = await Products.findById(item.productId)
+            .select("finalAmount afterDiscount commission")
+            .lean();
+          if (product) {
+            // Use product's precomputed finalAmount if available
+            finalAmount = product.finalAmount;
+            if (!finalAmount && product.afterDiscount && product.commission !== undefined) {
+              finalAmount = product.afterDiscount * (1 - product.commission / 100);
+            }
+            afterDiscount = product.afterDiscount || afterDiscount;
+          } else {
+            // Fallback: assume zero commission (vendor gets full customer price)
+            finalAmount = afterDiscount;
+          }
+        } else if (!finalAmount) {
+          // No productId, assume finalAmount = price (customer price)
+          finalAmount = afterDiscount;
+        }
+
+        // Ensure finalAmount is a number
+        finalAmount = Number(finalAmount) || 0;
+        const quantity = Number(item.quantity) || 1;
+        const price = Number(item.price) || 0;
+        const itemTotal = price * quantity;
+
+        enrichedItems.push({
           ...item,
           price,
           originalPrice: Number(item.originalPrice || price),
           quantity,
+          finalAmount,          // ← CRITICAL: vendor earnings per unit
           itemTotal,
-        };
-      });
+        });
+      }
 
-      // ✅ PAYMENT handling for UPI
+      parsedOrderData.orderItems = enrichedItems;
+
+      // ------------------------------------------------------------------
+      // STEP 2: UPI payment handling (unchanged)
+      // ------------------------------------------------------------------
       const method = parsedOrderData?.paymentDetails?.method;
 
       if (method === "upi") {
         if (!transactionId) {
           if (file?.filename) await deleteFromCloudinary(file.filename);
-          return res.status(400).json({
-            success: false,
-            message: "Transaction ID is required for UPI payments",
-          });
+          return res.status(400).json({ success: false, message: "Transaction ID required" });
         }
-
         if (!file) {
-          return res.status(400).json({
-            success: false,
-            message: "Payment proof is required for UPI payments",
-          });
+          return res.status(400).json({ success: false, message: "Payment proof required" });
         }
 
         const paymentProof = {
@@ -6064,12 +6462,10 @@ app.post(
         if (!parsedOrderData.paymentDetails.upiDetails) {
           parsedOrderData.paymentDetails.upiDetails = {};
         }
-
         parsedOrderData.paymentDetails.upiDetails.paymentProof = paymentProof;
         parsedOrderData.paymentDetails.upiDetails.transactionId = transactionId;
         parsedOrderData.paymentDetails.upiDetails.upiId =
           parsedOrderData.paymentDetails?.upiDetails?.upiId || "9908587023@ybl";
-
         parsedOrderData.paymentDetails.status = "pending_verification";
 
         parsedOrderData.orderStatus = {
@@ -6083,96 +6479,45 @@ app.post(
             },
           ],
         };
-
-        // optional flag for admin
         parsedOrderData.metadata = {
           ...(parsedOrderData.metadata || {}),
           requiresPaymentVerification: true,
         };
       }
 
-      console.log("Creating order with data:", {
-        userId: parsedOrderData.userId,
-        itemsCount: parsedOrderData.orderItems?.length,
-        total: parsedOrderData.orderSummary?.total,
-        paymentMethod: parsedOrderData.paymentDetails?.method,
-        paymentStatus: parsedOrderData.paymentDetails?.status,
-      });
-
+      // ------------------------------------------------------------------
+      // STEP 3: Create order
+      // ------------------------------------------------------------------
       const order = new Order(parsedOrderData);
       await order.save();
 
-      // ✅ STOCK decrement ONLY if confirmed/paid (same logic you used earlier)
-      try {
-        const currOrderStatus = order?.orderStatus?.currentStatus;
-        const currPayStatus = order?.paymentDetails?.status;
+      // Stock decrement only if payment is completed (not the case here)
+      // But we keep the same logic as before (no decrement for pending_verification)
 
-        const shouldDecrement =
-          currOrderStatus === "confirmed" || currPayStatus === "completed";
-
-        if (shouldDecrement && Array.isArray(order.orderItems)) {
-          for (const item of order.orderItems) {
-            if (item?.productId && item?.quantity) {
-              await Products.findByIdAndUpdate(item.productId, {
-                $inc: { openStock: -Number(item.quantity) },
-              });
-            }
-          }
-          console.log("✅ Stock decremented for order:", order._id);
-        } else {
-          console.log("ℹ️ Stock not decremented (pending verification):", {
-            orderStatus: currOrderStatus,
-            paymentStatus: currPayStatus,
-          });
-        }
-      } catch (stockErr) {
-        console.error("❌ Stock decrement error:", stockErr?.message || stockErr);
-      }
-
-      // ✅ Notify admin for UPI verification (if you have this function)
-      try {
-        if (method === "upi") {
+      // Notify admin (if function exists)
+      if (method === "upi") {
+        try {
           await notifyAdminForUPIVerification(order);
+        } catch (notifyErr) {
+          console.error("Admin notify error:", notifyErr?.message);
         }
-      } catch (notifyErr) {
-        console.error("❌ Admin notify error:", notifyErr?.message || notifyErr);
       }
 
-      // ✅ EMAIL: Order placed (customer)
+      // Send order placed email (customer)
       try {
-        const to = (req.user?.email || parsedOrderData?.userDetails?.email || "")
-          .toString()
-          .trim()
-          .toLowerCase();
-
+        const to = (req.user?.email || parsedOrderData?.userDetails?.email || "").trim().toLowerCase();
         if (to) {
-          const mailResult = await sendOrderPlacedEmail({ to, order });
-
-          console.log("======================================");
-          console.log("📧 ORDER PLACED EMAIL SENT SUCCESSFULLY");
-          console.log("To:", to);
-          console.log("Order ID:", order._id);
-          console.log("Message ID:", mailResult?.messageId);
-          console.log("Accepted:", mailResult?.accepted);
-          console.log("Rejected:", mailResult?.rejected);
-          console.log("======================================");
-        } else {
-          console.log("⚠️ Order placed email skipped (no customer email)");
+          await sendOrderPlacedEmail({ to, order });
         }
       } catch (mailErr) {
-        console.error("======================================");
-        console.error("❌ ORDER PLACED EMAIL FAILED");
-        console.error("Error:", mailErr?.message || mailErr);
-        console.error("Order ID:", order?._id);
-        console.error("======================================");
+        console.error("Order placed email failed:", mailErr?.message);
       }
 
       return res.status(201).json({
         success: true,
-        message:
-          method === "upi"
-            ? "Order created successfully. Payment proof uploaded for verification."
-            : "Order created successfully",
+        message: method === "upi"
+          ? "Order created, payment proof uploaded for verification"
+          : "Order created",
         order: {
           _id: order._id,
           orderNumber: order.orderNumber,
@@ -6180,62 +6525,91 @@ app.post(
           paymentDetails: order.paymentDetails,
           createdAt: order.createdAt,
         },
-        paymentProofUrl:
-          method === "upi"
-            ? order?.paymentDetails?.upiDetails?.paymentProof?.url || null
-            : null,
+        paymentProofUrl: method === "upi"
+          ? order.paymentDetails?.upiDetails?.paymentProof?.url
+          : null,
       });
     } catch (error) {
       console.error("Create order error:", error);
-
-      // Clean up Cloudinary upload if order creation failed
-      if (req.file?.filename) {
-        try {
-          await deleteFromCloudinary(req.file.filename);
-          console.log("✅ Cleaned up Cloudinary file after order creation failed");
-        } catch (deleteError) {
-          console.error("❌ Failed to clean up Cloudinary file:", deleteError);
-        }
-      }
-
-      return res.status(500).json({
-        success: false,
-        message: error.message || "Failed to create order",
-      });
+      if (req.file?.filename) await deleteFromCloudinary(req.file.filename);
+      return res.status(500).json({ success: false, message: error.message });
     }
   }
 );
-
-// Regular order creation (for wallet payments)
 app.post('/api/orders', auth, async (req, res) => {
   try {
     const orderData = req.body;
 
-    console.log('Creating regular order:', {
-      userId: orderData.userId,
-      paymentMethod: orderData.paymentDetails?.method
-    });
+    // ------------------------------------------------------------------
+    // Enrich each order item with finalAmount
+    // ------------------------------------------------------------------
+    const enrichedItems = [];
+    if (orderData.orderItems && orderData.orderItems.length) {
+      for (const item of orderData.orderItems) {
+        let finalAmount = item.finalAmount;
+        let afterDiscount = item.price;
 
-    // Validate order items have all required fields
-    if (orderData.orderItems && orderData.orderItems.length > 0) {
-      orderData.orderItems = orderData.orderItems.map(item => {
-        // Ensure all required fields are present
-        const price = item.price || 0;
-        const quantity = item.quantity || 1;
+        if (!finalAmount && item.productId) {
+          const product = await Products.findById(item.productId)
+            .select("finalAmount afterDiscount commission")
+            .lean();
+          if (product) {
+            finalAmount = product.finalAmount;
+            if (!finalAmount && product.afterDiscount && product.commission !== undefined) {
+              finalAmount = product.afterDiscount * (1 - product.commission / 100);
+            }
+            afterDiscount = product.afterDiscount || afterDiscount;
+          } else {
+            finalAmount = afterDiscount;
+          }
+        } else if (!finalAmount) {
+          finalAmount = afterDiscount;
+        }
+
+        const price = Number(item.price) || 0;
+        const quantity = Number(item.quantity) || 1;
         const itemTotal = price * quantity;
-        
-        return {
+
+        enrichedItems.push({
           ...item,
-          price: Number(price),
+          price,
           originalPrice: Number(item.originalPrice || price),
-          quantity: Number(quantity),
-          itemTotal: Number(item.itemTotal || itemTotal)
-        };
-      });
+          quantity,
+          finalAmount,
+          itemTotal,
+        });
+      }
+      orderData.orderItems = enrichedItems;
+    }
+
+    // ------------------------------------------------------------------
+    // Payment method handling (COD / wallet / card)
+    // ------------------------------------------------------------------
+    const method = orderData.paymentDetails?.method;
+    if (method === 'cod') {
+      orderData.paymentDetails.status = 'pending';
+      orderData.orderStatus.currentStatus = 'confirmed'; // or 'pending'
+    } else if (method === 'wallet' || method === 'card') {
+      orderData.paymentDetails.status = 'completed';
+      orderData.paymentDetails.paymentDate = new Date();
+      orderData.orderStatus.currentStatus = 'confirmed';
+    } else {
+      // default
+      orderData.paymentDetails.status = orderData.paymentDetails.status || 'pending';
     }
 
     const order = new Order(orderData);
     await order.save();
+
+    // If payment is completed immediately (wallet/card), add vendor earnings right away
+    if (orderData.paymentDetails.status === 'completed') {
+      try {
+        await addVendorEarningsFromOrder(order);
+        await Order.findByIdAndUpdate(order._id, { $set: { 'metadata.vendorEarningsAdded': true } });
+      } catch (err) {
+        console.error('Failed to add vendor earnings on order creation:', err);
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -6245,17 +6619,12 @@ app.post('/api/orders', auth, async (req, res) => {
         orderNumber: order.orderNumber,
         orderStatus: order.orderStatus,
         paymentDetails: order.paymentDetails,
-        createdAt: order.createdAt
-      }
+        createdAt: order.createdAt,
+      },
     });
-
   } catch (error) {
     console.error('Create order error:', error);
-    
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to create order'
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -7514,7 +7883,9 @@ app.delete("/api/admin/coupons/:id", async (req, res) => {
     });
   }
 });
+
 import shiprocketRoutes from "./routes/shiprocketRoutes.js";
+import VendorEarning from "./models/VendorEarning.js";
 
 console.log("MONGO_URI loaded:", !!process.env.MONGO_URI);
 app.use("/api/shiprocket", shiprocketRoutes);

@@ -35,7 +35,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 
-const API_BASE = "https://api.apexbee.in/api";
+const API_BASE = "http://api.apexbee.in/api";
 
 type WithdrawalStatus = "pending" | "approved" | "rejected" | "paid";
 

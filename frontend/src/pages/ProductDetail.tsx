@@ -84,7 +84,7 @@ const ProductDetail = () => {
     const fetchProductDetails = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`https://api.apexbee.in/api/product/${id}`);
+        const res = await fetch(`http://api.apexbee.in/api/product/${id}`);
         const data = await res.json();
 
         if (res.ok && data) {
@@ -107,7 +107,7 @@ const ProductDetail = () => {
     const fetchSimilarProducts = async (categoryName: string, currentId: string) => {
       try {
         const res = await fetch(
-          `https://api.apexbee.in/api/products?category=${encodeURIComponent(
+          `http://api.apexbee.in/api/products?category=${encodeURIComponent(
             categoryName || ""
           )}&excludeId=${currentId}&limit=4`
         );
@@ -126,7 +126,7 @@ const ProductDetail = () => {
 
         // 🔥 You need this API in backend:
         // GET /api/reviews/product/:productId
-        const res = await fetch(`https://api.apexbee.in/api/reviews/product/${productId}`);
+        const res = await fetch(`http://api.apexbee.in/api/reviews/product/${productId}`);
         const data = await res.json();
 
         if (!res.ok) throw new Error(data?.message || "Failed to fetch reviews");
@@ -210,7 +210,7 @@ const ProductDetail = () => {
     };
 
     try {
-      const res = await fetch("https://api.apexbee.in/api/cart/add", {
+      const res = await fetch("http://api.apexbee.in/api/cart/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(item),

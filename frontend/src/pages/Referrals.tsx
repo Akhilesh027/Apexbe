@@ -213,7 +213,7 @@ type WithdrawalRequest = {
   netAmount?: number;
 };
 
-const API_BASE = "https://api.apexbee.in/api";
+const API_BASE = "http://api.apexbee.in/api";
 
 const Referrals = () => {
   const { toast } = useToast();

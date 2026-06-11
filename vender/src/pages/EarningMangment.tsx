@@ -1,459 +1,660 @@
-// src/pages/vendor/Earnings.tsx
-// ✅ Layout-friendly page (NO Navbar/Footer inside)
-// Works in Next.js App Router or React Router inside VendorLayout
-
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import AppLayout from "@/components/AppLayout";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
-  IndianRupee,
-  CalendarDays,
-  Download,
-  Search,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatCurrency } from "@/lib/utils";
+import { toast } from "sonner";
+import {
+  Loader2,
+  RefreshCw,
   Wallet,
-  BadgeCheck,
   Clock,
-  Percent,
-  FileText,
-  ArrowUpRight,
-  ArrowDownRight,
+  Landmark,
+  Info,
+  ShieldCheck,
+  HelpCircle,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import AppLayout from "@/components/AppLayout";
-
-type RangeKey = "Today" | "Last 7 days" | "Last 30 days" | "Custom";
-type PayoutStatus = "Pending" | "Processing" | "Settled";
-type PaymentMode = "UPI" | "Bank Transfer";
-
-type EarningRow = {
-  id: string;
-  orderId: string;
-  customer: string;
-  createdAt: string;
-  deliveredAt?: string;
-  website?: string;
-
-  gross: number; // item total
-  discount: number;
-  tax: number;
-  shippingFee: number;
-
-  commissionPct: number;
-  commissionAmount: number;
-
-  netEarning: number; // gross - discount + tax + shippingFee - commission
-  payoutStatus: PayoutStatus;
-  payoutRef?: string;
-};
-
-type PayoutRow = {
-  id: string;
-  payoutId: string;
-  date: string;
+interface Transaction {
+  _id: string;
+  type: string;
   amount: number;
-  status: PayoutStatus;
-  mode: PaymentMode;
-  reference?: string;
-};
-
-const RANGE_OPTIONS: RangeKey[] = ["Today", "Last 7 days", "Last 30 days", "Custom"];
-
-const money = (n: number) => `₹${n.toLocaleString("en-IN")}`;
-
-const mockEarnings: EarningRow[] = [
-  {
-    id: "e1",
-    orderId: "APX-ORD-10233",
-    customer: "Priya",
-    createdAt: "Feb 24, 2026",
-    deliveredAt: "Feb 27, 2026",
-    gross: 3299,
-    discount: 200,
-    tax: 0,
-    shippingFee: 0,
-    commissionPct: 8,
-    commissionAmount: 248,
-    netEarning: 2851,
-    payoutStatus: "Settled",
-    payoutRef: "PO-90012",
-  },
-  {
-    id: "e2",
-    orderId: "APX-ORD-10232",
-    customer: "Akhil Reddy",
-    createdAt: "Feb 26, 2026",
-    deliveredAt: "—",
-    gross: 799,
-    discount: 0,
-    tax: 0,
-    shippingFee: 0,
-    commissionPct: 10,
-    commissionAmount: 80,
-    netEarning: 719,
-    payoutStatus: "Pending",
-  },
-  {
-    id: "e3",
-    orderId: "APX-ORD-10231",
-    customer: "Guru Swamy",
-    createdAt: "Feb 27, 2026",
-    deliveredAt: "—",
-    gross: 1899,
-    discount: 100,
-    tax: 0,
-    shippingFee: 0,
-    commissionPct: 8,
-    commissionAmount: 152,
-    netEarning: 1647,
-    payoutStatus: "Processing",
-    payoutRef: "PO-90013",
-  },
-];
-
-const mockPayouts: PayoutRow[] = [
-  { id: "p1", payoutId: "PO-90012", date: "Feb 27, 2026", amount: 2851, status: "Settled", mode: "Bank Transfer", reference: "UTR1234XXXX" },
-  { id: "p2", payoutId: "PO-90013", date: "Feb 28, 2026", amount: 1647, status: "Processing", mode: "UPI", reference: "UPIREF-XXXX" },
-];
-
-function statusBadge(status: PayoutStatus) {
-  if (status === "Settled") return <Badge className="gap-1"><BadgeCheck className="h-3.5 w-3.5" />Settled</Badge>;
-  if (status === "Processing") return <Badge variant="secondary" className="gap-1"><Clock className="h-3.5 w-3.5" />Processing</Badge>;
-  return <Badge variant="outline" className="gap-1"><Clock className="h-3.5 w-3.5" />Pending</Badge>;
+  orderId?: string;
+  description: string;
+  createdAt: string;
 }
 
-export default function Earnings() {
-  const [range, setRange] = useState<RangeKey>("Last 30 days");
-  const [q, setQ] = useState("");
-  const [tab, setTab] = useState<"Overview" | "Order-wise" | "Payouts">("Overview");
+interface WithdrawalRequest {
+  _id: string;
+  amount: number;
+  status: string;
+  paymentMethod: string;
+  createdAt: string;
+}
 
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return mockEarnings;
-    return mockEarnings.filter((r) =>
-      [r.orderId, r.customer, r.payoutRef || ""].join(" ").toLowerCase().includes(query)
+const getVendorIdFromToken = (): string | null => {
+  const token = localStorage.getItem("token");
+  if (!token) return null;
+
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.id || payload.vendorId || null;
+  } catch {
+    return null;
+  }
+};
+
+const VendorEarnings = () => {
+  const { vendorId: urlVendorId } = useParams<{ vendorId?: string }>();
+  const [loggedInVendorId, setLoggedInVendorId] = useState<string | null>(null);
+  const isOwnView = !urlVendorId;
+
+  const [earnings, setEarnings] = useState<{
+    total: number;
+    pending: number;
+    withdrawn: number;
+    history: Transaction[];
+  } | null>(null);
+
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("bank");
+  const [bankDetails, setBankDetails] = useState({
+    accountNumber: "",
+    ifsc: "",
+    accountName: "",
+  });
+  const [upiId, setUpiId] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const effectiveVendorId = urlVendorId || loggedInVendorId;
+
+  useEffect(() => {
+    if (isOwnView) {
+      const id = getVendorIdFromToken();
+
+      if (!id) {
+        setError("Vendor ID not found. Please log in again.");
+        setLoading(false);
+        return;
+      }
+
+      setLoggedInVendorId(id);
+    }
+  }, [isOwnView]);
+
+  const fetchData = async () => {
+    if (!effectiveVendorId) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const earningsRes = await fetch(
+        `http://api.apexbee.in/api/vendor/earnings/${effectiveVendorId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        }
+      );
+
+      if (!earningsRes.ok) {
+        const errData = await earningsRes.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to fetch earnings");
+      }
+
+      const earningsData = await earningsRes.json();
+
+      setEarnings({
+        total: earningsData.totalEarned ?? earningsData.total ?? 0,
+        pending: earningsData.pendingBalance ?? earningsData.pending ?? 0,
+        withdrawn: earningsData.withdrawn ?? 0,
+        history: earningsData.transactions ?? earningsData.history ?? [],
+      });
+
+      if (isOwnView) {
+        const withdrawalsRes = await fetch(
+          `http://api.apexbee.in/api/vendor/withdrawal/requests/${effectiveVendorId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+          }
+        );
+
+        if (withdrawalsRes.ok) {
+          const withdrawalsData = await withdrawalsRes.json();
+          setWithdrawals(withdrawalsData);
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load data");
+      toast.error("Failed to load earnings data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (effectiveVendorId) {
+      fetchData();
+    }
+  }, [effectiveVendorId]);
+
+  const handleWithdraw = async () => {
+    if (!effectiveVendorId) {
+      toast.error("Vendor ID not available");
+      return;
+    }
+
+    const amount = parseFloat(withdrawAmount);
+
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Enter a valid amount");
+      return;
+    }
+
+    if (earnings && amount > earnings.pending) {
+      toast.error("Amount exceeds pending earnings");
+      return;
+    }
+
+    if (amount < 100) {
+      toast.error("Minimum withdrawal amount is ₹100");
+      return;
+    }
+
+    if (paymentMethod === "bank") {
+      if (!bankDetails.accountName.trim()) {
+        toast.error("Account holder name is required");
+        return;
+      }
+
+      if (!bankDetails.accountNumber.trim()) {
+        toast.error("Account number is required");
+        return;
+      }
+
+      if (!bankDetails.ifsc.trim()) {
+        toast.error("IFSC code is required");
+        return;
+      }
+    } else if (paymentMethod === "upi") {
+      if (!upiId.trim()) {
+        toast.error("UPI ID is required");
+        return;
+      }
+    }
+
+    const payload = {
+      vendorId: effectiveVendorId,
+      amount,
+      paymentMethod,
+      ...(paymentMethod === "bank" ? { bankDetails } : { upiId }),
+    };
+
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("http://api.apexbee.in/api/vendor/withdrawal/request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        toast.success("Withdrawal request submitted successfully");
+        setDialogOpen(false);
+        setWithdrawAmount("");
+        setBankDetails({
+          accountNumber: "",
+          ifsc: "",
+          accountName: "",
+        });
+        setUpiId("");
+        fetchData();
+      } else {
+        toast.error(data.error || "Request failed");
+      }
+    } catch {
+      toast.error("Request failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const getStatusClass = (status: string) => {
+    if (status === "approved") return "bg-green-100 text-green-800";
+    if (status === "rejected") return "bg-red-100 text-red-800";
+    return "bg-yellow-100 text-yellow-800";
+  };
+
+  if (loading) {
+    return (
+      <AppLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </AppLayout>
     );
-  }, [q]);
+  }
 
-  const totals = useMemo(() => {
-    const gross = filtered.reduce((a, r) => a + r.gross, 0);
-    const commission = filtered.reduce((a, r) => a + r.commissionAmount, 0);
-    const net = filtered.reduce((a, r) => a + r.netEarning, 0);
-    const pending = filtered
-      .filter((r) => r.payoutStatus !== "Settled")
-      .reduce((a, r) => a + r.netEarning, 0);
-
-    const settled = filtered
-      .filter((r) => r.payoutStatus === "Settled")
-      .reduce((a, r) => a + r.netEarning, 0);
-
-    return { gross, commission, net, pending, settled };
-  }, [filtered]);
+  if (error) {
+    return (
+      <AppLayout>
+        <div className="container mx-auto px-4 py-8 text-center">
+          <p className="text-red-500 mb-4">{error}</p>
+          <Button onClick={fetchData}>Retry</Button>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
-  <AppLayout>
-      <main className="mx-auto w-[min(1200px,calc(100%-48px))] py-8">
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Earnings</h1>
-        <p className="text-muted-foreground">
-          Track order-wise earnings, commissions, and payouts. Download statements anytime.
-        </p>
-      </div>
+    <AppLayout>
+      <div className="container mx-auto px-4 py-8 space-y-6">
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+          <div>
+            <h1 className="text-3xl font-bold">
+              {isOwnView ? "My Earnings" : "Vendor Earnings"}
+            </h1>
 
-      {/* Top Controls */}
-      <div className="mt-6 flex flex-col lg:flex-row lg:items-center gap-3 justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="space-y-1.5">
-            <Label>Date Range</Label>
-            <div className="flex items-center gap-2">
-              <select
-                className="h-10 rounded-md border bg-background px-3 text-sm"
-                value={range}
-                onChange={(e) => setRange(e.target.value as RangeKey)}
-              >
-                {RANGE_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-              <Badge variant="secondary" className="gap-1">
-                <CalendarDays className="h-3.5 w-3.5" />
-                {range}
-              </Badge>
-            </div>
+            <p className="text-muted-foreground mt-1">
+              Track your earnings, payout balance, withdrawal requests and transaction activity.
+            </p>
+
+            {!isOwnView && urlVendorId && (
+              <p className="text-muted-foreground mt-1">Vendor ID: {urlVendorId}</p>
+            )}
           </div>
 
-          <Button variant="secondary" className="gap-2">
-            <Download className="h-4 w-4" />
-            Download Statement
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={fetchData}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+
+            {isOwnView && (
+              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button>Request Withdrawal</Button>
+                </DialogTrigger>
+
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Request Withdrawal</DialogTitle>
+                  </DialogHeader>
+
+                  <div className="space-y-4 py-4">
+                    <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                      Available balance:{" "}
+                      <span className="font-semibold text-foreground">
+                        {formatCurrency(earnings?.pending || 0)}
+                      </span>
+                    </div>
+
+                    <div>
+                      <Label>Amount (₹)</Label>
+                      <Input
+                        type="number"
+                        value={withdrawAmount}
+                        onChange={(e) => setWithdrawAmount(e.target.value)}
+                        placeholder="Enter withdrawal amount"
+                      />
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Minimum ₹100 withdrawal required.
+                      </p>
+                    </div>
+
+                    <div>
+                      <Label>Payment Method</Label>
+                      <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bank">Bank Transfer</SelectItem>
+                          <SelectItem value="upi">UPI</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {paymentMethod === "bank" ? (
+                      <>
+                        <div>
+                          <Label>Account Holder Name</Label>
+                          <Input
+                            value={bankDetails.accountName}
+                            onChange={(e) =>
+                              setBankDetails({
+                                ...bankDetails,
+                                accountName: e.target.value,
+                              })
+                            }
+                            placeholder="Enter account holder name"
+                          />
+                        </div>
+
+                        <div>
+                          <Label>Account Number</Label>
+                          <Input
+                            value={bankDetails.accountNumber}
+                            onChange={(e) =>
+                              setBankDetails({
+                                ...bankDetails,
+                                accountNumber: e.target.value,
+                              })
+                            }
+                            placeholder="Enter account number"
+                          />
+                        </div>
+
+                        <div>
+                          <Label>IFSC Code</Label>
+                          <Input
+                            value={bankDetails.ifsc}
+                            onChange={(e) =>
+                              setBankDetails({
+                                ...bankDetails,
+                                ifsc: e.target.value.toUpperCase(),
+                              })
+                            }
+                            placeholder="Enter IFSC code"
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <Label>UPI ID</Label>
+                        <Input
+                          value={upiId}
+                          onChange={(e) => setUpiId(e.target.value)}
+                          placeholder="username@bank"
+                        />
+                      </div>
+                    )}
+
+                    <div className="rounded-lg bg-yellow-50 p-3 text-sm text-yellow-800">
+                      Please verify your payment details before submitting. Incorrect details may
+                      delay the payout process.
+                    </div>
+
+                    <Button onClick={handleWithdraw} className="w-full" disabled={submitting}>
+                      {submitting ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
+                      Submit Request
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
         </div>
 
-        <div className="relative w-full lg:w-[360px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder="Search Order ID / Customer / Payout ID"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+        <div className="grid md:grid-cols-3 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Total Earned</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold text-green-600">
+              {formatCurrency(earnings?.total || 0)}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Pending Balance</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold text-blue-600">
+              {formatCurrency(earnings?.pending || 0)}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Withdrawn</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold text-gray-600">
+              {formatCurrency(earnings?.withdrawn || 0)}
+            </CardContent>
+          </Card>
         </div>
-      </div>
 
-      {/* Summary Cards */}
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard
-          title="Net Earnings"
-          value={money(totals.net)}
-          icon={<Wallet className="h-5 w-5" />}
-          hint="Total after commission"
-        />
-        <StatCard
-          title="Pending / Processing"
-          value={money(totals.pending)}
-          icon={<Clock className="h-5 w-5" />}
-          hint="Yet to be settled"
-        />
-        <StatCard
-          title="Settled"
-          value={money(totals.settled)}
-          icon={<BadgeCheck className="h-5 w-5" />}
-          hint="Already paid out"
-        />
-        <StatCard
-          title="Commission"
-          value={money(totals.commission)}
-          icon={<Percent className="h-5 w-5" />}
-          hint="Platform fee"
-        />
-      </div>
+        {isOwnView && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Withdrawal Information</CardTitle>
+            </CardHeader>
 
-      {/* Tabs */}
-      <div className="mt-6">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
-          <TabsList className="flex flex-wrap h-auto">
-            <TabsTrigger value="Overview">Overview</TabsTrigger>
-            <TabsTrigger value="Order-wise">Order-wise</TabsTrigger>
-            <TabsTrigger value="Payouts">Payouts</TabsTrigger>
+            <CardContent className="grid md:grid-cols-3 gap-4 text-sm">
+              <div className="p-4 rounded-lg bg-muted">
+                <div className="flex items-center gap-2 mb-2">
+                  <Wallet className="h-4 w-4" />
+                  <h3 className="font-semibold">Minimum Withdrawal</h3>
+                </div>
+                <p className="text-muted-foreground">
+                  You can request a payout once your available balance reaches ₹100.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-lg bg-muted">
+                <div className="flex items-center gap-2 mb-2">
+                  <Clock className="h-4 w-4" />
+                  <h3 className="font-semibold">Processing Time</h3>
+                </div>
+                <p className="text-muted-foreground">
+                  Withdrawal requests are reviewed by admin and usually processed within 1–3
+                  business days.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-lg bg-muted">
+                <div className="flex items-center gap-2 mb-2">
+                  <Landmark className="h-4 w-4" />
+                  <h3 className="font-semibold">Payment Methods</h3>
+                </div>
+                <p className="text-muted-foreground">
+                  Vendors can receive payouts through Bank Transfer or UPI.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {isOwnView && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Important Notes</CardTitle>
+            </CardHeader>
+
+            <CardContent className="grid md:grid-cols-3 gap-4 text-sm">
+              <div className="flex gap-3 rounded-lg border p-4">
+                <Info className="h-5 w-5 text-blue-600 mt-0.5" />
+                <div>
+                  <h3 className="font-semibold mb-1">Request Review</h3>
+                  <p className="text-muted-foreground">
+                    Every withdrawal request is checked by the admin before approval.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 rounded-lg border p-4">
+                <ShieldCheck className="h-5 w-5 text-green-600 mt-0.5" />
+                <div>
+                  <h3 className="font-semibold mb-1">Correct Details</h3>
+                  <p className="text-muted-foreground">
+                    Enter accurate bank or UPI details to avoid payout delays or rejection.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 rounded-lg border p-4">
+                <HelpCircle className="h-5 w-5 text-orange-600 mt-0.5" />
+                <div>
+                  <h3 className="font-semibold mb-1">Need Help?</h3>
+                  <p className="text-muted-foreground">
+                    For payout issues, contact support with your vendor ID and request date.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Tabs defaultValue="history" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="history">Transaction History</TabsTrigger>
+            {isOwnView && <TabsTrigger value="requests">Withdrawal Requests</TabsTrigger>}
           </TabsList>
 
-          {/* Overview */}
-          <TabsContent value="Overview" className="mt-4">
+          <TabsContent value="history">
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <IndianRupee className="h-4 w-4" />
-                  Earnings Summary
-                </CardTitle>
+              <CardHeader>
+                <CardTitle>Transaction History</CardTitle>
               </CardHeader>
 
-              <CardContent className="pt-0">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                  <InfoItem label="Gross Sales" value={money(totals.gross)} />
-                  <InfoItem label="Commission Deducted" value={money(totals.commission)} />
-                  <InfoItem label="Net Earnings" value={money(totals.net)} />
-                </div>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Order ID</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
 
-                <Separator className="my-4" />
+                  <TableBody>
+                    {earnings?.history?.map((tx) => (
+                      <TableRow key={tx._id}>
+                        <TableCell>{new Date(tx.createdAt).toLocaleDateString()}</TableCell>
+                        <TableCell>{tx.orderId?.slice(-6) || "-"}</TableCell>
+                        <TableCell>{tx.description}</TableCell>
+                        <TableCell
+                          className={`text-right font-medium ${
+                            tx.amount > 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
+                          {tx.amount > 0
+                            ? `+${formatCurrency(tx.amount)}`
+                            : formatCurrency(tx.amount)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
 
-                <div className="rounded-lg border bg-muted/20 p-4 text-sm">
-                  <div className="font-semibold">How earnings are calculated</div>
-                  <div className="mt-2 text-muted-foreground leading-relaxed">
-                    <span className="font-medium text-foreground">Net Earning</span> =
-                    (Gross − Discounts) + Tax + Shipping Fee − Commission.
-                    <br />
-                    Settlements are typically processed after delivery confirmation (and return window, if applicable).
-                  </div>
-                </div>
+                    {(!earnings?.history || earnings.history.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center py-8">
+                          <div className="space-y-1">
+                            <p className="font-medium">No transactions yet.</p>
+                            <p className="text-sm text-muted-foreground">
+                              Your earnings will appear here after successful orders are completed.
+                            </p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* Order-wise */}
-          <TabsContent value="Order-wise" className="mt-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Order-wise Earnings
-                </CardTitle>
-              </CardHeader>
+          {isOwnView && (
+            <TabsContent value="requests">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Withdrawal Requests</CardTitle>
+                </CardHeader>
 
-              <CardContent className="pt-0">
-                {filtered.length === 0 ? (
-                  <EmptyState />
-                ) : (
-                  <div className="w-full overflow-auto rounded-lg border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50">
-                        <tr className="text-left">
-                          <th className="p-3 min-w-[140px]">Order ID</th>
-                          <th className="p-3 min-w-[170px]">Customer</th>
-                          <th className="p-3 min-w-[140px]">Order Date</th>
-                          <th className="p-3 min-w-[140px]">Delivered</th>
-                          <th className="p-3 min-w-[120px]">Gross</th>
-                          <th className="p-3 min-w-[120px]">Commission</th>
-                          <th className="p-3 min-w-[120px]">Net</th>
-                          <th className="p-3 min-w-[160px]">Payout Status</th>
-                          <th className="p-3 min-w-[120px] text-right">Details</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filtered.map((r) => (
-                          <tr key={r.id} className="border-t hover:bg-muted/30">
-                            <td className="p-3 font-medium">{r.orderId}</td>
-                            <td className="p-3">{r.customer}</td>
-                            <td className="p-3">{r.createdAt}</td>
-                            <td className="p-3">{r.deliveredAt || "—"}</td>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Method</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
 
-                            <td className="p-3">{money(r.gross)}</td>
-                            <td className="p-3">{money(r.commissionAmount)}</td>
+                    <TableBody>
+                      {withdrawals.map((req) => (
+                        <TableRow key={req._id}>
+                          <TableCell>{new Date(req.createdAt).toLocaleDateString()}</TableCell>
+                          <TableCell>{formatCurrency(req.amount)}</TableCell>
+                          <TableCell className="capitalize">{req.paymentMethod}</TableCell>
+                          <TableCell>
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${getStatusClass(
+                                req.status
+                              )}`}
+                            >
+                              {req.status}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
 
-                            <td className="p-3 font-medium">{money(r.netEarning)}</td>
-
-                            <td className="p-3">
-                              <div className="flex items-center gap-2">
-                                {statusBadge(r.payoutStatus)}
-                                {r.payoutRef ? (
-                                  <span className="text-xs text-muted-foreground">{r.payoutRef}</span>
-                                ) : null}
-                              </div>
-                            </td>
-
-                            <td className="p-3 text-right">
-                              <Button size="sm" variant="outline" className="gap-1.5">
-                                <ArrowUpRight className="h-4 w-4" />
-                                View
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Payouts */}
-          <TabsContent value="Payouts" className="mt-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Wallet className="h-4 w-4" />
-                  Payout History
-                </CardTitle>
-              </CardHeader>
-
-              <CardContent className="pt-0">
-                {mockPayouts.length === 0 ? (
-                  <EmptyState />
-                ) : (
-                  <div className="w-full overflow-auto rounded-lg border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50">
-                        <tr className="text-left">
-                          <th className="p-3 min-w-[140px]">Payout ID</th>
-                          <th className="p-3 min-w-[140px]">Date</th>
-                          <th className="p-3 min-w-[140px]">Amount</th>
-                          <th className="p-3 min-w-[160px]">Status</th>
-                          <th className="p-3 min-w-[160px]">Mode</th>
-                          <th className="p-3 min-w-[220px]">Reference</th>
-                          <th className="p-3 min-w-[120px] text-right">Receipt</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mockPayouts.map((p) => (
-                          <tr key={p.id} className="border-t hover:bg-muted/30">
-                            <td className="p-3 font-medium">{p.payoutId}</td>
-                            <td className="p-3">{p.date}</td>
-                            <td className="p-3 font-medium">{money(p.amount)}</td>
-                            <td className="p-3">{statusBadge(p.status)}</td>
-                            <td className="p-3">
-                              <Badge variant="secondary">{p.mode}</Badge>
-                            </td>
-                            <td className="p-3 text-muted-foreground">{p.reference || "—"}</td>
-                            <td className="p-3 text-right">
-                              <Button size="sm" variant="outline" className="gap-1.5">
-                                <ArrowDownRight className="h-4 w-4" />
-                                Download
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+                      {withdrawals.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center py-8">
+                            <div className="space-y-1">
+                              <p className="font-medium">No withdrawal requests yet.</p>
+                              <p className="text-sm text-muted-foreground">
+                                Once you submit a withdrawal request, the status will be shown here.
+                              </p>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
         </Tabs>
       </div>
-    </main>
-  </AppLayout>
+    </AppLayout>
   );
-}
+};
 
-/** ---------------------------
- * Small UI components
- * -------------------------- */
-
-function StatCard({
-  title,
-  value,
-  hint,
-  icon,
-}: {
-  title: string;
-  value: string;
-  hint: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm text-muted-foreground">{title}</div>
-            <div className="mt-1 text-2xl font-extrabold tracking-tight">{value}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
-          </div>
-          <div className="h-10 w-10 rounded-xl border bg-muted/20 flex items-center justify-center">
-            {icon}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function InfoItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="font-medium">{value}</div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="rounded-lg border bg-muted/20 p-8 text-center">
-      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border bg-background">
-        <IndianRupee className="h-5 w-5" />
-      </div>
-      <div className="text-lg font-semibold">No earnings found</div>
-      <div className="mt-1 text-sm text-muted-foreground">
-        Try adjusting filters or searching by Order ID / Payout.
-      </div>
-    </div>
-  );
-}
+export default VendorEarnings;

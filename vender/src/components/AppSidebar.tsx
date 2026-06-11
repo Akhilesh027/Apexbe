@@ -39,14 +39,10 @@ const menuItems = [
 
   { title: "Products", url: "/products", icon: Package },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
-  { title: "Shipping", url: "/shipping", icon: Truck },
 
   { title: "Earnings", url: "/earnings", icon: Wallet },
-  { title: "Returns", url: "/returns", icon: RotateCcw },
   { title: "Reports", url: "/reports", icon: BarChart3 },
 
-  { title: "Promotions", url: "/promotions", icon: TicketPercent },
-  { title: "Support", url: "/support", icon: MessageCircle },
 
   { title: "Settings", url: "/settings", icon: Settings },
   { title: "Profile", url: "/profile", icon: User },

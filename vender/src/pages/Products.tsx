@@ -4,8 +4,6 @@ import {
   Eye,
   Edit3,
   Package,
-  Tag,
-  BarChart3,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
@@ -33,14 +31,12 @@ import { useEffect, useState } from "react";
    Helpers
 =================================*/
 
-// Safe vendor getter
 const getVendor = () => {
   const raw = localStorage.getItem("vendor");
   return raw ? JSON.parse(raw) : null;
 };
 
-// Currency formatter
-const formatCurrency = (amount: number) => {
+const formatCurrency = (amount: number | undefined | null) => {
   const value = typeof amount === "number" && !isNaN(amount) ? amount : 0;
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -50,11 +46,9 @@ const formatCurrency = (amount: number) => {
   }).format(value);
 };
 
-// Vendor earnings calculation
-const calcVendorEarning = (price: number, commission: number) => {
-  const p = Number(price) || 0;
-  const c = Number(commission) || 0;
-  return Math.round(p - (p * c) / 100);
+// Vendor earnings = finalAmount (already after deducting Apex Bee commission)
+const getVendorEarning = (product: any) => {
+  return product.finalAmount ?? 0;
 };
 
 const Products = () => {
@@ -78,11 +72,20 @@ const Products = () => {
         }
 
         const res = await fetch(
-          `https://api.apexbee.in/api/products/vendor/${vendor.id}`
+          `http://api.apexbee.in/api/products/vendor/${vendor.id}`
         );
         const data = await res.json();
 
-        setProducts(res.ok ? data || [] : []);
+        if (res.ok) {
+          // Ensure every product has a finalAmount fallback
+          const enriched = (data || []).map((p: any) => ({
+            ...p,
+            finalAmount: p.finalAmount ?? (p.afterDiscount * (1 - (p.commission || 0) / 100)),
+          }));
+          setProducts(enriched);
+        } else {
+          setProducts([]);
+        }
       } catch (error) {
         console.error(error);
         setProducts([]);
@@ -106,7 +109,7 @@ const Products = () => {
       if (!vendor?.id) return alert("Vendor not logged in.");
 
       const res = await fetch(
-        `https://api.apexbee.in/api/products/${productId}`,
+        `http://api.apexbee.in/api/products/${productId}`,
         {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
@@ -128,7 +131,7 @@ const Products = () => {
   };
 
   /* ===============================
-     Confirm / Reject
+     Confirm / Reject Modal
   =================================*/
   const openConfirmPopup = (product: any) => {
     setSelectedProduct(product);
@@ -141,7 +144,7 @@ const Products = () => {
       if (!vendor?.id) return alert("Vendor not logged in.");
 
       const res = await fetch(
-        `https://api.apexbee.in/api/products/vendor/confirm/${selectedProduct._id}`,
+        `http://api.apexbee.in/api/products/vendor/confirm/${selectedProduct._id}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -160,11 +163,12 @@ const Products = () => {
           )
         );
         alert("Product confirmed successfully.");
-      } else alert(data.message || "Confirm failed");
+      } else {
+        alert(data.message || "Confirm failed");
+      }
     } catch {
       alert("Server error");
     }
-
     setShowConfirmModal(false);
   };
 
@@ -174,7 +178,7 @@ const Products = () => {
       if (!vendor?.id) return alert("Vendor not logged in.");
 
       const res = await fetch(
-        `https://api.apexbee.in/api/products/vendor/reject/${selectedProduct._id}`,
+        `http://api.apexbee.in/api/products/vendor/reject/${selectedProduct._id}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -193,11 +197,12 @@ const Products = () => {
           )
         );
         alert("Product rejected.");
-      } else alert(data.message || "Reject failed");
+      } else {
+        alert(data.message || "Reject failed");
+      }
     } catch {
       alert("Server error");
     }
-
     setShowConfirmModal(false);
   };
 
@@ -225,16 +230,12 @@ const Products = () => {
   =================================*/
   const stats = {
     total: products.length,
-    approved: products.filter(
-      (p) => p.status === "Vendor Confirmed"
-    ).length,
+    confirmed: products.filter((p) => p.status === "Vendor Confirmed").length,
     pending: products.filter(
       (p) => p.status === "Pending" || p.status === "Admin Approved"
     ).length,
     rejected: products.filter(
-      (p) =>
-        p.status === "Vendor Rejected" ||
-        p.status === "Admin Rejected"
+      (p) => p.status === "Vendor Rejected" || p.status === "Admin Rejected"
     ).length,
   };
 
@@ -269,21 +270,18 @@ const Products = () => {
             </CardHeader>
             <CardContent>{stats.total}</CardContent>
           </Card>
-
           <Card>
             <CardHeader>
-              <CardTitle>Approved</CardTitle>
+              <CardTitle>Confirmed</CardTitle>
             </CardHeader>
-            <CardContent>{stats.approved}</CardContent>
+            <CardContent>{stats.confirmed}</CardContent>
           </Card>
-
           <Card>
             <CardHeader>
-              <CardTitle>Pending</CardTitle>
+              <CardTitle>Pending Approval</CardTitle>
             </CardHeader>
             <CardContent>{stats.pending}</CardContent>
           </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>Rejected</CardTitle>
@@ -314,7 +312,7 @@ const Products = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Product</TableHead>
-                    <TableHead>Price</TableHead>
+                    <TableHead>Your Earnings (per unit)</TableHead>
                     <TableHead>Stock</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead />
@@ -324,20 +322,18 @@ const Products = () => {
                 <TableBody>
                   {products.map((product) => (
                     <TableRow key={product._id}>
-                      <TableCell>{product.itemName}</TableCell>
-
-                      <TableCell>
-                        {formatCurrency(product.finalAmount)}
+                      <TableCell className="font-medium">
+                        {product.itemName}
                       </TableCell>
 
                       <TableCell>
-                        {product.openStock ?? 0}
+                        {formatCurrency(getVendorEarning(product))}
                       </TableCell>
 
+                      <TableCell>{product.openStock ?? 0}</TableCell>
+
                       <TableCell>
-                        <Badge
-                          className={getStatusColor(product.status)}
-                        >
+                        <Badge className={getStatusColor(product.status)}>
                           {product.status}
                         </Badge>
 
@@ -345,9 +341,7 @@ const Products = () => {
                           <Button
                             size="sm"
                             className="ml-3"
-                            onClick={() =>
-                              openConfirmPopup(product)
-                            }
+                            onClick={() => openConfirmPopup(product)}
                           >
                             Confirm
                           </Button>
@@ -370,9 +364,7 @@ const Products = () => {
                         <Button
                           size="icon"
                           variant="ghost"
-                          onClick={() =>
-                            handleDeleteProduct(product._id)
-                          }
+                          onClick={() => handleDeleteProduct(product._id)}
                         >
                           <Trash2 size={16} />
                         </Button>
@@ -386,44 +378,45 @@ const Products = () => {
         </Card>
       </div>
 
-      {/* Confirmation Modal */}
+      {/* Confirmation Modal - FIXED EARNINGS DISPLAY */}
       {showConfirmModal && selectedProduct && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
-          <div className="bg-white p-6 rounded-xl w-96">
-            <h2 className="text-lg font-bold mb-4">
-              Confirm Approval
-            </h2>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl w-96 shadow-xl">
+            <h2 className="text-xl font-bold mb-4">Confirm Approval</h2>
 
-            <p className="mb-2">
-              Commission: {selectedProduct.commission}%
-            </p>
+            <div className="space-y-2 mb-4">
+              <p className="flex justify-between">
+                <span className="text-muted-foreground">Commission (Apex Bee Fee):</span>
+                <span className="font-semibold">{selectedProduct.commission}%</span>
+              </p>
+              <p className="flex justify-between">
+                <span className="text-muted-foreground">Base Price (after discount):</span>
+                <span>{formatCurrency(selectedProduct.afterDiscount)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span className="text-muted-foreground">Apex Bee Fee Amount:</span>
+                <span className="text-red-600">
+                  {formatCurrency((selectedProduct.afterDiscount * selectedProduct.commission) / 100)}
+                </span>
+              </p>
+              <div className="border-t pt-2 mt-2">
+                <p className="flex justify-between font-bold">
+                  <span>Your Earnings (per unit):</span>
+                  <span className="text-green-600">
+                    {formatCurrency(getVendorEarning(selectedProduct))}
+                  </span>
+                </p>
+              </div>
+            </div>
 
-            <p className="mb-4 text-green-600 font-semibold">
-              Your Earnings:{" "}
-              {formatCurrency(
-                calcVendorEarning(
-                  selectedProduct.finalAmount,
-                  selectedProduct.commission
-                )
-              )}
-            </p>
-
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowConfirmModal(false)}
-              >
+            <div className="flex gap-3 justify-end">
+              <Button variant="outline" onClick={() => setShowConfirmModal(false)}>
                 Cancel
               </Button>
-              <Button
-                variant="destructive"
-                onClick={handleVendorReject}
-              >
+              <Button variant="destructive" onClick={handleVendorReject}>
                 Reject
               </Button>
-              <Button onClick={handleVendorConfirm}>
-                Confirm
-              </Button>
+              <Button onClick={handleVendorConfirm}>Confirm</Button>
             </div>
           </div>
         </div>
