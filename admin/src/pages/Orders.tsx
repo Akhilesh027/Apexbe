@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-const API_BASE = "http://api.apexbee.in";
+const API_BASE = "https://api.apexbee.in";
 
 const Orders = () => {
   const [orders, setOrders] = useState<any[]>([]);

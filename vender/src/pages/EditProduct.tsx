@@ -58,7 +58,7 @@ const EditProduct = () => {
 
   // Fetch categories
   useEffect(() => {
-    axios.get("http://api.apexbee.in/api/categories")
+    axios.get("https://api.apexbee.in/api/categories")
       .then(res => setCategories(res.data.categories || []))
       .catch(console.error);
   }, []);
@@ -66,7 +66,7 @@ const EditProduct = () => {
   // Fetch subcategories on category change
   useEffect(() => {
     if (!category) return setSubcategories([]);
-    axios.get(`http://api.apexbee.in/api/subcategories/${category}`)
+    axios.get(`https://api.apexbee.in/api/subcategories/${category}`)
       .then(res => setSubcategories(res.data.subcategories || []))
       .catch(console.error);
   }, [category]);
@@ -75,7 +75,7 @@ const EditProduct = () => {
   useEffect(() => {
   const fetchProduct = async () => {
     try {
-      const res = await axios.get(`http://api.apexbee.in/api/product/${id}`);
+      const res = await axios.get(`https://api.apexbee.in/api/product/${id}`);
       const product = res.data;
 
       if (product) {
@@ -177,7 +177,7 @@ const EditProduct = () => {
     images.forEach(img => fd.append("images", img));
 
     try {
-      const res = await axios.put(`http://api.apexbee.in/api/products/${id}`, fd, {
+      const res = await axios.put(`https://api.apexbee.in/api/products/${id}`, fd, {
         headers: { "Content-Type": "multipart/form-data" }
       });
       if (res.data.success) {

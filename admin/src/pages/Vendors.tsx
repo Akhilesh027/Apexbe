@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 
-const API_BASE = "http://api.apexbee.in"; // adjust to your backend URL
+const API_BASE = "https://api.apexbee.in"; // adjust to your backend URL
 
 const Vendors = () => {
   const [vendors, setVendors] = useState([]);

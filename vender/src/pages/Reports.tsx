@@ -90,7 +90,7 @@ const ReportsPage = () => {
         throw new Error("Vendor not found");
       }
 
-      const res = await fetch(`http://api.apexbee.in/api/orders/vendor/${vendorId}`, {
+      const res = await fetch(`https://api.apexbee.in/api/orders/vendor/${vendorId}`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
@@ -117,7 +117,7 @@ const fetchEarnings = async () => {
     }
 
     const res = await fetch(
-      `http://api.apexbee.in/api/vendor/earnings/${vendorId}`,
+      `https://api.apexbee.in/api/vendor/earnings/${vendorId}`,
       {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,

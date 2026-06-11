@@ -60,7 +60,7 @@ const ProductDetails = () => {
   useEffect(() => {
     const fetchProduct = async () => {
       try {
-        const res = await fetch(`http://api.apexbee.in/api/product/${id}`);
+        const res = await fetch(`https://api.apexbee.in/api/product/${id}`);
         const data = await res.json();
 
         if (res.ok) {

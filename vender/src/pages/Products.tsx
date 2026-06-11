@@ -72,7 +72,7 @@ const Products = () => {
         }
 
         const res = await fetch(
-          `http://api.apexbee.in/api/products/vendor/${vendor.id}`
+          `https://api.apexbee.in/api/products/vendor/${vendor.id}`
         );
         const data = await res.json();
 
@@ -109,7 +109,7 @@ const Products = () => {
       if (!vendor?.id) return alert("Vendor not logged in.");
 
       const res = await fetch(
-        `http://api.apexbee.in/api/products/${productId}`,
+        `https://api.apexbee.in/api/products/${productId}`,
         {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
@@ -144,7 +144,7 @@ const Products = () => {
       if (!vendor?.id) return alert("Vendor not logged in.");
 
       const res = await fetch(
-        `http://api.apexbee.in/api/products/vendor/confirm/${selectedProduct._id}`,
+        `https://api.apexbee.in/api/products/vendor/confirm/${selectedProduct._id}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -178,7 +178,7 @@ const Products = () => {
       if (!vendor?.id) return alert("Vendor not logged in.");
 
       const res = await fetch(
-        `http://api.apexbee.in/api/products/vendor/reject/${selectedProduct._id}`,
+        `https://api.apexbee.in/api/products/vendor/reject/${selectedProduct._id}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

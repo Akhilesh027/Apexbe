@@ -40,7 +40,7 @@ app.use(cors({
     "https://admin.apexbee.in/withdrow",
     "http://localhost:8080/withdrow",
     "https://vendor.apexbee.in",
-    "http://api.apexbee.in"
+    "https://api.apexbee.in"
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS","PATCH"],

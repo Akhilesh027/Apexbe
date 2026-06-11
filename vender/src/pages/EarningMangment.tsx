@@ -121,7 +121,7 @@ const VendorEarnings = () => {
 
     try {
       const earningsRes = await fetch(
-        `http://api.apexbee.in/api/vendor/earnings/${effectiveVendorId}`,
+        `https://api.apexbee.in/api/vendor/earnings/${effectiveVendorId}`,
         {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -145,7 +145,7 @@ const VendorEarnings = () => {
 
       if (isOwnView) {
         const withdrawalsRes = await fetch(
-          `http://api.apexbee.in/api/vendor/withdrawal/requests/${effectiveVendorId}`,
+          `https://api.apexbee.in/api/vendor/withdrawal/requests/${effectiveVendorId}`,
           {
             headers: {
               Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -227,7 +227,7 @@ const VendorEarnings = () => {
     setSubmitting(true);
 
     try {
-      const res = await fetch("http://api.apexbee.in/api/vendor/withdrawal/request", {
+      const res = await fetch("https://api.apexbee.in/api/vendor/withdrawal/request", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

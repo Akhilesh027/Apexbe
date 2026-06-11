@@ -63,7 +63,7 @@ const Profile = () => {
     setDashboardLoading(true);
 
     try {
-      const res = await fetch(`http://api.apexbee.in/api/dashboard/${vendorId}`);
+      const res = await fetch(`https://api.apexbee.in/api/dashboard/${vendorId}`);
       const data = await res.json();
 
       setTotalSales(data.totalSales || 0);
