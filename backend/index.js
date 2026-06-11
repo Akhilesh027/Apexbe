@@ -4767,7 +4767,6 @@ app.put("/api/admin/orders/:orderId/status", async (req, res) => {
       // ✅ ADD VENDOR EARNINGS if payment completed & not already added
       if (isPaymentCompleted && !alreadyAdded) {
         try {
-          await addVendorEarningsFromOrder(currentOrder);
           await Order.findByIdAndUpdate(orderId, {
             $set: { "metadata.vendorEarningsAdded": true }
           });
@@ -6602,14 +6601,7 @@ app.post('/api/orders', auth, async (req, res) => {
     await order.save();
 
     // If payment is completed immediately (wallet/card), add vendor earnings right away
-    if (orderData.paymentDetails.status === 'completed') {
-      try {
-        await addVendorEarningsFromOrder(order);
-        await Order.findByIdAndUpdate(order._id, { $set: { 'metadata.vendorEarningsAdded': true } });
-      } catch (err) {
-        console.error('Failed to add vendor earnings on order creation:', err);
-      }
-    }
+  
 
     res.status(201).json({
       success: true,
